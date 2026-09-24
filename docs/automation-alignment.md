@@ -494,6 +494,11 @@ original task and close both records only from passing authoritative evidence.
 Passing authoritative final summaries must close pending `autopilot-delegate`
 records directly, just as they close `loop-engineering` records, before another
 project-recovery WorkOrder can be admitted.
+That closure also requires an accepted `system-gate.json` whose WorkOrder id,
+project id, result status, and canonical supervisor review-gate snapshot match
+the same run and summary. Compare normalized snapshots so accepted flexible JSON
+forms do not create false mismatches. Missing, rejected, malformed, or mismatched
+gate evidence keeps the ledger and Repair Coordinator item pending and retryable.
 Daily Task Audit repair dispatch must use the same link and return failed
 delegations to the queue immediately.
 The generic Daily Task Audit repair dispatcher must exclude
@@ -538,6 +543,14 @@ before the live dispatch promise resolves; consuming it early can terminalize
 the WorkOrder, release its lease/worktree, and then let the live owner overwrite
 it back to `in-flight`. Startup reconciliation may consume the same durable
 summary because the previous process and its queue owner are gone.
+A journaled started delegation remains the unique owner before its durable
+delegation deadline and must not be replayed or duplicated after restart. Once
+that deadline expires, reconciliation checks expiry before the live-session busy
+guard, interrupts only the WorkOrder's recorded supervisor through the agent
+control surface, freezes an immutable `dispatch-timeout` settlement, and settles
+the matching lease so normal Repair Coordinator retry can proceed. A final
+summary written after that timeout cannot replace the frozen settlement or
+reopen system-gate acceptance.
 Queued, dispatching, and in-flight WorkOrders with an existing worker pane
 receive a bounded two-minute grace period for agent startup before orphan
 reconciliation; a transient startup probe must not fail a valid WorkOrder, and

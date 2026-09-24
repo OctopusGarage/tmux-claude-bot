@@ -49,7 +49,11 @@ import {
   checkpointAcceptanceGate,
 } from "./checkpoint-acceptance.js";
 import { type LoopProjectConfig, type LoopWorkspaceConfig, parseLoopConfigYaml } from "./config.js";
-import { readDelegationRecovery } from "./delegation-recovery.js";
+import {
+  readDelegationRecovery,
+  settleExpiredStartedDelegationAttempt,
+  startedDelegationAttemptDeadlineExpired,
+} from "./delegation-recovery.js";
 import {
   cleanupLoopExecutionWorktree,
   isBotOwnedLoopExecutionWorktree,
@@ -2024,6 +2028,11 @@ export async function startLoopEngineering(
     workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
     workerSessionOwnsActiveTurn: (probe) =>
       supervisorWorkerSessionOwnsActiveTurn(deps, probe.workerSession, probe.workOrder.agent),
+    cancelExpiredSupervisorWork: async ({ supervisorSession }) => {
+      if (await deps.bridge.hasSession(supervisorSession)) {
+        await deps.agent.interrupt(supervisorSession);
+      }
+    },
   });
   if (startupReconciliation.checked > 0) {
     log.info("loop engineering supervisor work order reconcile complete", {
@@ -2144,6 +2153,11 @@ export async function startLoopEngineering(
         workerSessionExists: (sessionName) => deps.bridge.hasSession(sessionName),
         workerSessionOwnsActiveTurn: (probe) =>
           supervisorWorkerSessionOwnsActiveTurn(deps, probe.workerSession, probe.workOrder.agent),
+        cancelExpiredSupervisorWork: async ({ supervisorSession }) => {
+          if (await deps.bridge.hasSession(supervisorSession)) {
+            await deps.agent.interrupt(supervisorSession);
+          }
+        },
         supervisorSessionBusy: (sessionName) => supervisorSessionHasQueuedWork(deps, sessionName),
       });
       if (reconciled.checked > 0) {
@@ -2360,6 +2374,10 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
     workerSession: string;
     workOrder: LoopWorkOrder;
   }) => Promise<boolean> | boolean;
+  cancelExpiredSupervisorWork?: (input: {
+    workOrder: LoopWorkOrder;
+    supervisorSession: string;
+  }) => Promise<void> | void;
   /** Live-process guard for periodic reconciliation. Startup callers omit this
    * so durable final summaries can recover work after the old process is gone. */
   supervisorSessionBusy?: (sessionName: string) => boolean;
@@ -2387,9 +2405,53 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
     // A supervisor writes its summary before its queue turn resolves. Periodic
     // reconciliation must not race that live owner into duplicate revisions or
     // overwrite the terminal state back to `in-flight`.
-    if (input.supervisorSessionBusy?.(record.state.supervisorSession) === true) {
+    const expiredStartedAttempt = startedDelegationAttemptDeadlineExpired(
+      record.workOrder,
+      record.state.supervisorSession,
+      input.now,
+    );
+    const supervisorBusy = input.supervisorSessionBusy?.(record.state.supervisorSession) === true;
+    if (
+      supervisorBusy &&
+      (!expiredStartedAttempt || input.cancelExpiredSupervisorWork === undefined)
+    ) {
       busyWorkOrderIds.add(record.workOrder.id);
       continue;
+    }
+    if (expiredStartedAttempt) {
+      const ownsActiveSupervisorLease = readLoopSupervisorWorkerLeaseState().leases.some(
+        (lease) =>
+          lease.status === "active" &&
+          lease.workOrderId === record.workOrder.id &&
+          lease.workerSession === record.state.supervisorSession,
+      );
+      if (ownsActiveSupervisorLease) {
+        try {
+          await input.cancelExpiredSupervisorWork?.({
+            workOrder: record.workOrder,
+            supervisorSession: record.state.supervisorSession,
+          });
+        } catch (err) {
+          log.warn("loop engineering could not cancel an expired supervisor attempt", {
+            err,
+            data: {
+              runId: record.workOrder.id,
+              projectId: record.workOrder.projectId,
+              supervisorSession: record.state.supervisorSession,
+            },
+          });
+        }
+      }
+      if (
+        !settleExpiredStartedDelegationAttempt(
+          record.workOrder,
+          record.state.supervisorSession,
+          input.now,
+        )
+      ) {
+        busyWorkOrderIds.add(record.workOrder.id);
+        continue;
+      }
     }
     const attempt = readDelegationRecovery(record.workOrder);
     if (
@@ -2515,10 +2577,17 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       advanceScheduler: !completion.retrySchedule && result.status !== "invalid-output",
       writeState: writeLoopSupervisorWorkOrderState,
       settleLease: (workOrder, resultStatus, now) =>
-        settleLoopSupervisorWorkerLeaseForStatus(workOrder, resultStatus, now),
+        settleLoopSupervisorWorkerLeaseForStatus(
+          workOrder,
+          resultStatus,
+          now,
+          false,
+          expiredStartedAttempt ? record.state.supervisorSession : undefined,
+        ),
       scheduler: schedulerStore,
       ledger: taskLedger,
     });
+    if (expiredStartedAttempt) busyWorkOrderIds.add(record.workOrder.id);
 
     recovered++;
     if (result.status !== "completed") failed++;
@@ -2566,6 +2635,7 @@ function settleLoopSupervisorWorkerLeaseForStatus(
   resultStatus: LoopSupervisedRunResult["status"],
   now: number,
   cleanupFailed = false,
+  workerSession?: string,
 ): void {
   const retainFailureForMs =
     (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
@@ -2573,6 +2643,7 @@ function settleLoopSupervisorWorkerLeaseForStatus(
     releaseLoopSupervisorWorker({
       state: readLoopSupervisorWorkerLeaseState(),
       workOrderId: workOrder.id,
+      ...(workerSession === undefined ? {} : { workerSession }),
       result: workerLeaseOutcome(resultStatus, cleanupFailed),
       now,
       retainFailureForMs,

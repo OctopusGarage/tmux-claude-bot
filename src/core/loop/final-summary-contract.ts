@@ -257,7 +257,8 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   const actionsTaken = parseActionStrings(value.actionsTaken);
   const delegatedTasks = parseDelegatedTasks(value.delegatedTasks);
   const finalVerification = parseFinalVerification(value.finalVerification, status);
-  const reviewGate = value.reviewGate === undefined ? undefined : parseReviewGate(value.reviewGate);
+  const reviewGate =
+    value.reviewGate === undefined ? undefined : parseSupervisorReviewGate(value.reviewGate);
   const planReview = value.planReview === undefined ? undefined : parsePlanReview(value.planReview);
   const learning = value.learning === undefined ? undefined : parseLearning(value.learning);
   const commits = parseStringArray(value.commits);
@@ -489,7 +490,7 @@ function parseTargetScoreMet(value: unknown): LoopSupervisorPlanReview["targetSc
   return null;
 }
 
-function parseReviewGate(value: unknown): LoopSupervisorReviewGate | null {
+export function parseSupervisorReviewGate(value: unknown): LoopSupervisorReviewGate | null {
   if (!isRecord(value)) return null;
   const preMutationReview = parseStringArray(value.preMutationReview);
   const postMutationReview = parseStringArray(value.postMutationReview);

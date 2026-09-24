@@ -172,6 +172,19 @@ Completion requires durable evidence:
 - notification delivery evidence
 - ledger/report artifacts
 
+Restart recovery preserves the delegation journal as the single execution
+owner. A started attempt remains pending before its persisted deadline; after
+the deadline, the bot interrupts the exact recorded supervisor, freezes a
+`dispatch-timeout` attempt settlement, and releases or retains only the matching
+lease. Immutable timeout evidence wins over any later mutable supervisor summary.
+
+Project recovery may terminalize a passing supervisor summary only when the
+adjacent system gate is accepted and correlates to the same WorkOrder, project,
+completed result, and supervisor review-gate snapshot. Absent or inconsistent
+gate evidence remains retryable rather than becoming a fixed repair. Snapshot
+matching uses the final-summary parser's canonical form while retaining exact
+raw matching for compatible historical artifacts.
+
 Recoverable failures should be sent back to the same supervisor through bounded
 revision prompts. Non-recoverable blockers, such as missing GitHub permissions,
 should fail with precise evidence.

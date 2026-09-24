@@ -57,6 +57,7 @@ const settledSchema = z
     attemptId: idSchema,
     settledAt: z.number().finite(),
     status: z.number().int(),
+    resultStatus: z.literal("dispatch-timeout").optional(),
     cancelled: z.boolean(),
     output: z.string().max(16_000),
     checkpoint: z.string().max(1_048_576),
@@ -284,6 +285,7 @@ export function settleDelegationAttempt(
   cancelled: boolean,
   now: number,
   ownsExecution: boolean,
+  resultStatus?: "dispatch-timeout",
 ): boolean {
   const current = readDelegationAttempt(workOrder, prepared.supervisorSession, prepared.attemptId);
   if (current.phase === "invalid") throw new Error("invalid attempt settlement");
@@ -310,10 +312,15 @@ export function settleDelegationAttempt(
       attemptId: prepared.attemptId,
       settledAt: now,
       status: result.status,
+      ...(resultStatus === undefined ? {} : { resultStatus }),
       cancelled,
       output: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-16_000),
       checkpoint: JSON.stringify(readIterationCheckpoint(workOrder)),
-      finalSummary: JSON.stringify(settlementSummary(workOrder, prepared, result)),
+      finalSummary: JSON.stringify(
+        resultStatus === "dispatch-timeout"
+          ? { ok: false, reason: "delegation deadline exhausted after restart" }
+          : settlementSummary(workOrder, prepared, result),
+      ),
     }),
   );
 }

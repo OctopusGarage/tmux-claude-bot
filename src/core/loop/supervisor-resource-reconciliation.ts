@@ -57,7 +57,10 @@ export async function reconcileTerminalSupervisorResources(input: {
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
   const removedStaleLeases = reconcileStaleLoopSupervisorWorkerLeases();
-  const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(input.now);
+  const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(
+    input.now,
+    input.excludedWorkOrderIds,
+  );
   const abandonedActiveLeases = await reconcileAbandonedActiveLoopSupervisorWorkerLeases(
     input.now,
     taskLedger,
@@ -330,7 +333,10 @@ async function reconcileTerminalLoopSupervisorWorkerSessions(input: {
   return cleaned;
 }
 
-function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
+function reconcileTerminalLoopSupervisorWorkerLeases(
+  now: number,
+  excludedWorkOrderIds: ReadonlySet<string> = new Set(),
+): number {
   const activeLeasedWorkOrders = new Set(
     readLoopSupervisorWorkerLeaseState()
       .leases.filter((lease) => lease.status === "active")
@@ -338,6 +344,7 @@ function reconcileTerminalLoopSupervisorWorkerLeases(now: number): number {
   );
   let settled = 0;
   for (const record of listTerminalLoopSupervisorWorkOrders()) {
+    if (excludedWorkOrderIds.has(record.workOrder.id)) continue;
     if (!activeLeasedWorkOrders.has(record.workOrder.id)) continue;
     settleLoopSupervisorWorkerLeaseForStatus(
       record.workOrder,

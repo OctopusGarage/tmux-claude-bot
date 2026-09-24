@@ -650,9 +650,33 @@ describe("project recovery service", () => {
         actionsTaken: ["restored worker environment"],
         delegatedTasks: [],
         finalVerification: "passed",
-        reviewGate: { decision: "pass" },
+        reviewGate: {
+          preMutationReview: ["reviewed the failure"],
+          postMutationReview: ["reviewed the repair"],
+          aiReview: "not-applicable",
+          deterministicGates: [{ name: " tests ", result: "passed" }],
+          decision: "pass",
+          notes: "verified",
+        },
         commits: [],
         followUps: [],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: {
+          preMutationReview: ["reviewed the failure"],
+          postMutationReview: ["reviewed the repair"],
+          aiReview: "not-applicable",
+          deterministicGates: [{ name: "tests", result: "passed" }],
+          decision: "pass",
+          notes: ["verified"],
+        },
       }),
     );
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
@@ -715,6 +739,16 @@ describe("project recovery service", () => {
         followUps: [],
       }),
     );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        workOrderId: runDir.split("/").at(-1),
+        projectId: "bot",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+      }),
+    );
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({
       projectId: "bot",
@@ -754,6 +788,123 @@ describe("project recovery service", () => {
     );
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
       status: "fixed",
+    });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["malformed", ["not-a-system-gate"]],
+    [
+      "rejected",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: false,
+        supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "wrong work order",
+      {
+        workOrderId: "another-run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "wrong result",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "blocked",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "wrong project",
+      {
+        workOrderId: "run",
+        projectId: "another-project",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "wrong revision",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "block" },
+      },
+    ],
+  ])("keeps a passing recovery retryable when its system gate is %s", async (_case, gate) => {
+    const root = join(tmpdir(), `project-recovery-gate-${Date.now()}-${_case}`);
+    const runDir = join(root, "run");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "geo",
+        actionsTaken: ["restored worker environment"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "pass" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    if (gate !== undefined) {
+      await writeFile(join(runDir, "system-gate.json"), JSON.stringify(gate));
+    }
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "missing-system-gate",
+      taskId: "loop:geo:bug-fix:gate",
+      now: 1_000,
+    });
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:geo:bug-fix:gate",
+          source: "loop-engineering",
+          name: "geo bug-fix",
+          status: "failed",
+          summary: "Project recovery delegated run recovery.",
+          reportPath: runDir,
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+          repairStatus: "running",
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:geo:bug-fix:gate",
+      "pending",
+      expect.stringContaining("system gate"),
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "pending",
     });
   });
 

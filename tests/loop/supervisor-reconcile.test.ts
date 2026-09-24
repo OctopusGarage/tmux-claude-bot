@@ -7,6 +7,7 @@ import { autonomousCapacityLeaseId } from "../../src/core/automation/coordinator
 import {
   claimDelegationAttempt,
   prepareDelegationAttempt,
+  readDelegationAttempt,
   settleDelegationAttempt,
 } from "../../src/core/loop/delegation-attempt.js";
 import {
@@ -215,10 +216,211 @@ describe("loop supervisor work order reconciliation", () => {
   it("does not reconcile a summary while its journaled attempt still owns execution", async () => {
     const f = journalFixture();
     claimDelegationAttempt(f.order, f.prepared, 1500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 4_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
     writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
     expect(await f.reconcile()).toMatchObject({ recovered: 0 });
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId).phase,
+    ).toBe("started");
     expect(listLoopReports()).toEqual([]);
     expect(readLoopSupervisorWorkOrderRegistry(3000).unfinished).toHaveLength(1);
+  });
+
+  it("expires a restarted started attempt at its durable deadline even while the supervisor is busy", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          workerSession: "tmux_proj_other-supervisor",
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_250,
+          updatedAt: 1_750,
+        },
+      ],
+    });
+    const cancelled: string[] = [];
+
+    const first = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: async ({ supervisorSession }) => {
+        cancelled.push(supervisorSession);
+      },
+    });
+
+    expect(first).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(cancelled).toEqual(["tmux_proj_loop-supervisor"]);
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId),
+    ).toMatchObject({ phase: "settled", settled: { resultStatus: "dispatch-timeout" } });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+    expect(JSON.parse(readFileSync(join(f.runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      resultStatus: "dispatch-timeout",
+    });
+    expect(
+      new DailyTaskLedger()
+        .listAll()
+        .find((record) => record.taskId.endsWith(f.order.scheduledAt.toString())),
+    ).toMatchObject({ status: "failed", repairStatus: "pending", error: "dispatch-timeout" });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: f.order.id,
+        status: "retained",
+      }),
+      expect.objectContaining({
+        workerSession: "tmux_proj_other-supervisor",
+        workOrderId: f.order.id,
+        status: "active",
+      }),
+    ]);
+
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+  });
+
+  it("terminalizes an expired attempt when interrupting its exact supervisor fails", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: f.prepared.supervisorSession,
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: ({ supervisorSession }) => {
+        expect(supervisorSession).toBe(f.prepared.supervisorSession);
+        throw new Error("interrupt failed");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId),
+    ).toMatchObject({ phase: "settled", settled: { resultStatus: "dispatch-timeout" } });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+  });
+
+  it("does not interrupt a supervisor without the matching active lease", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: f.prepared.supervisorSession,
+          workOrderId: "another-work-order",
+          projectId: "another-project",
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+    });
+    const interrupted: string[] = [];
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: ({ supervisorSession }) => {
+        interrupted.push(supervisorSession);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(interrupted).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: f.prepared.supervisorSession,
+        workOrderId: "another-work-order",
+        status: "active",
+      }),
+    ]);
   });
 
   it("routes restored completion through checkpoint acceptance before publishing a report", async () => {
