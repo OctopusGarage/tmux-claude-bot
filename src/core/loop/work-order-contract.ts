@@ -44,12 +44,20 @@ export type LoopSupervisorFinalSummary = {
   actionsTaken: string[];
   delegatedTasks: Array<{ projectId: string; status: string } | string>;
   finalVerification: "passed" | "failed" | "not-run" | "unknown";
+  repairFinding?: LoopSupervisorRepairFinding;
   pullRequestDecisions?: LoopSupervisorPullRequestDecision[];
   reviewGate?: LoopSupervisorReviewGate;
   planReview?: LoopSupervisorPlanReview;
   learning?: LoopSupervisorLearning;
   commits: string[];
   followUps: string[];
+};
+
+export type LoopSupervisorRepairFinding = {
+  code: "stale-runtime-source-adoption";
+  repairDisposition: "bot-repairable";
+  retry: "automatic";
+  evidence: string[];
 };
 
 export type LoopSupervisorReviewGate = {

@@ -6,6 +6,8 @@ export type SecurityRiskAssessmentResult = {
   decision: "run" | "skip" | "block";
   notes: string[];
   blockers: string[];
+  failureKind?: "dependency-audit-unavailable";
+  repairDisposition?: "bot-repairable";
 };
 
 export function parseSecurityRiskAssessment(
@@ -24,11 +26,13 @@ export function parseSecurityRiskAssessment(
     "actionThreshold" | "criticalThreshold" | "critical" | "notes"
   >;
   if (status !== 0) {
+    const failure = parseRetryableAssessmentFailure(stdout);
     return {
       ...base,
       riskScore: null,
       decision: "block",
       blockers: [`security risk assessment failed with exit status ${status}`],
+      ...(failure === null ? {} : failure),
     };
   }
 
@@ -88,4 +92,27 @@ export function parseSecurityRiskAssessment(
     notes,
     blockers: [],
   };
+}
+
+function parseRetryableAssessmentFailure(
+  stdout: string,
+): Pick<SecurityRiskAssessmentResult, "failureKind" | "repairDisposition"> | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout.trim());
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).failureKind === "dependency-audit-unavailable" &&
+      (parsed as Record<string, unknown>).retryable === true
+    ) {
+      return {
+        failureKind: "dependency-audit-unavailable",
+        repairDisposition: "bot-repairable",
+      };
+    }
+  } catch {
+    // Non-zero legacy assessment output remains a terminal blocked result.
+  }
+  return null;
 }

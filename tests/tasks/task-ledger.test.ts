@@ -183,6 +183,46 @@ describe("DailyTaskLedger", () => {
     expect(ledger.listAll()[1]?.failureKind).toBeUndefined();
   });
 
+  it("preserves persisted explicit failure kinds through recovery reconciliation updates", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-failure-kind-"));
+    const taskId = "loop:hub:security-maintenance:1";
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "hub security maintenance",
+      scheduledAt: 1,
+    });
+    ledger.fail(taskId, {
+      endedAt: 2,
+      error: "security risk assessment failed with exit status 2",
+      failureKind: "dependency-audit-unavailable",
+    });
+
+    ledger.markRepairStatus(taskId, {
+      repairStatus: "pending",
+      updatedAt: 3,
+      summary: "Recovery dispatch deferred: capacity-exhausted",
+    });
+
+    expect(new DailyTaskLedger().listAll()[0]).toMatchObject({
+      failureKind: "dependency-audit-unavailable",
+      repairStatus: "pending",
+    });
+
+    ledger.markRepairStatus(taskId, {
+      repairStatus: "blocked",
+      updatedAt: 4,
+      summary: "Registry ownership transferred to an external service.",
+      failureKind: "external-service",
+    });
+
+    expect(new DailyTaskLedger().listAll()[0]).toMatchObject({
+      failureKind: "external-service",
+      repairStatus: "blocked",
+    });
+  });
+
   it("marks a running task as timed out after the timeout window", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-timeout-"));
     const ledger = new DailyTaskLedger();

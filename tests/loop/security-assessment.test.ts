@@ -37,4 +37,19 @@ describe("parseSecurityRiskAssessment", () => {
       "block",
     );
   });
+
+  it("preserves structured transient audit unavailability from a non-zero assessment", () => {
+    expect(
+      parseSecurityRiskAssessment(
+        2,
+        JSON.stringify({ failureKind: "dependency-audit-unavailable", retryable: true }),
+        70,
+        90,
+      ),
+    ).toMatchObject({
+      decision: "block",
+      failureKind: "dependency-audit-unavailable",
+      repairDisposition: "bot-repairable",
+    });
+  });
 });

@@ -85,6 +85,20 @@ describe("project recovery", () => {
     });
   });
 
+  it("classifies structured dependency audit unavailability as retryable", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "security risk assessment failed with exit status 2",
+        failureKind: "dependency-audit-unavailable",
+        summary: "Security Maintenance pre-score blocked dispatch.",
+      }),
+    ).toMatchObject({
+      classification: "retryable",
+      reason: expect.stringContaining("dependency audit availability"),
+    });
+  });
+
   it("classifies CI and merge decisions without dispatching them", () => {
     expect(
       classifyHistoricalFailure({

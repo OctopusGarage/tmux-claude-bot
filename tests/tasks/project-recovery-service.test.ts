@@ -1693,6 +1693,424 @@ describe("project recovery service", () => {
     );
   });
 
+  it("requeues accepted blocked recovery with a structured bot-repairable finding", async () => {
+    const runDir = join(tmpdir(), `project-recovery-stale-runtime-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        repairDisposition: "bot-repairable",
+        findings: [
+          {
+            code: "stale-runtime-source-adoption",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: ["loaded=old", "source=new"],
+          },
+        ],
+      }),
+    );
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "stale-runtime-source-adoption",
+      taskId: "autopilot:original-stale-runtime",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:stale-runtime-recovery"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const records = [
+      {
+        taskId: "autopilot:original-stale-runtime",
+        source: "autopilot-delegate" as const,
+        name: "tmux-claude-bot active delegated task",
+        status: "failed" as const,
+        repairStatus: "running" as const,
+        reportPath: runDir,
+        scheduledAt: 1_000,
+        updatedAt: 1_500,
+      },
+      {
+        taskId: "autopilot:stale-runtime-recovery",
+        source: "autopilot-delegate" as const,
+        name: "tmux-claude-bot active delegated task",
+        status: "failed" as const,
+        repairStatus: "pending" as const,
+        reportPath: runDir,
+        scheduledAt: 1_100,
+        updatedAt: 1_600,
+      },
+    ];
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records,
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ fixed: 0, blocked: 0 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "retry-wait",
+      attempt: 1,
+    });
+    expect(
+      coordinator.list().find((record) => record.id === queue.id)?.nextAttemptAt,
+    ).toBeGreaterThan(2_000);
+    expect(
+      coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
+    ).toBeUndefined();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original-stale-runtime",
+      "pending",
+      expect.stringContaining("returned to the repair queue"),
+    );
+
+    const retrying = coordinator.list().find((record) => record.id === queue.id);
+    if (retrying === undefined) throw new Error("expected retrying repair queue record");
+    store.set(queue.id, {
+      ...retrying,
+      status: "running",
+      attempt: 2,
+      workOrderId: "stale-runtime-third-attempt",
+      leaseId: "recovery-third-attempt",
+      leaseExpiresAt: 4_000,
+    });
+    updateRepairStatus.mockClear();
+
+    const exhausted = await reconcileProjectRecoveryArtifacts({
+      now: 3_000,
+      records,
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(exhausted).toMatchObject({ fixed: 0, blocked: 1 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "dead-letter",
+      attempt: 3,
+    });
+    expect(
+      coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
+    ).toBeUndefined();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:original-stale-runtime",
+      "blocked",
+      expect.stringContaining("attempt limit"),
+    );
+  });
+
+  it("dead-letters a standalone retryable artifact on its third consumed attempt", async () => {
+    const runDir = join(tmpdir(), `project-recovery-standalone-exhausted-${Date.now()}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        repairDisposition: "bot-repairable",
+        failures: [],
+        findings: [
+          {
+            code: "stale-runtime-source-adoption",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: ["loaded=old", "source=new"],
+          },
+        ],
+      }),
+    );
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "standalone-stale-runtime-source-adoption",
+      taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
+      now: 1_000,
+    });
+    store.set(queue.id, {
+      ...queue,
+      status: "running",
+      attempt: 2,
+      workOrderId: "standalone-third-attempt",
+      leaseId: "standalone-third-attempt",
+      leaseExpiresAt: 4_000,
+    });
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 3_000,
+      records: [
+        {
+          taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
+          source: "loop-engineering",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "running",
+          reportPath: runDir,
+          scheduledAt: 1_000,
+          updatedAt: 2_000,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "dead-letter",
+      attempt: 3,
+    });
+    expect(
+      coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
+    ).toBeUndefined();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:tmux-claude-bot:active-delegated-task:standalone",
+      "blocked",
+      expect.stringContaining("attempt limit"),
+    );
+  });
+
+  it.each([
+    ["unknown finding code", {}, { code: "unrecognized-repair", evidence: ["open-worker"] }],
+    ["empty finding evidence", {}, { evidence: [] }],
+    ["rejected system gate", { accepted: false }, {}],
+    ["non-blocked system gate result", { resultStatus: "completed" }, {}],
+    ["conflicting top-level disposition", { repairDisposition: "target-or-external-blocker" }, {}],
+    ["deterministic gate failure", { failures: ["source worktree is dirty"] }, {}],
+  ])(
+    "does not retry stale-runtime evidence with %s",
+    async (_name, gateOverride, findingOverride) => {
+      const runDir = join(
+        tmpdir(),
+        `project-recovery-invalid-stale-runtime-${Date.now()}-${_name}`,
+      );
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        join(runDir, "supervisor-final-summary.json"),
+        JSON.stringify({
+          status: "blocked",
+          projectId: "tmux-claude-bot",
+          finalVerification: "failed",
+          reviewGate: { decision: "block" },
+        }),
+      );
+      await writeFile(
+        join(runDir, "system-gate.json"),
+        JSON.stringify({
+          accepted: true,
+          resultStatus: "blocked",
+          repairDisposition: "bot-repairable",
+          failures: [],
+          findings: [
+            {
+              code: "stale-runtime-source-adoption",
+              repairDisposition: "bot-repairable",
+              retry: "automatic",
+              evidence: ["loaded=old", "source=new"],
+              ...findingOverride,
+            },
+          ],
+          ...gateOverride,
+        }),
+      );
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const queue = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo/tmux-claude-bot",
+        source: "project-recovery",
+        taskFamily: "tmux-claude-bot active delegated task",
+        fingerprint: `invalid-${_name}`,
+        taskId: `autopilot:original-${_name}`,
+        now: 1_000,
+      });
+      const recoveryTaskId = `autopilot:recovery-${_name}`;
+      coordinator.linkTaskIds(queue.id, [recoveryTaskId], 1_000);
+      coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+      coordinator.markRunning(queue.id, "recovery", 1_001);
+
+      await reconcileProjectRecoveryArtifacts({
+        now: 2_000,
+        records: [
+          {
+            taskId: `autopilot:original-${_name}`,
+            source: "autopilot-delegate",
+            name: "tmux-claude-bot active delegated task",
+            status: "failed",
+            repairStatus: "running",
+            scheduledAt: 1_000,
+            updatedAt: 1_500,
+          },
+          {
+            taskId: recoveryTaskId,
+            source: "autopilot-delegate",
+            name: "tmux-claude-bot active delegated task",
+            status: "failed",
+            repairStatus: "pending",
+            reportPath: runDir,
+            scheduledAt: 1_100,
+            updatedAt: 1_600,
+          },
+        ],
+        coordinator,
+        updateRepairStatus: vi.fn(),
+      });
+
+      expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+        attempt: 0,
+      });
+      expect(coordinator.list().find((record) => record.id === queue.id)?.status).not.toBe(
+        "retry-wait",
+      );
+    },
+  );
+
+  it.each([
+    [
+      "external disposition despite an action token",
+      { repairDisposition: "target-or-external-blocker" },
+      { actionsTaken: ["open-worker failed while checking the runtime"] },
+    ],
+    [
+      "manual finding despite a follow-up token",
+      {
+        repairDisposition: "target-or-external-blocker",
+        findings: [
+          {
+            code: "owner-action-required",
+            repairDisposition: "target-or-external-blocker",
+            retry: "manual",
+            evidence: ["owner approval is required"],
+          },
+        ],
+      },
+      { followUps: ["Retry open-worker after owner approval."] },
+    ],
+    [
+      "deterministic conflicting failure despite a review-note token",
+      { failures: ["source worktree is dirty after supervisor completion: modified.ts"] },
+      { reviewGate: { decision: "block", notes: ["open-worker must not override this gate"] } },
+    ],
+  ])("preserves %s", async (_name, gateOverride, summaryOverride) => {
+    const runDir = join(tmpdir(), `project-recovery-authoritative-gate-${Date.now()}-${_name}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: [],
+        finalVerification: "failed",
+        reviewGate: { decision: "block" },
+        followUps: [],
+        ...summaryOverride,
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        repairDisposition: "bot-repairable",
+        failures: [],
+        findings: [
+          {
+            code: "stale-runtime-source-adoption",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: ["loaded=old", "source=new"],
+          },
+        ],
+        ...gateOverride,
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: `authoritative-${_name}`,
+      taskId: `autopilot:original-${_name}`,
+      now: 1_000,
+    });
+    const recoveryTaskId = `autopilot:recovery-${_name}`;
+    coordinator.linkTaskIds(queue.id, [recoveryTaskId], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+
+    await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: `autopilot:original-${_name}`,
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: recoveryTaskId,
+          source: "autopilot-delegate",
+          name: "tmux-claude-bot active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_600,
+        },
+      ],
+      coordinator,
+      updateRepairStatus: vi.fn(),
+    });
+
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      attempt: 0,
+    });
+    expect(coordinator.list().find((record) => record.id === queue.id)?.status).not.toBe(
+      "retry-wait",
+    );
+  });
+
   it("reopens an older accepted blocked recovery when newer source divergence is retryable", async () => {
     const oldRunDir = join(tmpdir(), `project-recovery-old-blocked-${Date.now()}`);
     const newRunDir = join(tmpdir(), `project-recovery-new-divergence-${Date.now()}`);
@@ -1802,8 +2220,8 @@ describe("project recovery service", () => {
 
     expect(result).toMatchObject({ fixed: 0, blocked: 0 });
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "pending",
-      nextAttemptAt: 2_000,
+      status: "retry-wait",
+      attempt: 1,
     });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "autopilot:original-failure",
@@ -1891,10 +2309,10 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toEqual({ checked: 2, fixed: 0, blocked: 0 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 0 });
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "pending",
-      nextAttemptAt: 2_000,
+      status: "retry-wait",
+      attempt: 1,
     });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:tmux-claude-bot:active-delegated-task:1",
@@ -1978,10 +2396,10 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toEqual({ checked: 2, fixed: 0, blocked: 0 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 0 });
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "pending",
-      nextAttemptAt: 2_000,
+      status: "retry-wait",
+      attempt: 1,
     });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:alcove:pull-request-review:1",

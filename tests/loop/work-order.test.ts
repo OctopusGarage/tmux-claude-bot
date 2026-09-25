@@ -1864,6 +1864,19 @@ prReview:
     }
   });
 
+  it("instructs supervisors to report stale runtime adoption structurally", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: firstProject(),
+      scheduledAt: 1752643800000,
+      runId: "1752643800000-datavibe",
+    });
+
+    expect(buildLoopSupervisorPrompt(workOrder)).toContain(
+      'repairFinding with code "stale-runtime-source-adoption"',
+    );
+  });
+
   it("parses structured deterministic gate evidence in reviewGate", () => {
     const result = parseSupervisorFinalSummary(
       [
@@ -1908,6 +1921,41 @@ prReview:
           evidence: "clean",
         },
       ]);
+    }
+  });
+
+  it("preserves a structured bot-repairable finding in a blocked summary", () => {
+    const result = parseSupervisorFinalSummary(
+      [
+        "done",
+        "[LOOP_SUPERVISOR_DONE:wo-1]",
+        JSON.stringify({
+          status: "blocked",
+          projectId: "tmux-claude-bot",
+          actionsTaken: ["verified the checked-out source is newer than the loaded runtime"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          repairFinding: {
+            code: "stale-runtime-source-adoption",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: ["loaded=old", "source=new"],
+          },
+          commits: [],
+          followUps: ["Adopt the current source revision, then retry."],
+        }),
+      ].join("\n"),
+      "wo-1",
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary.repairFinding).toEqual({
+        code: "stale-runtime-source-adoption",
+        repairDisposition: "bot-repairable",
+        retry: "automatic",
+        evidence: ["loaded=old", "source=new"],
+      });
     }
   });
 
