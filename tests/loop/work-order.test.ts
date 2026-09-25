@@ -1133,6 +1133,7 @@ prReview:
       repository,
       scheduledAt: 1752643800000,
       runId: "1752643800000-tmux-claude-bot-repo-pr-review",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     const prompt = buildLoopSupervisorPrompt(workOrder);
@@ -1149,6 +1150,10 @@ prReview:
     });
     expect(workOrder.task).not.toHaveProperty("base");
     expect(workOrder.pullRequestPolicy).toMatchObject({ base: "dev", switchBack: "dev" });
+    expect(workOrder.notificationSession).toBe("tmux_proj_-repo-tmux-claude-bot");
+    expect(workOrder.workerSession).toBe(
+      "tmux_proj_loop-worker-tmux-claude-bot-1752643800000-tmux-claude-bot-repo-pr-review",
+    );
     expect(prompt).toContain("Repository pull request review and merge task.");
     expect(prompt).toContain("Review every open pull request in OctopusGarage/tmux-claude-bot");
     expect(prompt).toContain("all base branches");
@@ -1195,6 +1200,9 @@ prReview:
     expect(prompt).toContain("gh auth token --user 'example-owner'");
     expect(prompt).toContain("git -C '/repo/tmux-claude-bot' switch dev");
     expect(prompt).toContain("do not call tcb open for the synthetic *-all-prs id");
+    expect(prompt).toContain(
+      "open-worker 'tmux_proj_loop-worker-tmux-claude-bot-1752643800000-tmux-claude-bot-repo-pr-review' '/repo/tmux-claude-bot' --agent codex",
+    );
     expect(prompt).not.toContain("open tmux-claude-bot --agent codex");
     expect(prompt).not.toContain("open tmux-claude-bot-all-prs --agent codex");
     expect(prompt).not.toContain("loop-created PRs");

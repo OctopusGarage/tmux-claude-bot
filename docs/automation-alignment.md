@@ -225,6 +225,10 @@ worktrees as soon as they are safe to verify and must retain only recent
 unreferenced supervisor worktree directories by default. The orphan fallback
 retention window is one week; active WorkOrders, active leases, and currently
 owned worker sessions remain protected from directory-based cleanup.
+Repository-wide PR-review WorkOrders must carry the deterministic worker-session
+identity whenever a project session prefix is configured, and their delegation
+instructions must use that identity. Terminal reconciliation cannot reliably
+release an improvised or otherwise untracked worker session.
 Workspace cleanup applies the same verified worktree lifecycle to every isolated
 member repository, then removes only the empty bot-owned run container. The
 non-Git workspace container and coordination root must never be passed to Git as

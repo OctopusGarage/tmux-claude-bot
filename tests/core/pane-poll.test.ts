@@ -129,6 +129,29 @@ describe("pollUntilReady", () => {
 describe("pollUntilIdle", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("stops waiting when the tmux session no longer exists", async () => {
+    const capturePane = vi.fn(async () => {
+      throw new Error("can't find session: sess");
+    });
+    const bridge = { capturePane } as unknown as TmuxBridge;
+    const output = { process: vi.fn(() => "") } as unknown as OutputProcessor;
+
+    await expect(
+      pollUntilIdle({
+        bridge,
+        output,
+        idlePollTicks: 2,
+        pollIntervalMs: 1,
+        maxWaitDoneMs: 60_000,
+        sessionName: "sess",
+        logTag: "[test]",
+      }),
+    ).rejects.toThrow("can't find session: sess");
+
+    expect(capturePane).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+  });
+
   it("reports one warning rather than one error per repeated capture failure", async () => {
     const bridge = {
       capturePane: vi.fn(async () => {

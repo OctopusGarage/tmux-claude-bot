@@ -35,6 +35,11 @@ function nonBlankLineCount(pane: string): number {
   return pane.split("\n").filter((l) => l.trim().length > 0).length;
 }
 
+function isMissingTmuxSessionError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /can't find session(?::|\s|$)/i.test(message);
+}
+
 /**
  * Poll the pane until a per-agent `classify` predicate reports it ready (or the
  * optional {@link StableReady} fallback fires), or `maxWaitReadyMs` elapses
@@ -198,6 +203,7 @@ export async function pollUntilIdle(opts: {
       if (captureFailures === 1)
         log.warn("agent pane capture failed during completion wait", context);
       else log.debug("agent pane capture still failing during completion wait", context);
+      if (isMissingTmuxSessionError(err)) throw err;
       await sleep(pollIntervalMs);
       continue;
     }

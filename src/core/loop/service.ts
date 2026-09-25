@@ -721,6 +721,9 @@ export async function runLoopServiceTickAsync(input: {
             repository,
             scheduledAt: due.scheduledAt,
             runId,
+            ...(input.projectSessionPrefix !== undefined
+              ? { projectSessionPrefix: input.projectSessionPrefix }
+              : {}),
           })
         : workspace !== undefined
           ? buildLoopWorkspaceWorkOrder({
@@ -1194,6 +1197,12 @@ export async function runLoopServiceTickAsync(input: {
     cleanup: ((sessionName: string) => Promise<void>) | undefined,
   ): Promise<void> => {
     if (workOrder.workerSession === undefined || cleanup === undefined) return;
+    if (
+      input.workerSessionExists !== undefined &&
+      !(await input.workerSessionExists(workOrder.workerSession))
+    ) {
+      return;
+    }
     try {
       await cleanup(workOrder.workerSession);
       log.info("loop engineering terminal worker session cleaned up", {
