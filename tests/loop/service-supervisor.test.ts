@@ -2971,7 +2971,7 @@ prReview:
     expect(larkMessages.join("\n")).toContain("Continue via supervisor");
   });
 
-  it("dispatches supervised test-coverage work orders with the coverage branch", async () => {
+  it("does not clean a planned worker session that was never opened", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-test-coverage-"));
     const configFile = writeLoopConfig({
@@ -3059,6 +3059,7 @@ prReview:
       resetSupervisorBeforeWorkOrder: "compact",
       projectSessionPrefix: "tmux_proj_",
       cleanupCompletedWorkerSession,
+      workerSessionExists: async () => false,
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
@@ -3072,9 +3073,7 @@ prReview:
     expect(dispatched[0]?.prompt).toContain(
       "compact --yes before each delegated test-coverage round",
     );
-    expect(cleanupCompletedWorkerSession).toHaveBeenCalledWith(
-      "tmux_proj_loop-worker-hub-1784211600000-hub-test-coverage",
-    );
+    expect(cleanupCompletedWorkerSession).not.toHaveBeenCalled();
     expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
   });
 
