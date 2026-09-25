@@ -10,6 +10,7 @@ import {
   reconcileLoopSupervisorWorkOrders,
   runGitCommand,
   runShellCommand,
+  supervisorSessionHasQueuedWork,
 } from "../loop/service.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildRuntimeGuardianRepairPrompt } from "../prompts/repair-prompts.js";
@@ -273,6 +274,7 @@ export async function reconcileRuntimeGuardianBeforeDiscovery(
     | "runGit"
     | "cleanupCompletedWorkerSession"
     | "workerSessionExists"
+    | "supervisorSessionBusy"
   > & {
     reconcileAutopilot?: typeof reconcileAutopilotDelegatedTasks;
     reconcileLoop?: typeof reconcileLoopSupervisorWorkOrders;
@@ -291,6 +293,9 @@ export async function reconcileRuntimeGuardianBeforeDiscovery(
     ...(input.workerSessionExists === undefined
       ? {}
       : { workerSessionExists: input.workerSessionExists }),
+    ...(input.supervisorSessionBusy === undefined
+      ? {}
+      : { supervisorSessionBusy: input.supervisorSessionBusy }),
   });
 }
 
@@ -481,6 +486,7 @@ export function startRuntimeGuardian(
             cleanupWorkerSessionRecords(session);
           },
           workerSessionExists: (session) => deps.bridge.hasSession(session),
+          supervisorSessionBusy: (session) => supervisorSessionHasQueuedWork(deps, session),
         });
       },
     }).catch((err) => log.warn("runtime guardian tick failed", { err }));
