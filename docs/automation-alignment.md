@@ -1009,9 +1009,14 @@ agent-reported and cannot claim system provenance. A fully reported checkpoint
 must also match a passed `system-command` verification artifact for the same
 WorkOrder, contract hash and repository revision before final checkpoint
 acceptance can pass. Active delegation must preserve the matched project's eval
-policy when it materializes the WorkOrder; silently dropping a configured
-`eval.command` makes valid system verification impossible. Agent-only eval
-remains advisory and does not satisfy this provenance requirement. Workspace and
+and assessment policies when it materializes the WorkOrder. A deterministic
+`eval.command` is the preferred verifier; when eval is agent-only, the system
+reruns `assessment.command` against the clean final revision and requires its
+finite score to meet `eval.minScore` or, when absent, the WorkOrder target.
+Durable verification readers require the complete command hash, output hash,
+exit status, failure list, score and timestamps, and the command hash must match
+the WorkOrder policy; a partial or foreign-command record fails closed. Agent
+output remains advisory and does not itself satisfy provenance. Workspace and
 other task-family rollouts need their own contract tests.
 
 The shared supervised runner owns durable deadline and revision reservations for

@@ -139,6 +139,7 @@ function writeCommandVerification(
     passed?: boolean;
     contractHash?: string;
     workOrderId?: string;
+    command?: string;
   },
 ): void {
   const checkpointPath = iterationCheckpointPath(workOrder);
@@ -153,7 +154,9 @@ function writeCommandVerification(
       workOrderId: input.workOrderId ?? workOrder.id,
       contractHash: input.contractHash ?? buildIterationCheckpointTemplate(workOrder).contractHash,
       revision: input.revision,
-      commandHash: createHash("sha256").update("pnpm assess").digest("hex"),
+      commandHash: createHash("sha256")
+        .update(input.command ?? "pnpm assess")
+        .digest("hex"),
       exitStatus: input.passed === false ? 1 : 0,
       passed: input.passed !== false,
       failures: [],
@@ -194,38 +197,61 @@ describe("iteration checkpoints", () => {
     });
   });
 
-  it.each(["failed", "wrong-revision", "wrong-contract", "wrong-work-order"] as const)(
-    "rejects %s system command verification for checkpoint acceptance",
-    (scenario) => {
-      const workOrder = fixture();
-      const { repo, git } = initRepo();
-      workOrder.projectPath = repo;
-      const checkpoint = partial(workOrder);
-      checkpoint.repositoryRevision = git(["rev-parse", "HEAD"]);
-      for (const item of checkpoint.items) {
-        item.status = "reported-passed";
-        item.evidence = [
-          {
-            source: "agent-reported",
-            revision: checkpoint.repositoryRevision,
-            command: "pnpm assess",
-            result: "passed",
-            artifact: "assessment.json",
-          },
-        ];
-      }
-      save(workOrder, checkpoint);
+  it.each([
+    "failed",
+    "wrong-revision",
+    "wrong-contract",
+    "wrong-work-order",
+    "wrong-command",
+    "incomplete",
+  ] as const)("rejects %s system command verification for checkpoint acceptance", (scenario) => {
+    const workOrder = fixture();
+    const { repo, git } = initRepo();
+    workOrder.projectPath = repo;
+    const checkpoint = partial(workOrder);
+    checkpoint.repositoryRevision = git(["rev-parse", "HEAD"]);
+    for (const item of checkpoint.items) {
+      item.status = "reported-passed";
+      item.evidence = [
+        {
+          source: "agent-reported",
+          revision: checkpoint.repositoryRevision,
+          command: "pnpm assess",
+          result: "passed",
+          artifact: "assessment.json",
+        },
+      ];
+    }
+    save(workOrder, checkpoint);
+    if (scenario === "incomplete") {
+      const path = iterationCheckpointPath(workOrder);
+      if (!path) throw new Error("checkpoint not supported");
+      const dir = join(dirname(path), "command-verifications");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "incomplete.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          source: "system-command",
+          workOrderId: workOrder.id,
+          contractHash: buildIterationCheckpointTemplate(workOrder).contractHash,
+          revision: checkpoint.repositoryRevision,
+          passed: true,
+        }),
+      );
+    } else {
       writeCommandVerification(workOrder, {
         revision: scenario === "wrong-revision" ? "b".repeat(40) : checkpoint.repositoryRevision,
         passed: scenario !== "failed",
         ...(scenario === "wrong-contract" ? { contractHash: "c".repeat(64) } : {}),
         ...(scenario === "wrong-work-order" ? { workOrderId: "other-work-order" } : {}),
+        ...(scenario === "wrong-command" ? { command: "not the configured command" } : {}),
       });
-      expect(checkpointAcceptanceGate(workOrder, runGitForRepo()).failures).toEqual([
-        "checkpoint system verification artifact is missing or not passed for current revision",
-      ]);
-    },
-  );
+    }
+    expect(checkpointAcceptanceGate(workOrder, runGitForRepo()).failures).toEqual([
+      "checkpoint system verification artifact is missing or not passed for current revision",
+    ]);
+  });
 
   it("does not downgrade to legacy acceptance after an observed checkpoint is deleted", () => {
     const workOrder = fixture();
@@ -395,6 +421,78 @@ describe("iteration checkpoints", () => {
     expect(gate.result.status, JSON.stringify(gate)).toBe("completed");
     expect(gate.evidence.join(" ")).toContain("matched a passed system command artifact");
   });
+
+  it("uses the deterministic assessment when agent eval has no command", () => {
+    const workOrder = fixture();
+    const { repo, git } = initRepo();
+    workOrder.projectPath = repo;
+    workOrder.eval = { agent: true, minScore: 90 };
+    const checkpoint = partial(workOrder);
+    checkpoint.repositoryRevision = git(["rev-parse", "HEAD"]);
+    for (const item of checkpoint.items) {
+      item.status = "reported-passed";
+      item.evidence = [
+        {
+          source: "agent-reported",
+          revision: checkpoint.repositoryRevision,
+          command: "pnpm assess",
+          result: "passed",
+          artifact: "assessment.json",
+        },
+      ];
+    }
+    save(workOrder, checkpoint);
+    const calls: Array<{ kind: string; command: string; env?: Record<string, string> }> = [];
+    const gate = runSupervisedSystemGateOutcome({
+      project: systemGateProjectFromWorkOrder(workOrder),
+      workOrder,
+      result: {
+        status: "completed",
+        output: "done",
+        summary: {
+          status: "completed",
+          projectId: workOrder.projectId,
+          actionsTaken: [],
+          delegatedTasks: [],
+          commits: [],
+          followUps: [],
+          finalVerification: "passed",
+          planReview: {
+            checklistCompleted: true,
+            targetScoreMet: true,
+            stopConditionReached: false,
+            overOptimizationAvoided: true,
+            verificationCompleted: true,
+            remainingRisks: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        calls.push(invocation);
+        return {
+          status: 0,
+          stdout: JSON.stringify({ score: 95, findings: [] }),
+          stderr: "",
+        };
+      },
+      runGit: runGitForRepo(),
+    });
+    expect(gate.result.status, JSON.stringify(gate)).toBe("completed");
+    expect(calls).toEqual([
+      expect.objectContaining({
+        kind: "assessment",
+        command: "pnpm assess",
+        env: expect.objectContaining({
+          LOOP_WORK_ORDER_ID: workOrder.id,
+          LOOP_PROJECT_ID: workOrder.projectId,
+          LOOP_PROJECT_PATH: repo,
+          LOOP_PROJECT_TARGET_SCORE: String(workOrder.targetScore),
+        }),
+      }),
+    ]);
+    expect(gate.evidence.join(" ")).toContain("matched a passed system command artifact");
+  });
+
   it("preserves partial progress without requiring a final summary", () => {
     const workOrder = fixture();
     const checkpoint = partial(workOrder);

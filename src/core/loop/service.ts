@@ -141,6 +141,7 @@ import {
 } from "./work-order.js";
 import type { LoopSupervisorFinalSummary } from "./work-order-contract.js";
 import { workerLeaseOutcome } from "./work-order-settlement.js";
+import { parseArchitectureAssessment } from "./workspace-assessment.js";
 
 const log = createLogger("loop.service");
 const logSystemGateFailure = createWarningCoalescer(log, { intervalMs: 5 * 60_000 });
@@ -2855,7 +2856,22 @@ export function runSupervisedSystemGateOutcome(input: {
   }
 
   const currentSystemVerifications: CheckpointSystemVerification[] = [];
-  if (input.workOrder.eval?.command !== undefined) {
+  const systemVerificationCommand =
+    input.workOrder.eval?.command !== undefined
+      ? {
+          kind: "eval" as const,
+          command: input.workOrder.eval.command,
+          minScore: input.workOrder.eval.minScore,
+        }
+      : preliminaryCheckpointGate.failures[0] === missingCheckpointSystemVerification &&
+          input.workOrder.assessment.command !== undefined
+        ? {
+            kind: "assessment" as const,
+            command: input.workOrder.assessment.command,
+            minScore: input.workOrder.eval?.minScore ?? input.workOrder.targetScore,
+          }
+        : undefined;
+  if (systemVerificationCommand !== undefined) {
     const failures: string[] = [];
     const root = input.runGit?.({
       cwd: input.workOrder.projectPath,
@@ -2880,10 +2896,20 @@ export function runSupervisedSystemGateOutcome(input: {
     if (failures.length === 0) {
       const startedAt = new Date().toISOString();
       const command = input.runCommand({
-        kind: "eval",
-        command: input.workOrder.eval.command,
+        kind: systemVerificationCommand.kind,
+        command: systemVerificationCommand.command,
         cwd: input.workOrder.projectPath,
-        env: { LOOP_WORK_ORDER_ID: input.workOrder.id },
+        env: {
+          LOOP_WORK_ORDER_ID: input.workOrder.id,
+          LOOP_PROJECT_ID: input.workOrder.projectId,
+          LOOP_PROJECT_NAME: input.workOrder.projectName,
+          LOOP_PROJECT_AGENT: input.workOrder.agent,
+          LOOP_PROJECT_GOAL: input.workOrder.goal,
+          LOOP_PROJECT_PATH: input.workOrder.projectPath,
+          LOOP_BOT_ROOT: process.cwd(),
+          LOOP_PROJECT_TARGET_SCORE: String(input.workOrder.targetScore),
+          LOOP_PROJECT_MAX_ROUNDS: String(input.workOrder.maxRounds),
+        },
       });
       const endedAt = new Date().toISOString();
       let parsed: { passed?: unknown; score?: unknown } | undefined;
@@ -2892,15 +2918,27 @@ export function runSupervisedSystemGateOutcome(input: {
       } catch {
         /* invalid output */
       }
-      const score = typeof parsed?.score === "number" ? parsed.score : undefined;
+      const assessment =
+        systemVerificationCommand.kind === "assessment"
+          ? parseArchitectureAssessment(
+              command.status,
+              command.stdout,
+              systemVerificationCommand.minScore,
+            )
+          : undefined;
+      const score =
+        assessment?.score ?? (typeof parsed?.score === "number" ? parsed.score : undefined);
       if (
         command.status !== 0 ||
-        parsed?.passed !== true ||
-        (parsed?.score !== undefined && (score === undefined || !Number.isFinite(score))) ||
-        (input.workOrder.eval.minScore !== undefined &&
-          (score === undefined || score < input.workOrder.eval.minScore))
+        (systemVerificationCommand.kind === "eval" && parsed?.passed !== true) ||
+        (systemVerificationCommand.kind === "assessment" && assessment?.decision !== "skip") ||
+        (systemVerificationCommand.kind === "eval" &&
+          parsed?.score !== undefined &&
+          (score === undefined || !Number.isFinite(score))) ||
+        (systemVerificationCommand.minScore !== undefined &&
+          (score === undefined || score < systemVerificationCommand.minScore))
       )
-        failures.push("independent evaluation command failed");
+        failures.push(`independent ${systemVerificationCommand.kind} command failed`);
       const after = input.runGit?.({
         cwd: input.workOrder.projectPath,
         args: ["rev-parse", "HEAD"],
@@ -2925,7 +2963,7 @@ export function runSupervisedSystemGateOutcome(input: {
         workOrderId: input.workOrder.id,
         contractHash: buildIterationCheckpointTemplate(input.workOrder).contractHash,
         revision: (head?.stdout ?? "").trim(),
-        commandHash: createHash("sha256").update(input.workOrder.eval.command).digest("hex"),
+        commandHash: createHash("sha256").update(systemVerificationCommand.command).digest("hex"),
         exitStatus: command.status,
         passed: failures.length === 0,
         failures,
