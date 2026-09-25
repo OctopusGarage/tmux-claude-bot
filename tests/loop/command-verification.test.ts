@@ -89,6 +89,23 @@ describe("system command verification", () => {
     expect(record.outputHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it("pins the bot state directory for independent verification commands", () => {
+    const f = fixture();
+    const previous = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = f.dir;
+    try {
+      runSupervisedSystemGateOutcome(f.input);
+      expect(f.runCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: expect.objectContaining({ TCB_STATE_DIR: f.dir }),
+        }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = previous;
+    }
+  });
+
   it.each([
     [1, '{"passed":true,"score":95}'],
     [0, '{"passed":false,"score":95}'],
