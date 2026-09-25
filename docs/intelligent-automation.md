@@ -38,6 +38,9 @@ Supervisor delivery has a bounded worker-consumption watchdog. A prompt that
 remains queued because the worker never becomes ready is cancelled with an
 explicit retryable delivery failure; it is not left indefinitely in an
 ambiguous queued state.
+Completion polling retries transient pane-capture failures, but a definitive
+tmux missing-session response ends the wait immediately so terminal cleanup or
+cancellation cannot occupy a command queue until the full completion horizon.
 
 A supervisor pane that reports a recognized agent startup failure such as an
 authentication refresh, MCP startup, or hook initialization failure is not
@@ -952,6 +955,9 @@ idempotent queue item per repository review occurrence and releases the
 scheduler immediately. Independent consumers lease pending items when a
 supervisor is available, enforce the existing per-project conflict rule, and
 reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
+If a review needs delegated editing, its WorkOrder supplies one deterministic
+isolated worker session so terminal reconciliation can release the worker rather
+than leaving an untracked tmux session behind.
 Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`,
 `blocked`, `manual-review`, and `dead-letter`; expired leases return to
 `pending`, transient supervisor failures use bounded backoff, and a service

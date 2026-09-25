@@ -721,6 +721,9 @@ export async function runLoopServiceTickAsync(input: {
             repository,
             scheduledAt: due.scheduledAt,
             runId,
+            ...(input.projectSessionPrefix !== undefined
+              ? { projectSessionPrefix: input.projectSessionPrefix }
+              : {}),
           })
         : workspace !== undefined
           ? buildLoopWorkspaceWorkOrder({

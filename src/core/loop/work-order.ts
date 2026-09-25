@@ -154,6 +154,7 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
   repository: LoopRepositoryPullRequestReviewConfig;
   scheduledAt: number;
   runId: string;
+  projectSessionPrefix?: string;
 }): LoopWorkOrder {
   const repository = input.repository;
   return {
@@ -165,6 +166,16 @@ export function buildRepositoryPullRequestReviewWorkOrder(input: {
     projectPath: repository.path,
     cleanupPolicy: "conservative",
     executionIsolation: configuredExecutionIsolation(repository.path, repository.worktreeIsolation),
+    ...(input.projectSessionPrefix !== undefined
+      ? {
+          notificationSession: sessionNameFromPath(repository.path, input.projectSessionPrefix),
+          workerSession: loopWorkerRunSessionName(
+            input.projectSessionPrefix,
+            repository.id,
+            input.runId,
+          ),
+        }
+      : {}),
     agent: repository.agent,
     goal: `Review and merge eligible pull requests for ${repository.repo}.`,
     maxRounds: 1,
@@ -1143,10 +1154,22 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
     ];
   }
   if (task.kind === "repository-pull-request-review") {
+    const workerSession = workOrder.workerSession;
     return [
       "- This repository-wide PR review runs directly from projectPath in this supervisor task; do not call tcb open for the synthetic *-all-prs id.",
       `- Use shell commands from ${shellQuote(workOrder.projectPath)} plus GitHub CLI to inspect, repair, push, and merge PRs.`,
-      "- If you need to delegate code editing to a project session, open the real repository path manually; do not require that as a gate for PR review.",
+      ...(workerSession === undefined
+        ? [
+            "- If you need to delegate code editing to a project session, open the real repository path manually; do not require that as a gate for PR review.",
+          ]
+        : [
+            `- If you need to delegate code editing, use the tracked isolated worker: ${openWorkerCommand(
+              cli,
+              workerSession,
+              workOrder.projectPath,
+              workOrder.agent,
+            )}. Do not open an untracked worker, and do not require delegation as a gate for PR review.`,
+          ]),
     ];
   }
   const workerSession = workOrder.workerSession ?? workOrder.notificationSession;
