@@ -20,8 +20,9 @@ export type LoopPreDispatchAssessmentDecision =
   | {
       decision: "skip" | "block";
       status: "completed" | "blocked";
-      repairStatus: "not-needed" | "blocked";
+      repairStatus: "not-needed" | "pending" | "blocked";
       summary: string;
+      failureKind?: "dependency-audit-unavailable";
     };
 
 export function resolveLoopPreDispatchAssessment(input: {
@@ -265,9 +266,20 @@ function securityDecision(
     );
   }
   if (assessment.decision === "block" || assessment.riskScore === null) {
-    return blocked(
-      `${label} Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`,
-    );
+    const summary = `${label} Security Maintenance pre-score blocked dispatch: ${assessment.blockers.join("; ") || "assessment failed"}`;
+    if (
+      assessment.repairDisposition === "bot-repairable" &&
+      assessment.failureKind === "dependency-audit-unavailable"
+    ) {
+      return {
+        decision: "block",
+        status: "blocked",
+        repairStatus: "pending",
+        summary,
+        failureKind: assessment.failureKind,
+      };
+    }
+    return blocked(summary);
   }
   return {
     decision: "run",

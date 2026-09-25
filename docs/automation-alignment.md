@@ -97,6 +97,13 @@ contract failures, missing numeric scores, control/open-worker timeouts,
 dispatch-failed supervisor setup, or missing service-safe git executables; the
 hourly self-heal path must re-enter recovery for those defects instead of
 requiring an operator prompt.
+When verified revision evidence proves that the running bot has not adopted the
+current checked-out source, the supervisor final summary must emit the
+allowlisted structured `stale-runtime-source-adoption` repair finding. The
+system gate must preserve that bot-repairable finding, and project recovery must
+keep or return the linked repair to bounded automatic retry instead of accepting
+the blocked summary as terminal. This signal reports adoption drift only; it
+does not pull, switch branches, or restart the service.
 When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
 the task ledger must close that task with `repairStatus=blocked`; Daily Task
 Audit and dashboard attention must not keep it as pending repair work.
@@ -368,6 +375,12 @@ thresholds, notes, and decision must remain visible in the WorkOrder or task
 ledger evidence. Project and workspace security assessment commands must receive
 the configured target path and bot root environment so shared scripts can resolve
 project-local inputs and bot-owned helpers deterministically.
+Bundled dependency assessments that cannot execute or return the expected audit
+metadata must emit the structured `dependency-audit-unavailable` failure kind.
+Valid vulnerability metadata remains a security finding even when the package
+audit command exits non-zero. The ledger and project-recovery classifier must
+retain availability failures as pending bot-owned retry work; unstructured
+non-zero assessment failures remain blocked rather than being guessed retryable.
 Dispatching reservations without an active worker lease must be reconciled after
 the short dispatch grace period; active leases must prevent that recovery, and
 the recovery must not run target-project commands.

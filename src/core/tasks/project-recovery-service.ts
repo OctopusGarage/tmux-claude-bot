@@ -510,6 +510,25 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         result.blocked++;
         continue;
       }
+      const retryableBlockedRecoveries = linked.filter(
+        (record) =>
+          record.source === "autopilot-delegate" &&
+          record.taskId !== queueRecord.linkedTaskIds[0] &&
+          ["failed", "missing", "running-timeout"].includes(record.status) &&
+          retryableBlockedRecoveryArtifact(record.reportPath),
+      );
+      if (retryableBlockedRecoveries.length > 0) {
+        const transitionedTaskIds = transitionRetryableArtifact({
+          coordinator: input.coordinator,
+          queueRecordId: queueRecord.id,
+          now: input.now,
+          records: [...originals, ...retryableBlockedRecoveries],
+          updateRepairStatus: input.updateRepairStatus,
+          result,
+        });
+        for (const taskId of transitionedTaskIds) closedTaskIds.add(taskId);
+        continue;
+      }
       for (const recovery of linked.filter(
         (record) =>
           record.source === "autopilot-delegate" &&
@@ -620,12 +639,22 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       continue;
     }
     if (summary.status === "blocked" && hasRetryableProjectRecoveryEvidence(summary, systemGate)) {
-      input.updateRepairStatus(
-        record.taskId,
-        "pending",
-        "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.",
-      );
-      if (queueRecord !== undefined) input.coordinator.releaseToQueue(queueRecord.id, input.now);
+      if (queueRecord === undefined) {
+        input.updateRepairStatus(
+          record.taskId,
+          "pending",
+          "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.",
+        );
+      } else {
+        transitionRetryableArtifact({
+          coordinator: input.coordinator,
+          queueRecordId: queueRecord.id,
+          now: input.now,
+          records: [record],
+          updateRepairStatus: input.updateRepairStatus,
+          result,
+        });
+      }
       continue;
     }
     input.updateRepairStatus(
@@ -638,6 +667,34 @@ export async function reconcileProjectRecoveryArtifacts(input: {
     result.blocked++;
   }
   return result;
+}
+
+function transitionRetryableArtifact(input: {
+  coordinator: RepairCoordinator;
+  queueRecordId: string;
+  now: number;
+  records: readonly ScheduledTaskRecord[];
+  updateRepairStatus: (
+    taskId: string,
+    repairStatus: ScheduledTaskRepairStatus,
+    summary: string,
+  ) => void;
+  result: ProjectRecoveryArtifactReconciliationResult;
+}): string[] {
+  const released = input.coordinator.releaseForRetry(input.queueRecordId, input.now, {
+    detachWorkOrder: true,
+  });
+  const exhausted = released?.status === "dead-letter";
+  const repairStatus = exhausted ? "blocked" : "pending";
+  const summary = exhausted
+    ? "Recovery classification: recovery attempt limit reached; repair moved to dead-letter."
+    : "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.";
+  const records = [...new Map(input.records.map((record) => [record.taskId, record])).values()];
+  for (const record of records) {
+    input.updateRepairStatus(record.taskId, repairStatus, summary);
+  }
+  if (exhausted) input.result.blocked++;
+  return records.map((record) => record.taskId);
 }
 
 function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {
@@ -941,6 +998,8 @@ function hasRetryableProjectRecoveryEvidence(
   summary: Record<string, unknown>,
   systemGate: Record<string, unknown> | undefined,
 ): boolean {
+  if (hasAuthoritativeRetryConflict(systemGate)) return false;
+  if (hasBotRepairableSystemGateFinding(systemGate)) return true;
   const reviewGate =
     summary.reviewGate !== null && typeof summary.reviewGate === "object"
       ? (summary.reviewGate as Record<string, unknown>)
@@ -952,11 +1011,55 @@ function hasRetryableProjectRecoveryEvidence(
     summary.followUps,
     reviewGate.notes,
     reviewGate.deterministicGates,
-    systemGate?.findings,
   ]
     .map((value) => (value === undefined ? "" : JSON.stringify(value)))
     .join(" ");
   return isRetryableSourceGitStateEvidence(evidence) || hasPreciseBotRetryableEvidence(evidence);
+}
+
+function hasAuthoritativeRetryConflict(systemGate: Record<string, unknown> | undefined): boolean {
+  if (systemGate === undefined) return false;
+  if (systemGate.repairDisposition === "target-or-external-blocker") return true;
+  if (Array.isArray(systemGate.failures) && systemGate.failures.length > 0) return true;
+  return (
+    Array.isArray(systemGate.findings) &&
+    systemGate.findings.some(
+      (finding) =>
+        finding !== null &&
+        typeof finding === "object" &&
+        !Array.isArray(finding) &&
+        ((finding as Record<string, unknown>).repairDisposition === "target-or-external-blocker" ||
+          (finding as Record<string, unknown>).retry === "manual"),
+    )
+  );
+}
+
+function hasBotRepairableSystemGateFinding(
+  systemGate: Record<string, unknown> | undefined,
+): boolean {
+  if (
+    systemGate?.accepted !== true ||
+    systemGate.resultStatus !== "blocked" ||
+    systemGate.repairDisposition !== "bot-repairable" ||
+    (Array.isArray(systemGate.failures) && systemGate.failures.length > 0)
+  )
+    return false;
+  return (
+    Array.isArray(systemGate.findings) &&
+    systemGate.findings.some(
+      (finding) =>
+        finding !== null &&
+        typeof finding === "object" &&
+        !Array.isArray(finding) &&
+        (finding as Record<string, unknown>).code === "stale-runtime-source-adoption" &&
+        (finding as Record<string, unknown>).repairDisposition === "bot-repairable" &&
+        (finding as Record<string, unknown>).retry === "automatic" &&
+        Array.isArray((finding as Record<string, unknown>).evidence) &&
+        ((finding as Record<string, unknown>).evidence as unknown[]).some(
+          (item) => typeof item === "string" && item.trim().length > 0,
+        ),
+    )
+  );
 }
 
 function hasPreciseBotRetryableEvidence(evidence: string): boolean {

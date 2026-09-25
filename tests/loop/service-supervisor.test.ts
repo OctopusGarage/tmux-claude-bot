@@ -2672,6 +2672,143 @@ prReview:
     });
   });
 
+  it("persists a blocked summary's structured bot-repairable finding", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "the loaded runtime has not adopted the current source revision",
+      summary: {
+        status: "blocked" as const,
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        repairFinding: {
+          code: "stale-runtime-source-adoption" as const,
+          repairDisposition: "bot-repairable" as const,
+          retry: "automatic" as const,
+          evidence: ["loaded=old", "source=new"],
+        },
+        commits: [],
+        followUps: ["Adopt the current source revision, then retry."],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dir, "supervisor-summary.json") } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor reviewGate decision=block"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "blocked",
+      repairDisposition: "bot-repairable",
+      findings: [
+        {
+          code: "stale-runtime-source-adoption",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: ["loaded=old", "source=new"],
+        },
+      ],
+    });
+  });
+
+  it("preserves deterministic external blockers over a supervisor repair finding", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "the loaded runtime has not adopted the current source revision",
+      summary: {
+        status: "blocked" as const,
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        repairFinding: {
+          code: "stale-runtime-source-adoption" as const,
+          repairDisposition: "bot-repairable" as const,
+          retry: "automatic" as const,
+          evidence: ["loaded=old", "source=new"],
+        },
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime-with-external-blocker",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dir, "supervisor-summary.json") } as never,
+      gate: {
+        result,
+        failures: ["source worktree is dirty after supervisor completion: modified.ts"],
+        evidence: ["git status --porcelain returned modified.ts"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-target-or-external-blocker",
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+          evidence: ["source worktree is dirty after supervisor completion: modified.ts"],
+        }),
+      ],
+    });
+
+    const dispositionDir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const externalResult = {
+      ...result,
+      repairDisposition: "target-or-external-blocker" as const,
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime-with-external-disposition",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dispositionDir, "supervisor-summary.json") } as never,
+      gate: {
+        result: externalResult,
+        failures: [],
+        evidence: ["owner action is required"],
+      },
+      result: externalResult,
+      writtenAt: 124,
+    });
+
+    expect(
+      JSON.parse(readFileSync(join(dispositionDir, "system-gate.json"), "utf8")),
+    ).toMatchObject({
+      accepted: true,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+        }),
+      ],
+    });
+  });
+
   it("classifies non-revisionable PR and GitHub system-gate failures as external blockers", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
     const result = {
@@ -5111,6 +5248,54 @@ prReview:
     expect(runSupervisorTask).not.toHaveBeenCalled();
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
       expect.objectContaining({ status: "failed", repairStatus: "blocked" }),
+    ]);
+  });
+
+  it("keeps transient dependency-audit unavailability pending for recovery", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      riskAssessment:",
+        "        command: security-assess",
+      ].join("\n"),
+    });
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const schedulerStore = new LoopSchedulerStore();
+    schedulerStore.setLastFired("hub", now);
+
+    const result = await runLoopServiceTickAsyncProduction({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? {
+              status: 2,
+              stdout: JSON.stringify({
+                failureKind: "dependency-audit-unavailable",
+                retryable: true,
+                findings: [],
+              }),
+              stderr: "registry unavailable",
+            }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask: vi.fn(),
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        failureKind: "dependency-audit-unavailable",
+        repairStatus: "pending",
+      }),
     ]);
   });
 

@@ -17,24 +17,81 @@ function output(result) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
+function dependencyAuditUnavailable(message) {
+  output({
+    failureKind: "dependency-audit-unavailable",
+    retryable: true,
+    findings: [],
+    suggestedBotImprovements: [message],
+  });
+  process.exitCode = 2;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonStdout(result) {
+  if (typeof result.stdout !== "string" || result.stdout.trim() === "") return undefined;
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+function javascriptVulnerabilities(report) {
+  if (!isRecord(report) || !isRecord(report.metadata) || !isRecord(report.metadata.vulnerabilities))
+    return undefined;
+  const counts = report.metadata.vulnerabilities;
+  const required = ["critical", "high", "moderate", "low"];
+  if (
+    !required.every(
+      (severity) =>
+        typeof counts[severity] === "number" &&
+        Number.isFinite(counts[severity]) &&
+        counts[severity] >= 0,
+    )
+  )
+    return undefined;
+  return counts;
+}
+
+function pythonVulnerabilities(report) {
+  if (
+    !Array.isArray(report) ||
+    report.length === 0 ||
+    !report.every(
+      (dependency) =>
+        isRecord(dependency) &&
+        typeof dependency.name === "string" &&
+        dependency.name.length > 0 &&
+        typeof dependency.version === "string" &&
+        dependency.version.length > 0 &&
+        Array.isArray(dependency.vulns) &&
+        dependency.vulns.every(
+          (vulnerability) =>
+            isRecord(vulnerability) &&
+            typeof vulnerability.id === "string" &&
+            vulnerability.id.length > 0,
+        ),
+    )
+  )
+    return undefined;
+  return report.flatMap((dependency) => dependency.vulns);
+}
+
 function javascriptRisk(projectPath, command, args) {
   const result = run(command, args, projectPath);
-  let report;
-  try {
-    report = JSON.parse(result.stdout);
-  } catch {
-    output({
-      findings: [],
-      suggestedBotImprovements: [`${command} audit did not return valid JSON`],
-    });
-    process.exitCode = 2;
+  const vulnerabilities = javascriptVulnerabilities(parseJsonStdout(result));
+  if (vulnerabilities === undefined) {
+    dependencyAuditUnavailable(`${command} audit did not return valid vulnerability metadata`);
     return;
   }
-  const vulnerabilities = report.metadata?.vulnerabilities ?? {};
-  const critical = Number(vulnerabilities.critical ?? 0);
-  const high = Number(vulnerabilities.high ?? 0);
-  const moderate = Number(vulnerabilities.moderate ?? 0);
-  const low = Number(vulnerabilities.low ?? 0);
+  const critical = vulnerabilities.critical;
+  const high = vulnerabilities.high;
+  const moderate = vulnerabilities.moderate;
+  const low = vulnerabilities.low;
   const riskScore = critical > 0 ? 100 : high >= 3 ? 90 : high > 0 ? 85 : moderate > 0 ? 60 : low > 0 ? 30 : 0;
   output({
     riskScore,
@@ -50,32 +107,27 @@ function javascriptRisk(projectPath, command, args) {
 
 function pipAuditRisk(projectPath) {
   const projectExecutable = join(projectPath, ".venv", "bin", "pip-audit");
+  const lookup = existsSync(projectExecutable)
+    ? undefined
+    : run("sh", ["-lc", "command -v pip-audit"], projectPath);
   const executable = existsSync(projectExecutable)
     ? projectExecutable
-    : run("sh", ["-lc", "command -v pip-audit"], projectPath).stdout.trim();
+    : lookup?.status === 0 &&
+        lookup.signal === null &&
+        lookup.error === undefined &&
+        typeof lookup.stdout === "string"
+      ? lookup.stdout.trim()
+      : "";
   if (executable.length === 0) {
-    output({
-      findings: [],
-      suggestedBotImprovements: ["pip-audit is not installed in the target environment"],
-    });
-    process.exitCode = 2;
+    dependencyAuditUnavailable("pip-audit is not installed in the target environment");
     return;
   }
   const result = run(executable, ["--format", "json"], projectPath);
-  let report;
-  try {
-    report = JSON.parse(result.stdout);
-  } catch {
-    output({
-      findings: [],
-      suggestedBotImprovements: ["pip-audit did not return valid JSON"],
-    });
-    process.exitCode = 2;
+  const vulnerabilities = pythonVulnerabilities(parseJsonStdout(result));
+  if (vulnerabilities === undefined) {
+    dependencyAuditUnavailable("pip-audit did not return valid dependency metadata");
     return;
   }
-  const vulnerabilities = Array.isArray(report)
-    ? report.flatMap((item) => (Array.isArray(item.vulns) ? item.vulns : []))
-    : [];
   output({
     riskScore: vulnerabilities.length > 3 ? 90 : vulnerabilities.length > 0 ? 85 : 0,
     findings: vulnerabilities.map((item) => `${item.id ?? "unknown vulnerability"}`).slice(0, 20),

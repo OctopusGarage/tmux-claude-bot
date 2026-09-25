@@ -35,6 +35,7 @@ export type ScheduledTaskFailureKind =
   | "agent-timeout"
   | "missing-instrumentation"
   | "external-service"
+  | "dependency-audit-unavailable"
   | "unknown";
 
 export type ScheduledTaskRepairStatus =
@@ -155,7 +156,13 @@ export class DailyTaskLedger {
 
   fail(
     taskId: string,
-    input: { endedAt: number; error: string; summary?: string; reportPath?: string },
+    input: {
+      endedAt: number;
+      error: string;
+      summary?: string;
+      reportPath?: string;
+      failureKind?: ScheduledTaskFailureKind;
+    },
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
     if (!existing) return null;
@@ -165,7 +172,7 @@ export class DailyTaskLedger {
       status: "failed",
       endedAt: input.endedAt,
       error: input.error,
-      failureKind: classifyTaskFailure(input.error, input.summary),
+      failureKind: input.failureKind ?? classifyTaskFailure(input.error, input.summary),
       repairStatus: preserveClosedRepair ? "blocked" : "pending",
       ...(input.summary !== undefined && !preserveClosedRepair ? { summary: input.summary } : {}),
       ...(input.reportPath !== undefined ? { reportPath: input.reportPath } : {}),
@@ -199,6 +206,7 @@ export class DailyTaskLedger {
       updatedAt: number;
       summary?: string;
       error?: string;
+      failureKind?: ScheduledTaskFailureKind;
     },
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
@@ -214,14 +222,17 @@ export class DailyTaskLedger {
       repairStatus: input.repairStatus,
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
       ...(input.error !== undefined ? { error: input.error } : {}),
-      ...(input.error !== undefined || input.summary !== undefined
-        ? {
-            failureKind: classifyTaskFailure(
-              input.error ?? existing.error,
-              input.summary ?? existing.summary,
-            ),
-          }
-        : {}),
+      ...(input.failureKind !== undefined
+        ? { failureKind: input.failureKind }
+        : existing.failureKind === undefined &&
+            (input.error !== undefined || input.summary !== undefined)
+          ? {
+              failureKind: classifyTaskFailure(
+                input.error ?? existing.error,
+                input.summary ?? existing.summary,
+              ),
+            }
+          : {}),
       updatedAt: input.updatedAt,
     };
     this.store.set(taskId, record);

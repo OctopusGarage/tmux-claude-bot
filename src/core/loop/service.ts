@@ -693,7 +693,12 @@ export async function runLoopServiceTickAsync(input: {
       exists: existsSync,
     });
     if (preDispatch.decision !== "run") {
-      recordDueTargetWithoutDispatch(target, preDispatch.summary, preDispatch.repairStatus);
+      recordDueTargetWithoutDispatch(
+        target,
+        preDispatch.summary,
+        preDispatch.repairStatus,
+        preDispatch.failureKind,
+      );
       return preDispatch.status;
     }
     preDispatchAssessment = preDispatch.assessment;
@@ -1528,7 +1533,8 @@ export async function runLoopServiceTickAsync(input: {
   const recordDueTargetWithoutDispatch = (
     target: ResolvedDue,
     summary: string,
-    repairStatus: "not-needed" | "blocked",
+    repairStatus: "not-needed" | "pending" | "blocked",
+    failureKind?: "dependency-audit-unavailable",
   ): void => {
     const endedAt = Date.now();
     const taskId = `loop:${target.due.jobKey}:${target.due.scheduledAt}`;
@@ -1541,8 +1547,15 @@ export async function runLoopServiceTickAsync(input: {
     if (repairStatus === "not-needed") {
       taskLedger.skip(taskId, { endedAt, summary });
     } else {
-      taskLedger.fail(taskId, { endedAt, error: summary, summary });
-      taskLedger.markRepairStatus(taskId, { repairStatus, updatedAt: endedAt, summary });
+      taskLedger.fail(taskId, {
+        endedAt,
+        error: summary,
+        summary,
+        ...(failureKind === undefined ? {} : { failureKind }),
+      });
+      if (repairStatus === "blocked") {
+        taskLedger.markRepairStatus(taskId, { repairStatus, updatedAt: endedAt, summary });
+      }
     }
     input.schedulerStore.setLastFired(target.due.jobKey, target.due.scheduledAt);
     log.info("loop engineering due target completed without supervisor dispatch", {
@@ -2712,8 +2725,12 @@ export function writeSupervisedSystemGateArtifact(input: {
   writtenAt: number;
 }): void {
   const path = join(dirname(input.report.summaryPath), LOOP_RUN_ARTIFACTS.systemGate);
+  const summaryFinding = "summary" in input.result ? input.result.summary.repairFinding : undefined;
+  const deterministicDisposition = systemGateFailureRepairDisposition(input.gate.failures);
   const repairDisposition =
-    input.gate.result.repairDisposition ?? systemGateFailureRepairDisposition(input.gate.failures);
+    deterministicDisposition ??
+    input.gate.result.repairDisposition ??
+    summaryFinding?.repairDisposition;
   const evalReport =
     "summary" in input.result
       ? buildEvalReportFromSupervisorSummary({
@@ -2736,7 +2753,14 @@ export function writeSupervisedSystemGateArtifact(input: {
         evidence: input.gate.evidence,
         failures: input.gate.failures,
         ...(repairDisposition === undefined ? {} : { repairDisposition }),
-        findings: systemGateFindings(input.gate, repairDisposition),
+        findings: systemGateFindings(
+          input.gate,
+          repairDisposition,
+          input.gate.failures.length === 0 &&
+            summaryFinding?.repairDisposition === repairDisposition
+            ? summaryFinding
+            : undefined,
+        ),
         recoverableFailures: supervisorRevisionFailures(input.gate.failures),
         writtenAt: input.writtenAt,
       },
@@ -2757,7 +2781,16 @@ function isAcceptedSupervisorSystemGateResult(
 function systemGateFindings(
   input: SupervisedSystemGateOutcome,
   disposition: SystemGateFinding["repairDisposition"] | undefined,
+  summaryFinding?: {
+    code: string;
+    repairDisposition: "bot-repairable";
+    retry: "automatic";
+    evidence: string[];
+  },
 ): SystemGateFinding[] {
+  if (summaryFinding !== undefined) {
+    return [{ ...summaryFinding, display: input.result.output }];
+  }
   if (disposition === undefined) return [];
   const dispatchDisposition = input.result.repairDisposition;
   const display =

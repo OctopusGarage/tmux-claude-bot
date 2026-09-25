@@ -61,6 +61,12 @@ never duplicated, and later findings are attached as deferred work. A recovery
 is closed only from an authoritative `supervisor-final-summary.json` reporting
 completed with a passing decision. Queue and ledger state are reconciled
 together so a successful environment repair does not remain falsely pending.
+An accepted blocked closure is not terminal when its system gate contains an
+automatic bot-repairable finding. The allowlisted
+`stale-runtime-source-adoption` finding means verified revision evidence showed
+that the running bot had not adopted the checked-out source; recovery retains
+or reopens the linked work for bounded retry, while source adoption and service
+restart remain separate operator/deployment actions.
 Verified source worktree or source branch divergence is still retryable
 automation repair work; an accepted blocked supervisor summary must not
 terminalize that case as an owner decision.
@@ -229,6 +235,13 @@ assessment supports npm and pnpm lockfiles. For Python projects it prefers the
 target's `.venv/bin/pip-audit`, then falls back to `pip-audit` on `PATH`; each
 external audit has a bounded runtime so assessment cannot become an unbounded
 resource consumer.
+When the bundled dependency audit cannot execute or return the expected audit
+metadata, it emits `failureKind=dependency-audit-unavailable` with retryable
+ownership. Valid vulnerability metadata remains actionable even when the audit
+command exits non-zero. The pre-dispatch ledger keeps an availability occurrence
+pending and Project Recovery may retry it through the normal bounded admission
+path. Other non-zero or malformed assessment commands remain blocked unless they
+provide that exact structured failure contract.
 
 This document is the maintenance map for tmux-claude-bot's intelligent
 automation features. It defines the names, ownership boundaries, execution flow,

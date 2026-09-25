@@ -72,6 +72,12 @@ export function classifyHistoricalFailure(
       reason: "local automation capacity or supervisor lease evidence is retryable",
     };
   }
+  if (input.failureKind === "dependency-audit-unavailable") {
+    return {
+      classification: "retryable",
+      reason: "dependency audit availability failure is retryable automation repair work",
+    };
+  }
   if (
     ASSESSMENT_SCORING_CONTRACT_RE.test(evidence) ||
     isBotOwnedRetryableRecoveryEvidence(evidence)

@@ -6,6 +6,7 @@ import type {
   LoopSupervisorPullRequestDecision,
   LoopSupervisorPullRequestDecisionOutcome,
   LoopSupervisorPullRequestHumanBoundary,
+  LoopSupervisorRepairFinding,
   LoopSupervisorReviewEvidence,
   LoopSupervisorReviewGate,
   LoopSupervisorReviewGateDeterministicGateObject,
@@ -257,6 +258,8 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
   const actionsTaken = parseActionStrings(value.actionsTaken);
   const delegatedTasks = parseDelegatedTasks(value.delegatedTasks);
   const finalVerification = parseFinalVerification(value.finalVerification, status);
+  const repairFinding =
+    value.repairFinding === undefined ? undefined : parseRepairFinding(value.repairFinding);
   const reviewGate =
     value.reviewGate === undefined ? undefined : parseSupervisorReviewGate(value.reviewGate);
   const planReview = value.planReview === undefined ? undefined : parsePlanReview(value.planReview);
@@ -274,6 +277,7 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     actionsTaken === null ||
     delegatedTasks === null ||
     finalVerification === null ||
+    repairFinding === null ||
     reviewGate === null ||
     planReview === null ||
     learning === null ||
@@ -290,12 +294,32 @@ function parseSummaryObject(value: unknown): LoopSupervisorFinalSummary | null {
     actionsTaken,
     delegatedTasks,
     finalVerification,
+    ...(repairFinding !== undefined ? { repairFinding } : {}),
     ...(reviewGate !== undefined ? { reviewGate } : {}),
     ...(planReview !== undefined ? { planReview } : {}),
     ...(learning !== undefined ? { learning } : {}),
     commits,
     followUps,
     ...(pullRequestDecisions !== undefined ? { pullRequestDecisions } : {}),
+  };
+}
+
+function parseRepairFinding(value: unknown): LoopSupervisorRepairFinding | null {
+  if (!isRecord(value)) return null;
+  const evidence = parseStringArray(value.evidence);
+  if (
+    value.code !== "stale-runtime-source-adoption" ||
+    value.repairDisposition !== "bot-repairable" ||
+    value.retry !== "automatic" ||
+    evidence === null
+  ) {
+    return null;
+  }
+  return {
+    code: value.code,
+    repairDisposition: value.repairDisposition,
+    retry: value.retry,
+    evidence,
   };
 }
 
