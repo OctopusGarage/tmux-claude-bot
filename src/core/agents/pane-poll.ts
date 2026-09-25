@@ -277,7 +277,7 @@ export async function pollUntilIdle(opts: {
 
   // Round exhausted — hand back what we have; the caller owns the messaging.
   const processed = output.process(lastContent);
-  log.warn("agent completion wait timed out", {
+  log.debug("agent completion wait timed out", {
     session: sess,
     ...(lastCaptureError === undefined ? {} : { err: lastCaptureError }),
     data: {

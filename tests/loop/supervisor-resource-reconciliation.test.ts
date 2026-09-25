@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -245,6 +245,85 @@ describe("supervisor resource reconciliation", () => {
     await expect(reconcile()).resolves.toMatchObject({ removedTerminalWorktrees: 25 });
     await expect(reconcile()).resolves.toMatchObject({ removedTerminalWorktrees: 5 });
     expect(removed).toHaveLength(30);
+  });
+
+  it("removes terminal workspace member worktrees and their empty container", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-supervisor-resource-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "tcb-supervisor-workspace-source-"));
+    const runRoot = join(stateDir, "loop-worktrees", "workspace", "workspace-run");
+    const repositories = ["api", "web"].map((id) => ({
+      id,
+      path: join(runRoot, id),
+      sourcePath: join(workspaceRoot, id),
+    }));
+    for (const repository of repositories) {
+      mkdirSync(repository.path, { recursive: true });
+      mkdirSync(repository.sourcePath, { recursive: true });
+    }
+    const order = workOrder(stateDir, {
+      id: "workspace-run",
+      projectId: "workspace",
+      projectPath: workspaceRoot,
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: workspaceRoot,
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
+      workspace: {
+        root: workspaceRoot,
+        repositories: repositories.map((repository) => ({
+          ...repository,
+          name: repository.id,
+          path: repository.path,
+          worktreeIsolation: "isolated",
+          agent: "codex",
+          pullRequest: {
+            enabled: false,
+            base: "main",
+            switchBack: "main",
+            autoMerge: false,
+            mergeMethod: "squash",
+          },
+        })),
+      },
+    } as Partial<LoopWorkOrder>);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "failed",
+      resultStatus: "invalid-output",
+      now: 1_000,
+    });
+    const removed: string[] = [];
+
+    await expect(
+      reconcileTerminalSupervisorResources({
+        now: 4 * 24 * 60 * 60 * 1_000,
+        runGit: (invocation) => {
+          if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args[0] === "worktree" && invocation.args[1] === "remove") {
+            const worktree = invocation.args[3];
+            if (worktree !== undefined) {
+              removed.push(worktree);
+              rmSync(worktree, { recursive: true, force: true });
+            }
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    ).resolves.toMatchObject({ removedTerminalWorktrees: 2 });
+
+    expect(removed).toEqual(repositories.map((repository) => repository.path));
+    expect(existsSync(runRoot)).toBe(false);
   });
 
   it("removes only unreferenced orphan worktrees after the weekly retention window", async () => {

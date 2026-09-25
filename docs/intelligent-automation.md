@@ -1188,6 +1188,10 @@ reconciliation. A recovered final summary is accepted only with a durable
 `system-gate.json`; otherwise the incident remains visible for repair, and
 terminal worker session records are cleaned up when the worker is no longer
 active.
+Terminal workspace cleanup verifies and removes each isolated member as its own
+Git worktree, then removes only the empty bot-owned run container. It does not
+treat the workspace coordination root or that non-Git container as a single
+repository.
 Loop Engineering reconciliation also converts stale non-terminal WorkOrders
 whose worker lease has disappeared into a durable failed/pending record. A
 `dispatching` reservation without a lease is considered abandoned after five

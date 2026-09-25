@@ -225,6 +225,10 @@ worktrees as soon as they are safe to verify and must retain only recent
 unreferenced supervisor worktree directories by default. The orphan fallback
 retention window is one week; active WorkOrders, active leases, and currently
 owned worker sessions remain protected from directory-based cleanup.
+Workspace cleanup applies the same verified worktree lifecycle to every isolated
+member repository, then removes only the empty bot-owned run container. The
+non-Git workspace container and coordination root must never be passed to Git as
+if either were one repository.
 When cleanup refuses a bot-owned path because Git cannot prove that path is the
 expected worktree, retain the path and coalesce repeated refusals into bounded
 periodic warnings with suppressed-repeat evidence; never trade log quietness for

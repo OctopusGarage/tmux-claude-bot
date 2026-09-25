@@ -1,5 +1,5 @@
-import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { type Dirent, existsSync, readdirSync, rmdirSync, statSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
@@ -242,7 +242,11 @@ function reconcileOrphanLoopSupervisorWorktrees(input: {
   const referenced = new Set<string>();
   for (const { workOrder } of readLoopSupervisorWorkOrderRegistry(input.now).records) {
     for (const path of resourcePathsForLoopWorkOrder(workOrder)) {
-      if (isBotOwnedLoopExecutionWorktree(path)) referenced.add(resolvePath(path));
+      if (!isBotOwnedLoopExecutionWorktree(path)) continue;
+      const resolved = resolvePath(path);
+      referenced.add(resolved);
+      const parent = dirname(resolved);
+      if (isBotOwnedLoopExecutionWorktree(parent)) referenced.add(parent);
     }
   }
   for (const lease of readLoopSupervisorWorkerLeaseState().leases) {
@@ -434,7 +438,8 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
   let removed = 0;
   const cleanupWorktree = createLoopExecutionWorktreeCleanup(input.runGit);
   for (const record of listTerminalLoopSupervisorWorkOrders()) {
-    if (!isPreparedIsolatedExecutionWorktree(record.workOrder)) continue;
+    const worktrees = preparedIsolatedExecutionWorktrees(record.workOrder);
+    if (worktrees.length === 0) continue;
     const retainFailureForMs =
       (record.workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000;
     const eligibleAt =
@@ -442,22 +447,75 @@ function reconcileTerminalLoopSupervisorWorktrees(input: {
         ? record.state.updatedAt
         : record.state.updatedAt + retainFailureForMs;
     if (eligibleAt > input.now) continue;
-    if (
-      cleanupWorktree({
-        worktree: record.workOrder.projectPath,
+    let allClean = true;
+    for (const worktree of worktrees) {
+      const result = cleanupWorktree({
+        worktree: worktree.path,
         ...(record.workOrder.commitPolicy.branch === undefined
           ? {}
           : { expectedBranch: record.workOrder.commitPolicy.branch }),
-        ...(record.workOrder.executionIsolation?.sourceWorktree === undefined
-          ? {}
-          : { sourceWorktree: record.workOrder.executionIsolation.sourceWorktree }),
-      }) === "removed"
-    ) {
-      removed++;
+        ...(worktree.sourcePath === undefined ? {} : { sourceWorktree: worktree.sourcePath }),
+      });
+      if (result === "failed") allClean = false;
+      if (result === "removed") removed++;
       if (removed >= MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION) return removed;
     }
+    if (allClean) removeEmptyWorkspaceWorktreeContainer(record.workOrder);
   }
   return removed;
+}
+
+function preparedIsolatedExecutionWorktrees(workOrder: LoopWorkOrder): Array<{
+  path: string;
+  sourcePath?: string;
+}> {
+  if (workOrder.workspace !== undefined) {
+    return workOrder.workspace.repositories.flatMap((repository) => {
+      if (
+        repository.worktreeIsolation !== "isolated" ||
+        repository.sourcePath === undefined ||
+        !isBotOwnedLoopExecutionWorktree(repository.path)
+      ) {
+        return [];
+      }
+      return [{ path: repository.path, sourcePath: repository.sourcePath }];
+    });
+  }
+  if (!isPreparedIsolatedExecutionWorktree(workOrder)) return [];
+  return [
+    {
+      path: workOrder.projectPath,
+      ...(workOrder.executionIsolation?.sourceWorktree === undefined
+        ? {}
+        : { sourcePath: workOrder.executionIsolation.sourceWorktree }),
+    },
+  ];
+}
+
+function removeEmptyWorkspaceWorktreeContainer(workOrder: LoopWorkOrder): void {
+  if (workOrder.workspace === undefined) return;
+  const isolatedPaths = workOrder.workspace.repositories
+    .filter(
+      (repository) =>
+        repository.worktreeIsolation === "isolated" &&
+        repository.sourcePath !== undefined &&
+        isBotOwnedLoopExecutionWorktree(repository.path),
+    )
+    .map((repository) => resolvePath(repository.path));
+  if (isolatedPaths.length === 0) return;
+  const containers = new Set(isolatedPaths.map((path) => dirname(path)));
+  if (containers.size !== 1) return;
+  const container = [...containers][0];
+  if (container === undefined || !isBotOwnedLoopExecutionWorktree(container)) return;
+  if (!existsSync(container)) return;
+  try {
+    if (readdirSync(container).length === 0) rmdirSync(container);
+  } catch (err) {
+    log.warn("loop failed to remove an empty workspace worktree container", {
+      err,
+      data: { workOrderId: workOrder.id, container },
+    });
+  }
 }
 
 function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
