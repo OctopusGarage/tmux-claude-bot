@@ -148,8 +148,11 @@ describe("pollUntilIdle", () => {
     });
 
     expect(result.done).toBe(false);
-    expect(log.warn).toHaveBeenCalledTimes(2); // first failure + terminal timeout summary
+    expect(log.warn).toHaveBeenCalledTimes(1); // first capture failure only
     expect(log.error).not.toHaveBeenCalled();
-    expect(log.debug).toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      "agent completion wait timed out",
+      expect.objectContaining({ session: "sess" }),
+    );
   });
 });
