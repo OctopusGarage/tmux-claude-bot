@@ -1,12 +1,17 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
+import { loopScheduleJitterMs } from "../../src/core/loop/schedule-jitter.js";
 import {
   buildDailyTaskAuditNotification,
   renderDailyTaskAudit,
   runDailyTaskAudit,
 } from "../../src/core/tasks/daily-audit.js";
+import { reconcileDailyAuditRepairQueue } from "../../src/core/tasks/daily-audit-run-state.js";
+import { RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
+import { discoverLoopEngineeringScheduledTasks } from "../../src/core/tasks/task-discovery.js";
 import type { TaskAuditItem } from "../../src/core/tasks/task-ledger.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
@@ -300,6 +305,159 @@ describe("runDailyTaskAudit", () => {
         body: expect.stringContaining("Counts: 0 success · 0 failed · 1 missing · 0 running"),
       }),
     );
+  });
+
+  it("closes missing Loop repair work when its durable occurrence was superseded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-daily-audit-superseded-occurrence-"));
+    process.env.TCB_STATE_DIR = root;
+    const configFile = join(root, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+    const laterScheduledAt = Date.parse("2026-07-29T02:40:00Z");
+    const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+    const now = Date.parse("2026-07-29T03:00:00Z");
+    const window = {
+      start: Date.parse("2026-07-27T16:00:00Z"),
+      end: Date.parse("2026-07-28T16:00:00Z"),
+      label: "2026-07-28 SGT",
+    };
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: /tmp/geo-backend
+    agent: codex
+    goal: Improve architecture
+    maxRounds: 1
+    targetScore: 95
+    assessment:
+      command: "true"
+    preflight:
+      commands: []
+      repair:
+        agent: false
+    execution:
+      agent: true
+    eval:
+      command: "true"
+      minScore: 95
+    runner:
+      kind: agent-supervised
+    recovery:
+      agent: true
+    commit:
+      enabled: true
+    pullRequest:
+      enabled: true
+    opportunityDiscovery:
+      enabled: true
+      schedule: "40 2 * * *"
+    allowedActions: []
+    blockedActions: []
+`,
+      "utf8",
+    );
+    const config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+    loopScheduleJitterMs({
+      config,
+      jobKey: "geo-backend:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt,
+    });
+    expect(discoverLoopEngineeringScheduledTasks({ configFile, window, now })).toEqual([
+      expect.objectContaining({ taskId, status: "expected" }),
+    ]);
+    loopScheduleJitterMs({
+      config,
+      jobKey: "geo-backend:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt: laterScheduledAt,
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "geo-backend opportunity-discovery",
+      scheduledAt,
+    });
+    ledger.reconcileExpectedMissing(scheduledAt + 1);
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/tmp/tmux-claude-bot",
+      source: "loop-engineering",
+      taskFamily: "geo-backend opportunity-discovery",
+      fingerprint: "missing scheduled occurrence",
+      taskId,
+      now: scheduledAt + 1,
+    });
+
+    const discoveredRecords = discoverLoopEngineeringScheduledTasks({ configFile, window, now });
+    expect(discoveredRecords).toEqual([
+      expect.objectContaining({ taskId, status: "skipped", repairStatus: "superseded" }),
+    ]);
+
+    const result = await runDailyTaskAudit({
+      now,
+      ledger,
+      discover: () => discoveredRecords,
+    });
+
+    expect(result.summary.counts).toMatchObject({ missing: 0, skipped: 1 });
+    expect(result.repairCandidates).toEqual([]);
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({ taskId, status: "skipped", repairStatus: "superseded" }),
+    ]);
+    expect(ledger.reconcileTerminalStatuses(now + 1)).toBe(0);
+    reconcileDailyAuditRepairQueue({ ledger, coordinator, now });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ linkedTaskIds: [taskId], status: "superseded" }),
+    ]);
+  });
+
+  it("preserves an already closed missing Loop repair outcome", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-closed-missing-"));
+    const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+    const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "geo-backend opportunity-discovery",
+      scheduledAt,
+    });
+    ledger.reconcileExpectedMissing(scheduledAt + 1);
+    ledger.markRepairStatus(taskId, {
+      repairStatus: "fixed",
+      updatedAt: scheduledAt + 2,
+      summary: "Authoritative repair completed.",
+    });
+
+    await runDailyTaskAudit({
+      now: Date.parse("2026-07-29T03:00:00Z"),
+      ledger,
+      discover: () => [
+        {
+          taskId,
+          source: "loop-engineering",
+          name: "geo-backend opportunity-discovery",
+          scheduledAt,
+          status: "skipped",
+          repairStatus: "superseded",
+          updatedAt: scheduledAt + 3,
+        },
+      ],
+    });
+
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({
+        taskId,
+        status: "missing",
+        repairStatus: "fixed",
+        summary: "Authoritative repair completed.",
+      }),
+    ]);
   });
 
   it("matches discovered jittered tasks to closed ledger records outside the audit window", async () => {

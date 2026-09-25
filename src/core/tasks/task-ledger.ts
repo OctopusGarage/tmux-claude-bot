@@ -233,7 +233,7 @@ export class DailyTaskLedger {
     this.store.update((records) => {
       for (const [taskId, record] of Object.entries(records)) {
         if (!["success", "skipped"].includes(record.status)) continue;
-        if (record.repairStatus === "not-needed") continue;
+        if (record.repairStatus === "not-needed" || record.repairStatus === "superseded") continue;
         records[taskId] = {
           ...record,
           repairStatus: "not-needed",
