@@ -2900,6 +2900,7 @@ export function runSupervisedSystemGateOutcome(input: {
         command: systemVerificationCommand.command,
         cwd: input.workOrder.projectPath,
         env: {
+          TCB_STATE_DIR: appStateDir(),
           LOOP_WORK_ORDER_ID: input.workOrder.id,
           LOOP_PROJECT_ID: input.workOrder.projectId,
           LOOP_PROJECT_NAME: input.workOrder.projectName,
