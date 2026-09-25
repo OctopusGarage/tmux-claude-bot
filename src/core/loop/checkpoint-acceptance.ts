@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
@@ -16,8 +17,17 @@ export type CheckpointSystemVerification = {
   workOrderId: string;
   contractHash: string;
   revision: string;
+  commandHash: string;
+  exitStatus: number;
   passed: boolean;
+  failures: string[];
+  score: number | null;
+  startedAt: string;
+  endedAt: string;
+  outputHash: string;
 };
+
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 /** Checks repository facts, not the truth of agent-reported behavioral tests. */
 export function checkpointAcceptanceGate(
@@ -80,6 +90,11 @@ export function checkpointAcceptanceGate(
     return reject("checkpoint worktree is dirty; acceptance deferred");
   const revision = head.stdout.trim();
   const verifications = [...systemVerifications, ...readDurableSystemVerifications(dirname(path))];
+  const verificationCommand = workOrder.eval?.command ?? workOrder.assessment.command;
+  const commandHash =
+    verificationCommand === undefined
+      ? null
+      : createHash("sha256").update(verificationCommand).digest("hex");
   if (
     !verifications.some(
       (verification) =>
@@ -87,6 +102,7 @@ export function checkpointAcceptanceGate(
         verification.workOrderId === workOrder.id &&
         verification.contractHash === contractHash &&
         verification.revision === revision &&
+        verification.commandHash === commandHash &&
         verification.passed === true,
     )
   ) {
@@ -126,7 +142,23 @@ function readDurableSystemVerifications(runDir: string): CheckpointSystemVerific
         typeof value.workOrderId === "string" &&
         typeof value.contractHash === "string" &&
         typeof value.revision === "string" &&
-        typeof value.passed === "boolean"
+        typeof value.commandHash === "string" &&
+        SHA256_HEX.test(value.commandHash) &&
+        typeof value.exitStatus === "number" &&
+        Number.isInteger(value.exitStatus) &&
+        value.exitStatus >= 0 &&
+        typeof value.passed === "boolean" &&
+        Array.isArray(value.failures) &&
+        value.failures.every((failure) => typeof failure === "string") &&
+        (value.score === null ||
+          (typeof value.score === "number" && Number.isFinite(value.score))) &&
+        typeof value.startedAt === "string" &&
+        Number.isFinite(Date.parse(value.startedAt)) &&
+        typeof value.endedAt === "string" &&
+        Number.isFinite(Date.parse(value.endedAt)) &&
+        typeof value.outputHash === "string" &&
+        SHA256_HEX.test(value.outputHash) &&
+        (!value.passed || (value.exitStatus === 0 && value.failures.length === 0))
       ) {
         records.push({
           schemaVersion: 1,
@@ -134,7 +166,14 @@ function readDurableSystemVerifications(runDir: string): CheckpointSystemVerific
           workOrderId: value.workOrderId,
           contractHash: value.contractHash,
           revision: value.revision,
+          commandHash: value.commandHash,
+          exitStatus: value.exitStatus,
           passed: value.passed,
+          failures: value.failures,
+          score: value.score,
+          startedAt: value.startedAt,
+          endedAt: value.endedAt,
+          outputHash: value.outputHash,
         });
       }
     } catch {
