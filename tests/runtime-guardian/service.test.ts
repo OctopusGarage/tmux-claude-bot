@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,7 +14,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { runGitCommand, runShellCommand } from "../../src/core/loop/service.js";
-import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
 import {
   listRecoverableFailedLoopSupervisorWorkOrders,
   writeLoopSupervisorWorkOrderState,
@@ -212,6 +216,168 @@ projects:
     expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 86_400_000 })).toEqual([]);
   });
 
+  it("defers a valid final summary while the live supervisor still owns its queue turn", async () => {
+    const stateDir = realpathSync(process.env.TCB_STATE_DIR ?? "");
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = join(stateDir, "source");
+    mkdirSync(sourceDir);
+    execFileSync("git", ["init", "-b", "dev"], { cwd: sourceDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: sourceDir });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: sourceDir });
+    writeFileSync(join(sourceDir, "README.md"), "# Runtime Guardian fixture\n");
+    execFileSync("git", ["add", "README.md"], { cwd: sourceDir });
+    execFileSync("git", ["commit", "-m", "test: initialize fixture"], {
+      cwd: sourceDir,
+      stdio: "ignore",
+    });
+    const executionWorktree = join(
+      stateDir,
+      "loop-worktrees",
+      "tmux-claude-bot",
+      "run-live-supervisor",
+    );
+    const executionBranch = "loop/tmux-claude-bot/active-delegate/run-live-supervisor";
+    mkdirSync(join(executionWorktree, ".."), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-b", executionBranch, executionWorktree, "dev"], {
+      cwd: sourceDir,
+      stdio: "ignore",
+    });
+    const runDir = join(stateDir, "loop-runs", "tmux-claude-bot", "run-live-supervisor");
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-live-supervisor", executionWorktree, summaryPath),
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_tcb",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      workerSession: "tmux_proj_loop-worker-tmux-claude-bot-run-live-supervisor",
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false, branch: executionBranch },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: executionWorktree,
+        sourceWorktree: sourceDir,
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: 2,
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["finished while the queue owner was still resolving"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-run",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const configFile = join(sourceDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: ${executionWorktree}
+    agent: codex
+    goal: Keep runtime orchestration healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+    const cleanupWorkerSession = vi.fn(async () => undefined);
+    let supervisorBusy = true;
+
+    const reconcile = () =>
+      reconcileRuntimeGuardianBeforeDiscovery({
+        configFile,
+        now: 3,
+        runCommand: runShellCommand,
+        runGit: runGitCommand,
+        cleanupCompletedWorkerSession: cleanupWorkerSession,
+        workerSessionExists: async () => true,
+        supervisorSessionBusy: () => supervisorBusy,
+        reconcileAutopilot: async () => ({ checked: 0, finished: 0, failed: 0, cleaned: 0 }),
+      });
+
+    await reconcile();
+
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toMatchObject({
+      status: "in-flight",
+    });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({ workOrderId: order.id, status: "active" }),
+    ]);
+    expect(cleanupWorkerSession).not.toHaveBeenCalled();
+    expect(existsSync(executionWorktree)).toBe(true);
+    expect(existsSync(join(runDir, "system-gate.json"))).toBe(false);
+
+    supervisorBusy = false;
+    await reconcile();
+
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      resultStatus: "completed",
+    });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(cleanupWorkerSession).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkerSession).toHaveBeenCalledWith(order.workerSession);
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "completed",
+    });
+    expect(existsSync(executionWorktree)).toBe(false);
+  });
+
   it("reconciles Autopilot before Loop WorkOrders with the same cleanup boundary", async () => {
     const calls: string[] = [];
     const cleanupWorkerSession = vi.fn(async () => undefined);
@@ -280,6 +446,8 @@ projects:
     });
     const reconcileBeforeDiscovery = vi.fn(async (input) => {
       expect(input).toMatchObject({ configFile: "/tmp/loop.yml", now: 42 });
+      expect(input.supervisorSessionBusy?.("busy-supervisor")).toBe(true);
+      expect(input.supervisorSessionBusy?.("idle-supervisor")).toBe(false);
       await input.cleanupCompletedWorkerSession?.("terminal-worker");
       expect(await input.workerSessionExists?.("terminal-worker")).toBe(false);
     });
@@ -301,6 +469,9 @@ projects:
             worktreeIsolation: "isolated",
           },
         },
+      },
+      queue: {
+        isSessionProcessing: vi.fn((session) => session === "busy-supervisor"),
       },
     });
 

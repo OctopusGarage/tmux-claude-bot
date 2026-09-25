@@ -2318,7 +2318,7 @@ async function supervisorSessionIsAvailable(
   return agentIsIdle(deps, sessionName);
 }
 
-function supervisorSessionHasQueuedWork(deps: HandlerDeps, sessionName: string): boolean {
+export function supervisorSessionHasQueuedWork(deps: HandlerDeps, sessionName: string): boolean {
   return (
     deps.queue.isSessionProcessing(sessionName) ||
     deps.queue.getSessionQueue(sessionName).length > 0 ||
