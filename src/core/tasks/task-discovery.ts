@@ -2,6 +2,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import {
+  AutomationOccurrenceStore,
+  automationOccurrenceId,
+} from "../automation/occurrence-window.js";
 import { LOOP_RUN_ARTIFACTS, loopRunsRoot } from "../loop/artifacts.js";
 import type { LoopConfig } from "../loop/config.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
@@ -320,7 +324,21 @@ function loopScheduleRecords(input: {
     });
     after = scheduledAt;
   }
-  return records;
+  const occurrenceStore = new AutomationOccurrenceStore();
+  const occurrenceKey = `${input.jobKey}:${input.jobKind}`;
+  return records.map((record) => {
+    if (record.status !== "expected") return record;
+    const occurrence = occurrenceStore.get(
+      automationOccurrenceId(occurrenceKey, record.scheduledAt),
+    );
+    if (occurrence?.status !== "superseded") return record;
+    return {
+      ...record,
+      status: "skipped",
+      repairStatus: "superseded",
+      summary: `Loop occurrence was superseded by later scheduled occurrence ${occurrence.retainedBy ?? "unknown"}.`,
+    };
+  });
 }
 
 function recordForLoopRunArtifact(input: {

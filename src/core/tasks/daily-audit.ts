@@ -33,13 +33,51 @@ export async function runDailyTaskAudit(input: {
   const window = previousSingaporeDayWindow(input.now);
   input.ledger.reconcileSupersededFailures();
   const discoveredRecords = input.discover?.({ window, now: input.now }) ?? [];
+  const ledgerRecordsByTaskId = new Map(
+    input.ledger.listAll().map((record) => [record.taskId, record]),
+  );
   for (const record of discoveredRecords) {
-    if (record.status !== "expected") continue;
+    if (record.status === "expected") {
+      input.ledger.expect({
+        taskId: record.taskId,
+        source: record.source,
+        name: record.name,
+        scheduledAt: record.scheduledAt,
+        ...(record.summary === undefined ? {} : { summary: record.summary }),
+      });
+      continue;
+    }
+    if (
+      record.source !== "loop-engineering" ||
+      record.status !== "skipped" ||
+      record.repairStatus !== "superseded"
+    ) {
+      continue;
+    }
+    const existing = ledgerRecordsByTaskId.get(record.taskId);
+    const repairStillOpen =
+      existing?.repairStatus === undefined ||
+      ["pending", "running", "failed"].includes(existing.repairStatus);
+    if (
+      existing !== undefined &&
+      ((existing.status !== "expected" && existing.status !== "missing") || !repairStillOpen)
+    ) {
+      continue;
+    }
     input.ledger.expect({
       taskId: record.taskId,
       source: record.source,
       name: record.name,
       scheduledAt: record.scheduledAt,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+    input.ledger.skip(record.taskId, {
+      endedAt: input.now,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+    input.ledger.markRepairStatus(record.taskId, {
+      repairStatus: "superseded",
+      updatedAt: input.now,
       ...(record.summary === undefined ? {} : { summary: record.summary }),
     });
   }
