@@ -520,8 +520,10 @@ not hold this import guard; unrelated task IDs remain eligible for normal import
 If an open project-recovery record links only to terminal WorkOrders and no live
 WorkOrder remains for that project, its stale lease must be released before the
 next recovery admission pass; unknown active recoveries remain deferred.
-Audit reconciliation must normalize successful and skipped ledger records to
-the `not-needed` repair terminal before evaluating active failures.
+Audit reconciliation must normalize successful ledger records and ordinary
+skipped records to the `not-needed` repair terminal before evaluating active
+failures. A skipped occurrence explicitly marked `superseded` must retain that
+terminal reason so the ledger and Repair Coordinator preserve why it closed.
 Discovery must persist expected scheduled occurrences before repair admission;
 an expected ledger record is projected as `missing` for the repair prompt, then
 keeps its durable task id through running and terminal repair states. Do not

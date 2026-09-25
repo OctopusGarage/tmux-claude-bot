@@ -37,7 +37,7 @@ function nonBlankLineCount(pane: string): number {
 
 function isMissingTmuxSessionError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /can't find session(?::|\s|$)/i.test(message);
+  return /(?:can't find session(?::|\s|$)|no server running|no sessions(?:\s|$))/i.test(message);
 }
 
 /**

@@ -460,6 +460,47 @@ projects:
     ]);
   });
 
+  it.each(["fixed", "blocked", "not-reproducible"] as const)(
+    "preserves an already terminal Repair Coordinator outcome: %s",
+    (terminalStatus) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-terminal-repair-"));
+      const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+      const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-backend opportunity-discovery",
+        scheduledAt,
+      });
+      ledger.skip(taskId, {
+        endedAt: scheduledAt + 1,
+        summary: "A later occurrence superseded this one.",
+      });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "superseded",
+        updatedAt: scheduledAt + 1,
+      });
+      const coordinator = new RepairCoordinator();
+      const repair = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/tmp/tmux-claude-bot",
+        source: "loop-engineering",
+        taskFamily: "geo-backend opportunity-discovery",
+        fingerprint: "missing scheduled occurrence",
+        taskId,
+        now: scheduledAt,
+      });
+      coordinator.markTerminal(repair.id, terminalStatus, scheduledAt + 1);
+
+      reconcileDailyAuditRepairQueue({ ledger, coordinator, now: scheduledAt + 2 });
+
+      expect(coordinator.list()).toEqual([
+        expect.objectContaining({ id: repair.id, linkedTaskIds: [taskId], status: terminalStatus }),
+      ]);
+    },
+  );
+
   it("matches discovered jittered tasks to closed ledger records outside the audit window", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-jittered-"));
     const ledger = new DailyTaskLedger();

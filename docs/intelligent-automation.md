@@ -344,9 +344,10 @@ Agent lifecycle detection must not treat a stale Codex `esc to interrupt` line
 as newer than a subsequent `Goal achieved` footer or `Worked for <duration>`
 completion banner. This keeps final-summary consumption prompt without
 weakening active-turn protection.
-Terminal ledger invariants are enforced during every audit tick: successful or
-skipped tasks always carry `repairStatus=not-needed`, while failed tasks retain
-their explicit repair outcome.
+Terminal ledger invariants are enforced during every audit tick: successful
+tasks and ordinary skipped tasks carry `repairStatus=not-needed`; skipped
+occurrences closed because a later run replaced them retain
+`repairStatus=superseded`; failed tasks retain their explicit repair outcome.
 
 ## Native Agent Capability Boundary
 
