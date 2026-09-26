@@ -233,6 +233,7 @@ export class RepairCoordinator {
           : [...current.summaries, input.summary];
       const updated = {
         ...current,
+        source: input.source === "project-recovery" ? input.source : current.source,
         linkedTaskIds,
         summaries,
         priority: Math.max(current.priority, input.priority ?? 0),

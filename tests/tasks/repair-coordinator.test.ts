@@ -144,6 +144,68 @@ describe("RepairCoordinator", () => {
     );
   });
 
+  it("promotes an equivalent imported repair to project recovery ownership", () => {
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const imported = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "autopilot-delegate",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "system-gate",
+      taskId: "autopilot:failed-run",
+      now: 1_000,
+    });
+    store.set(imported.id, {
+      ...imported,
+      status: "running",
+      attempt: 2,
+      nextAttemptAt: 90_000,
+      leaseId: "existing-lease",
+      leaseExpiresAt: 100_000,
+      workOrderId: "existing-work-order",
+    });
+
+    const recovered = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "project-recovery",
+      taskFamily: "tmux-claude-bot active delegated task",
+      fingerprint: "system-gate",
+      taskId: "autopilot:failed-run",
+      now: 2_000,
+    });
+
+    expect(recovered).toMatchObject({
+      id: imported.id,
+      source: "project-recovery",
+      status: "running",
+      attempt: 2,
+      nextAttemptAt: 90_000,
+      leaseId: "existing-lease",
+      leaseExpiresAt: 100_000,
+      workOrderId: "existing-work-order",
+    });
+    expect(coordinator.findOpenProjectRecovery("tmux-claude-bot")?.id).toBe(imported.id);
+    expect(
+      coordinator.importPending(
+        [
+          {
+            taskId: "autopilot:failed-run",
+            source: "autopilot-delegate",
+            name: "tmux-claude-bot active delegated task",
+            status: "failed",
+            repairStatus: "pending",
+            scheduledAt: 1_000,
+            updatedAt: 2_000,
+          },
+        ],
+        { projectId: "tmux-claude-bot", projectPath: "/repo/tmux-claude-bot", now: 3_000 },
+      ),
+    ).toBe(0);
+    expect(coordinator.list()).toHaveLength(1);
+  });
+
   it("keeps one active runtime repair when diagnostic evidence formatting changes", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const first = coordinator.enqueue({
