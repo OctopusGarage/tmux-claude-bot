@@ -17,6 +17,7 @@ run() {
 }
 
 run scripts/verify-node.sh
+run scripts/verify-biome-schema.sh
 run pnpm lint
 run pnpm lint:types
 run pnpm lint:types:tests
