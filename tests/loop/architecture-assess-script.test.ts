@@ -19,7 +19,11 @@ function run(command: string, args: string[], cwd: string): void {
   }
 }
 
-function assess(cwd: string, extraArgs: string[] = []): AssessmentOutput {
+function assess(
+  cwd: string,
+  extraArgs: string[] = [],
+  env: NodeJS.ProcessEnv = process.env,
+): AssessmentOutput {
   const result = spawnSync(
     process.execPath,
     [
@@ -42,7 +46,7 @@ function assess(cwd: string, extraArgs: string[] = []): AssessmentOutput {
       ".codegraph|.semgrep|pyproject.toml|uv.lock|tests",
       ...extraArgs,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env },
   );
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as AssessmentOutput;
@@ -179,6 +183,25 @@ describe("loop architecture assessment script", () => {
       "--guard-files",
       "pyproject.toml|uv.lock|tests|missing.guard",
     ]);
+
+    expect(result.score).toBeGreaterThanOrEqual(95);
+    expect(result.findings).toHaveLength(0);
+    expect(result.suggestedBotImprovements).toContain(
+      "recent completed loop evidence: 1785429000000-demo-harness-auto (system accepted)",
+    );
+  });
+
+  it("normalizes a legacy app-home state environment before reading loop evidence", () => {
+    const repo = makeRepo();
+    const appHome = mkdtempSync(join(tmpdir(), "tcb-loop-assess-app-home-"));
+    const stateDir = join(appHome, "state");
+    dirs.push(repo, appHome);
+    writeCompletedRun(stateDir, "sample");
+
+    const result = assess(repo, ["--guard-files", "pyproject.toml|uv.lock|tests|missing.guard"], {
+      ...process.env,
+      TCB_STATE_DIR: appHome,
+    });
 
     expect(result.score).toBeGreaterThanOrEqual(95);
     expect(result.findings).toHaveLength(0);

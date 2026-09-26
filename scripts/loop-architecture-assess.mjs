@@ -42,6 +42,14 @@ function fileExists(projectPath, relativePath) {
   return existsSync(join(projectPath, relativePath));
 }
 
+function normalizeStateDir(dir) {
+  const nested = join(dir, "state");
+  if (!existsSync(join(dir, "loop-runs")) && existsSync(join(nested, "loop-runs"))) {
+    return nested;
+  }
+  return dir;
+}
+
 function executableExists(projectPath, command) {
   const first = command.trim().split(/\s+/)[0];
   if (!first || first.includes("=")) return true;
@@ -191,7 +199,11 @@ const projectId = args["project-id"];
 const projectName = args["project-name"] ?? projectId;
 const projectPath = args["project-path"] ?? process.cwd();
 const targetScore = Number(args["target-score"] ?? process.env.LOOP_PROJECT_TARGET_SCORE ?? 95);
-const stateDir = args["state-dir"] ?? process.env.TCB_STATE_DIR ?? join(process.env.HOME ?? ".", ".tmux-claude-bot", "state");
+const stateDir = normalizeStateDir(
+  args["state-dir"] ??
+    process.env.TCB_STATE_DIR ??
+    join(process.env.HOME ?? ".", ".tmux-claude-bot", "state"),
+);
 
 if (!projectId || !projectName) {
   console.error("missing --project-id or --project-name");

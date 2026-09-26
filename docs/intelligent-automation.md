@@ -67,6 +67,10 @@ automatic bot-repairable finding. The allowlisted
 that the running bot had not adopted the checked-out source; recovery retains
 or reopens the linked work for bounded retry, while source adoption and service
 restart remain separate operator/deployment actions.
+The deterministic architecture assessment also tolerates the legacy app-home
+form of `TCB_STATE_DIR` by resolving accepted Loop evidence from its canonical
+nested `state/` directory. This prevents a draining stale managed-development
+runtime from turning existing accepted evidence into a false low score.
 Verified source worktree or source branch divergence is still retryable
 automation repair work; an accepted blocked supervisor summary must not
 terminalize that case as an owner decision.
