@@ -285,7 +285,11 @@ Known target-project and external blockers are admitted there as durable termina
 records without invoking a bot repair.
 The coordinator must also collapse duplicate non-terminal repairs linked to the
 same task before dispatch; project recovery wins over an accidental bot-owned
-import for the same task. Runtime Guardian rediscovery must reuse its active
+import for the same task. When the equivalent non-terminal record already exists,
+that handoff transfers its source to `project-recovery` while preserving the
+record id, attempt, lease, WorkOrder, and task links, so later audit ticks find
+the durable recovery owner instead of reimporting and superseding it. Runtime
+Guardian rediscovery must reuse its active
 record by durable task identity even when diagnostic evidence formatting changes;
 evidence text is not queue identity and must not create one record per tick.
 Once a Runtime Guardian record is terminal for a durable task identity, artifact

@@ -341,7 +341,11 @@ repair schedulers. They enqueue logical repair findings into the shared Repair
 Coordinator. The Coordinator imports historical unresolved ledger records only
 when they are owned by the bot project, using an exact task-family boundary
 instead of a substring match; configured project records remain under project
-recovery ownership. It deduplicates findings, enforces one mutating WorkOrder per project, owns lease
+recovery ownership. If project recovery reuses an equivalent nonterminal record
+that an earlier ledger import created, the Coordinator transfers that record's
+source to project recovery without replacing its identity, attempt, lease,
+WorkOrder, or task links. This keeps repeated audit ticks from reimporting and
+superseding the same recovery. It deduplicates findings, enforces one mutating WorkOrder per project, owns lease
 expiry and retry backoff, and reconciles each linked task into a terminal or
 retryable repair status. This is the only service-owned consumer of durable
 repair backlog state; manual force-triggering is an operator diagnostic, not a
