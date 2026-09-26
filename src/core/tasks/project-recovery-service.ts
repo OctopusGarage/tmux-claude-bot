@@ -1069,7 +1069,6 @@ function hasPreciseBotRetryableEvidence(evidence: string): boolean {
     normalized.includes("assessment score contract") ||
     normalized.includes("assessment scoring contract") ||
     normalized.includes("assessment result did not include a numeric score") ||
-    normalized.includes("open-worker") ||
     normalized.includes("control request timed out") ||
     normalized.includes("dispatch-failed") ||
     normalized.includes("failed to ensure loop supervisor session") ||

@@ -94,10 +94,15 @@ deferrals must not reopen those records or turn them back into pending repair
 work.
 Accepted blocked project-recovery closures are not terminal when their current
 ledger evidence contains bot-owned recovery defects such as assessment scoring
-contract failures, missing numeric scores, control/open-worker timeouts,
+contract failures, missing numeric scores, explicit worker-control timeouts,
 dispatch-failed supervisor setup, or missing service-safe git executables; the
 hourly self-heal path must re-enter recovery for those defects instead of
 requiring an operator prompt.
+The bare presence of an `open-worker` command or action in an accepted blocked
+summary is not retry evidence: successful recovery and superseded optional
+worker attempts may both mention that command. Retry classification requires a
+concrete failure signal such as `control request timed out` or a structured
+automatic bot-repairable system-gate finding.
 When verified revision evidence proves that the running bot has not adopted the
 current checked-out source, the supervisor final summary must emit the
 allowlisted structured `stale-runtime-source-adoption` repair finding. The
