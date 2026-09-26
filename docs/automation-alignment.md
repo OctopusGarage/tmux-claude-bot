@@ -78,6 +78,10 @@ Managed-development reload alignment invariant: after a source change, the dev
 supervisor must retry one failed typecheck after a bounded delay. A later pass
 continues through the active-automation deferral gate, while a repeated failure
 keeps the last-good child and waits for a new source change.
+Deterministic architecture assessment must normalize a legacy app-home
+`TCB_STATE_DIR` to its canonical nested `state/` directory when only that child
+contains Loop run evidence. This keeps system verification stable while a
+managed-development runtime is draining before source adoption.
 Recognized supervisor agent startup failures (authentication refresh, Codex
 response-endpoint credential rejection, MCP startup, or hook initialization)
 must enter the same bounded readiness recovery:
