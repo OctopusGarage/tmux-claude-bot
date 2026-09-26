@@ -103,6 +103,47 @@ describe("install scripts preserve an existing shared venv", () => {
 });
 
 describe("managed install and release script contracts", () => {
+  it("keeps the Biome schema aligned with the pinned CLI", async () => {
+    const result = await execFile(nodePath.join(ROOT, "scripts", "verify-biome-schema.sh"), [], {
+      cwd: ROOT,
+    });
+    expect(`${result.stdout}${result.stderr}`).toContain("Biome schema version ok: 2.5.14");
+
+    const fixture = await mkdtemp(nodePath.join(tmpdir(), "tcb-biome-schema-"));
+    try {
+      mkdirSync(nodePath.join(fixture, "scripts"), { recursive: true });
+      mkdirSync(nodePath.join(fixture, "node_modules", ".bin"), { recursive: true });
+      copyFileSync(
+        nodePath.join(ROOT, "scripts", "verify-biome-schema.sh"),
+        nodePath.join(fixture, "scripts", "verify-biome-schema.sh"),
+      );
+      writeExecutable(
+        nodePath.join(fixture, "node_modules", ".bin", "biome"),
+        "#!/bin/sh\nprintf 'Version: 2.5.14\\n'\n",
+      );
+      writeFileSync(
+        nodePath.join(fixture, "biome.json"),
+        '{"$schema":"https://biomejs.dev/schemas/2.5.13/schema.json"}\n',
+      );
+
+      await expect(
+        execFile(nodePath.join(fixture, "scripts", "verify-biome-schema.sh"), [], {
+          cwd: fixture,
+        }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("CLI=2.5.14 schema=2.5.13"),
+      });
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+
+    const verifyScript = readFileSync(nodePath.join(ROOT, "scripts", "verify-local.sh"), "utf8");
+    expect(verifyScript.indexOf("run scripts/verify-biome-schema.sh")).toBeLessThan(
+      verifyScript.indexOf("run pnpm lint"),
+    );
+  });
+
   it("requires Node.js 22 or newer before local verification", async () => {
     const unsupported = await runNodePreflight("v21.9.0");
     expect(unsupported.code).not.toBe(0);
