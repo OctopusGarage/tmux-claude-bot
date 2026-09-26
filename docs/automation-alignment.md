@@ -78,8 +78,9 @@ Managed-development reload alignment invariant: after a source change, the dev
 supervisor must retry one failed typecheck after a bounded delay. A later pass
 continues through the active-automation deferral gate, while a repeated failure
 keeps the last-good child and waits for a new source change.
-Recognized supervisor agent startup failures (authentication refresh, MCP
-startup, or hook initialization) must enter the same bounded readiness recovery:
+Recognized supervisor agent startup failures (authentication refresh, Codex
+response-endpoint credential rejection, MCP startup, or hook initialization)
+must enter the same bounded readiness recovery:
 recreate the supervisor session identified by that current dispatch result and
 retry the WorkOrder once.
 Process liveness alone must not return that pane to the available pool, and a

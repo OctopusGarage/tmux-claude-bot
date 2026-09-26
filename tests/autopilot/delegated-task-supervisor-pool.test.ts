@@ -1246,6 +1246,12 @@ workspaces:
         "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
       recovery: "restart",
     },
+    {
+      transport: "resolve",
+      output:
+        "unexpected status 401 Unauthorized: Incorrect API key provided: <redacted>, url: https://chatgpt.com/backend-api/codex/responses",
+      recovery: "restart",
+    },
   ])(
     "re-ensures and retries active delegation when supervisor dispatch fails startup: $output",
     async ({ transport, output, recovery }) => {
