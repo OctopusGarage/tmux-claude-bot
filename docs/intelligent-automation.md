@@ -77,6 +77,10 @@ When a ledger `reportPath` names a run directory, recovery classification reads
 the final supervisor summary and system gate inside that directory. It must not
 discard those artifacts and turn recoverable orchestration evidence into a
 generic owner decision.
+Text fallback classification requires a concrete bot-owned failure signal. A
+successful or superseded mention of `open-worker` does not make an otherwise
+accepted blocked outcome retryable; explicit control timeouts and structured
+automatic bot-repairable findings still do.
 Failed Autopilot delegations for configured projects follow the same recovery
 path as Loop Engineering failures; invalid or missing supervisor summaries are
 retryable orchestration evidence. Capacity, active-project, or supervisor

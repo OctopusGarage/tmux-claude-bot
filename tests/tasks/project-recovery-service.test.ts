@@ -1693,6 +1693,96 @@ describe("project recovery service", () => {
     );
   });
 
+  it.each([
+    [
+      "successful worker recovery",
+      "Recovered the absent dedicated worker by opening it with tcb open-worker before the final review.",
+    ],
+    [
+      "superseded optional worker attempt",
+      "An optional open-worker lease attempt was rejected before mutation; the valid direct supervisor review then completed.",
+    ],
+  ])("does not retry accepted blocked recovery after %s", async (_name, action) => {
+    const runDir = join(tmpdir(), `project-recovery-open-worker-context-${Date.now()}-${_name}`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "alcove",
+        actionsTaken: [action],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: { decision: "block" },
+        commits: [],
+        followUps: ["Owner policy decision is required; no bot-owned repair remains."],
+      }),
+    );
+    await writeFile(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: true,
+        resultStatus: "blocked",
+        workOrderId: "blocked-recovery",
+        projectId: "alcove",
+        failures: [],
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queue = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "project-recovery",
+      taskFamily: "alcove opportunity-discovery",
+      fingerprint: "accepted-blocked",
+      taskId: "loop:alcove:opportunity-discovery:1",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:blocked-recovery"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
+    coordinator.markRunning(queue.id, "recovery", 1_001);
+    const updateRepairStatus = vi.fn();
+
+    const result = await reconcileProjectRecoveryArtifacts({
+      now: 2_000,
+      records: [
+        {
+          taskId: "loop:alcove:opportunity-discovery:1",
+          source: "loop-engineering",
+          name: "alcove opportunity-discovery",
+          status: "failed",
+          repairStatus: "running",
+          scheduledAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          taskId: "autopilot:blocked-recovery",
+          source: "autopilot-delegate",
+          name: "alcove active delegated task",
+          status: "failed",
+          repairStatus: "pending",
+          error: "active delegation ended with blocked",
+          reportPath: runDir,
+          scheduledAt: 1_100,
+          updatedAt: 1_500,
+        },
+      ],
+      coordinator,
+      updateRepairStatus,
+    });
+
+    expect(result).toMatchObject({ fixed: 0, blocked: 1 });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
+      status: "blocked",
+      attempt: 0,
+    });
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:blocked-recovery",
+      "blocked",
+      expect.stringContaining("accepted blocked project recovery"),
+    );
+  });
+
   it("requeues accepted blocked recovery with a structured bot-repairable finding", async () => {
     const runDir = join(tmpdir(), `project-recovery-stale-runtime-${Date.now()}`);
     await mkdir(runDir, { recursive: true });
