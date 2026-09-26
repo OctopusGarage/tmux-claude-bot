@@ -67,6 +67,11 @@ automatic bot-repairable finding. The allowlisted
 that the running bot had not adopted the checked-out source; recovery retains
 or reopens the linked work for bounded retry, while source adoption and service
 restart remain separate operator/deployment actions.
+The system gate prevents one source of this drift: when the same WorkOrder's
+validated bot-owned PR is already merged, it fast-forwards the configured clean
+source switch-back branch before independent assessment. This is the ordinary
+post-merge reconciliation path moved ahead of assessment, not authority for a
+repair worker to pull arbitrary source checkouts or restart a running service.
 The deterministic architecture assessment also tolerates the legacy app-home
 form of `TCB_STATE_DIR` by resolving accepted Loop evidence from its canonical
 nested `state/` directory. This prevents a draining stale managed-development
@@ -633,7 +638,10 @@ centralized.
   worktree, but must never run `git switch` or `git pull --rebase` in the source
   checkout. The bot system owns source branch switch-back after acceptance; this
   prevents an isolated worker from advancing a branch ref while leaving the
-  user's source worktree on an older tree.
+  user's source worktree on an older tree. When a validated WorkOrder PR is
+  already merged, the system gate may perform that clean, exact-branch
+  fast-forward before its independent assessment so the assessment observes the
+  accepted source revision.
 - A dedicated supervised worker context should be leased per WorkOrder or per
   bounded run slice. It must use the reserved session name shape
   `<projectSessionPrefix>loop-worker-*`; generated WorkOrders include the run
