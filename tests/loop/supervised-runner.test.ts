@@ -200,6 +200,32 @@ describe("runLoopSupervisedProjectAsync", () => {
     expect(dispatches).toBe(1);
   });
 
+  it("classifies Codex response-endpoint credential rejection as a startup auth failure", async () => {
+    const output = [
+      "unexpected status 401 Unauthorized: Incorrect API key provided: <redacted>",
+      "url: https://chatgpt.com/backend-api/codex/responses",
+      "› Ask Codex to do anything",
+    ].join("\n");
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        dispatches += 1;
+        return { status: 0, stdout: output, stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
+      output,
+      repairDisposition: "bot-repairable",
+    });
+    expect(dispatches).toBe(1);
+  });
+
   it("classifies Codex startup hook failures as dispatch failures", async () => {
     const output = ["Hook failed", "hook exited with code 1", "Ask Codex to do anything"].join(
       "\n",

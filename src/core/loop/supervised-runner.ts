@@ -394,6 +394,9 @@ export function isAgentStartupFailureOutput(output: string): boolean {
   const normalized = output.toLowerCase();
   return (
     normalized.includes("access token could not be refreshed") ||
+    (normalized.includes("unexpected status 401") &&
+      normalized.includes("incorrect api key provided") &&
+      normalized.includes("backend-api/codex/responses")) ||
     normalized.includes("mcp startup incomplete") ||
     (normalized.includes("hook failed") && normalized.includes("hook exited with code"))
   );
