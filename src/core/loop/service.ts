@@ -2898,6 +2898,7 @@ export function runSupervisedSystemGateOutcome(input: {
   }
 
   const currentSystemVerifications: CheckpointSystemVerification[] = [];
+  const preVerificationEvidence: string[] = [];
   const systemVerificationCommand =
     input.workOrder.eval?.command !== undefined
       ? {
@@ -2936,6 +2937,14 @@ export function runSupervisedSystemGateOutcome(input: {
     if (status?.status !== 0 || (status?.stdout ?? "").trim() !== "")
       failures.push("independent verification worktree is dirty before command");
     if (failures.length === 0) {
+      const sourceAdoption = syncMergedPullRequestSourceBeforeVerification({
+        project: input.project,
+        workOrder: input.workOrder,
+        commits: input.result.summary.commits,
+        runCommand: input.runCommand,
+        ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
+      });
+      preVerificationEvidence.push(...sourceAdoption.evidence);
       const startedAt = new Date().toISOString();
       const command = input.runCommand({
         kind: systemVerificationCommand.kind,
@@ -3042,7 +3051,7 @@ export function runSupervisedSystemGateOutcome(input: {
           output: `${input.result.output}\n${reason}`,
         },
         failures,
-        evidence: failures,
+        evidence: [...preVerificationEvidence, ...failures],
       };
     }
   }
@@ -3068,7 +3077,7 @@ export function runSupervisedSystemGateOutcome(input: {
     };
   }
   const failures: string[] = [];
-  const evidence: string[] = [...checkpointGate.evidence];
+  const evidence: string[] = [...preVerificationEvidence, ...checkpointGate.evidence];
   const evalReport = buildEvalReportFromSupervisorSummary({
     workOrderId: input.workOrder.id,
     taskId: input.workOrder.task?.kind ?? "architecture",
@@ -3845,6 +3854,106 @@ function syncBackProjectForWorkOrder(
 ): SupervisedSystemGateProject {
   const sourceWorktree = workOrder.executionIsolation?.sourceWorktree;
   return sourceWorktree === undefined ? project : { ...project, path: sourceWorktree };
+}
+
+export function syncMergedPullRequestSourceBeforeVerification(input: {
+  project: SupervisedSystemGateProject;
+  workOrder: LoopWorkOrder;
+  commits: readonly string[];
+  runCommand: (invocation: LoopRunCommandInvocation) => LoopRunCommandResult;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+}): { synced: boolean; evidence: string[] } {
+  const sourceWorktree = input.workOrder.executionIsolation?.sourceWorktree;
+  const commitBranch = input.workOrder.commitPolicy.branch;
+  if (
+    input.runGit === undefined ||
+    sourceWorktree === undefined ||
+    commitBranch === undefined ||
+    !input.project.pullRequest.enabled ||
+    !input.project.pullRequest.autoMerge
+  ) {
+    return { synced: false, evidence: [] };
+  }
+
+  const supervisorCommitRefs = input.commits.map((commit) => commit.trim()).filter(Boolean);
+  const supervisorCommits = supervisorCommitRefs
+    .map(normalizeSupervisorCommitId)
+    .filter((commit): commit is string => commit !== null);
+  if (supervisorCommits.length === 0 || supervisorCommits.length !== supervisorCommitRefs.length) {
+    return { synced: false, evidence: [] };
+  }
+
+  if (
+    runGithubAccountPermissionGate({ project: input.project, runCommand: input.runCommand })
+      .length > 0
+  ) {
+    return { synced: false, evidence: [] };
+  }
+  const lookup = lookupSupervisedPullRequest({
+    project: input.project,
+    commitBranch,
+    runCommand: input.runCommand,
+  });
+  if (lookup.status !== 0) return { synced: false, evidence: [] };
+  const gate = supervisedPullRequestGate({
+    stdout: lookup.stdout,
+    expectedCommits: supervisorCommits,
+    projectPath: input.project.path,
+    runGit: input.runGit,
+  });
+  if (
+    gate.state !== "MERGED" ||
+    gate.failures.length > 0 ||
+    gate.pendingChecks.length > 0 ||
+    gate.generatedNoise
+  ) {
+    return { synced: false, evidence: [] };
+  }
+
+  const sourceStatus = input.runGit({ cwd: sourceWorktree, args: ["status", "--porcelain"] });
+  if (sourceStatus.status !== 0) {
+    return {
+      synced: false,
+      evidence: ["already-merged pull request source sync blocked: source git status failed"],
+    };
+  }
+  if (sourceStatus.stdout.trim() !== "") {
+    return {
+      synced: false,
+      evidence: ["already-merged pull request source sync blocked: source worktree is dirty"],
+    };
+  }
+  const sourceBranchFailures = switchBackWorktreeGate({
+    path: sourceWorktree,
+    expectedBranch: input.project.pullRequest.switchBack,
+    isolated: true,
+    runGit: input.runGit,
+  });
+  if (sourceBranchFailures.length > 0) {
+    return {
+      synced: false,
+      evidence: sourceBranchFailures.map(
+        (failure) => `already-merged pull request source sync blocked: ${failure}`,
+      ),
+    };
+  }
+
+  const failures = syncSwitchBackBranch({
+    project: { ...input.project, path: sourceWorktree },
+    runGit: input.runGit,
+  });
+  if (failures.length > 0) {
+    return {
+      synced: false,
+      evidence: failures.map(
+        (failure) => `already-merged pull request source sync blocked: ${failure}`,
+      ),
+    };
+  }
+  return {
+    synced: true,
+    evidence: ["already-merged pull request source branch synced before independent verification"],
+  };
 }
 
 function shouldSyncRepositoryReviewToDetachedBase(workOrder: LoopWorkOrder): boolean {

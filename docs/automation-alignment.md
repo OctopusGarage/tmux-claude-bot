@@ -435,6 +435,13 @@ creates the configured-base PR, then applies the normal commit, CI,
 mergeability, auto-merge, and switch-back gates. This deterministic step must
 also work during restart recovery so a service reload after final-summary write
 cannot strand a verified commit in an isolated worktree.
+If that WorkOrder PR is already merged when independent assessment begins, the
+system gate must first apply the existing source switch-back fast-forward. It
+may do so only after validating the exact PR commits, successful checks, clean
+PR body, configured GitHub identity, clean source worktree, and expected source
+branch. Unsafe source state stays untouched and is recorded as gate evidence;
+an assessment must not repeatedly score an older source checkout merely because
+normal post-merge reconciliation has not run yet.
 Concurrent owner edits in the source checkout do not invalidate an isolated
 worker's clean target worktree. The system gate verifies the isolated target and
 the configured source branch, but it must not attribute unrelated source

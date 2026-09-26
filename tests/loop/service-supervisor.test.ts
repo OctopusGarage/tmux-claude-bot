@@ -19,6 +19,7 @@ import {
   runSupervisedSystemGateOutcome,
   startLoopEngineering,
   supervisorRevisionFailures,
+  syncMergedPullRequestSourceBeforeVerification,
   writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
 import { readActiveLoopSupervisorResources } from "../../src/core/loop/supervisor-active-resources.js";
@@ -205,6 +206,277 @@ function resourceClosedState() {
 }
 
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("syncs an already-merged WorkOrder PR before running independent verification", () => {
+    const commands: string[] = [];
+    const gitCalls: string[] = [];
+    const events: string[] = [];
+    const workOrder = {
+      id: "run-merged",
+      scheduledAt: 1_000,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: "/repo/hub-isolated",
+      agent: "codex",
+      goal: "Repair the automation gap.",
+      maxRounds: 1,
+      targetScore: 100,
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "pnpm assess" },
+      eval: { command: "pnpm assess", minScore: 100 },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/hub/active-delegate/run-merged",
+      },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash",
+        githubAccount: "example-owner",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/hub-isolated",
+        sourceWorktree: "/repo/hub",
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:run-merged]",
+      finalSummaryPath: join(
+        mkdtempSync(join(tmpdir(), "tcb-loop-merged-adoption-")),
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: workOrder.projectPath,
+        commit: workOrder.commitPolicy,
+        pullRequest: workOrder.pullRequestPolicy,
+      },
+      workOrder,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired the source adoption gap"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        commands.push(`${invocation.kind}:${invocation.command}`);
+        events.push(`command:${invocation.kind}:${invocation.command}`);
+        if (invocation.kind === "eval") {
+          return { status: 0, stdout: '{"passed":true,"score":100}', stderr: "" };
+        }
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "MERGED",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+            body: "## Summary\n- Repair the automation gap.",
+            files: [{ path: "src/index.ts" }],
+            commits: [{ oid: "abc123" }],
+            mergeCommit: { oid: "def456" },
+          }),
+          stderr: "",
+        };
+      },
+      runGit: (invocation) => {
+        gitCalls.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        events.push(`git:${invocation.cwd}:${invocation.args.join(" ")}`);
+        if (invocation.cwd === "/repo/hub" && invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub" &&
+          invocation.args.join(" ") === "branch --show-current"
+        ) {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "show --format= --name-only abc123"
+        ) {
+          return { status: 0, stdout: "src/index.ts\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "rev-parse --show-toplevel"
+        ) {
+          return { status: 0, stdout: "/repo/hub-isolated\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "rev-parse HEAD"
+        ) {
+          return { status: 0, stdout: "abc123\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "branch --show-current"
+        ) {
+          return { status: 0, stdout: `${workOrder.commitPolicy.branch}\n`, stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain(
+      "already-merged pull request source branch synced before independent verification",
+    );
+    expect(commands).toContain("eval:pnpm assess");
+    expect(gitCalls.slice(3, 9)).toEqual([
+      "/repo/hub-isolated: show --format= --name-only abc123",
+      "/repo/hub: status --porcelain",
+      "/repo/hub: branch --show-current",
+      "/repo/hub: fetch origin dev",
+      "/repo/hub: switch dev",
+      "/repo/hub: merge --ff-only FETCH_HEAD",
+    ]);
+    expect(events.indexOf("git:/repo/hub-isolated:rev-parse --show-toplevel")).toBeLessThan(
+      events.indexOf("git:/repo/hub:merge --ff-only FETCH_HEAD"),
+    );
+    expect(events.indexOf("git:/repo/hub:merge --ff-only FETCH_HEAD")).toBeLessThan(
+      events.indexOf("command:eval:pnpm assess"),
+    );
+  });
+
+  it("leaves durable evidence instead of syncing an already-merged PR into a dirty source", () => {
+    const workOrder = {
+      id: "run-merged-dirty",
+      scheduledAt: 1_000,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: "/repo/hub-isolated",
+      agent: "codex",
+      goal: "Repair the automation gap.",
+      maxRounds: 1,
+      targetScore: 100,
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      allowedActions: [],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "pnpm assess" },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/hub/active-delegate/run-merged-dirty",
+      },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/hub-isolated",
+        sourceWorktree: "/repo/hub",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        preparedBy: "system-git-worktree",
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:run-merged-dirty]",
+    } satisfies LoopWorkOrder;
+    const gitCalls: string[] = [];
+
+    const outcome = syncMergedPullRequestSourceBeforeVerification({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: workOrder.projectPath,
+        commit: workOrder.commitPolicy,
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder,
+      commits: ["abc123"],
+      runCommand: (invocation) =>
+        invocation.command.includes("viewerPermission")
+          ? { status: 0, stdout: '{"viewerPermission":"ADMIN"}', stderr: "" }
+          : {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "MERGED",
+                statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+                body: "Verified repair.",
+                files: [{ path: "src/index.ts" }],
+                commits: [{ oid: "abc123" }],
+              }),
+              stderr: "",
+            },
+      runGit: (invocation) => {
+        gitCalls.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        if (invocation.cwd === "/repo/hub-isolated") {
+          return { status: 0, stdout: "src/index.ts\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: " M local-notes.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(outcome).toEqual({
+      synced: false,
+      evidence: ["already-merged pull request source sync blocked: source worktree is dirty"],
+    });
+    expect(gitCalls).toEqual([
+      "/repo/hub-isolated: show --format= --name-only abc123",
+      "/repo/hub: status --porcelain",
+    ]);
+  });
+
   it("backs off the independent repository review tick after global admission closure", () => {
     const now = Date.parse("2026-08-27T04:50:00Z");
 
