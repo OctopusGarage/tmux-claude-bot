@@ -1,8 +1,9 @@
 import { Domain } from "@larksuiteoapi/node-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   larkChannelOptions,
   logIncomingMessageBoundary,
+  reconnectLarkChannel,
 } from "../../../src/adapters/lark/start.js";
 
 describe("larkChannelOptions", () => {
@@ -56,5 +57,33 @@ describe("logIncomingMessageBoundary", () => {
         senderId: "ou_owner",
       } as never),
     ).not.toThrow();
+  });
+});
+
+describe("reconnectLarkChannel", () => {
+  it("connects directly when the initial failure left the channel uninitialized", async () => {
+    const channel = {
+      getConnectionStatus: vi.fn(() => undefined),
+      disconnect: vi.fn(async () => undefined),
+      connect: vi.fn(async () => undefined),
+    };
+
+    await reconnectLarkChannel(channel as never);
+
+    expect(channel.disconnect).not.toHaveBeenCalled();
+    expect(channel.connect).toHaveBeenCalledOnce();
+  });
+
+  it("disconnects before reconnecting an initialized stuck channel", async () => {
+    const channel = {
+      getConnectionStatus: vi.fn(() => ({ state: "reconnecting", reconnectAttempts: 1 })),
+      disconnect: vi.fn(async () => undefined),
+      connect: vi.fn(async () => undefined),
+    };
+
+    await reconnectLarkChannel(channel as never);
+
+    expect(channel.disconnect).toHaveBeenCalledOnce();
+    expect(channel.connect).toHaveBeenCalledOnce();
   });
 });
