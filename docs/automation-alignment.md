@@ -682,6 +682,9 @@ to the host wall clock and expose both values; timezone-name inequality alone is
 never an admission failure, and process `TZ` overrides must not redefine the
 macOS system timezone. A fixed event may be refused only when the relative
 offset changes over the schedule horizon and cannot be represented faithfully.
+Power history accepts a keep-awake reacquisition within the scheduled wake
+correlation tolerance even when TCB starts during DarkWake before macOS records
+the transition to full Wake; earlier same-cycle assertions do not satisfy it.
 
 Resource Guardian alignment invariant: the module is an observer/protector for
 host pressure, with admission before reservation as the target consumer boundary.

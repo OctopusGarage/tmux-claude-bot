@@ -80,6 +80,32 @@ describe("host power history", () => {
     );
   });
 
+  it("accepts keep-awake reacquisition during the scheduled dark-wake startup", () => {
+    const report = history(
+      [
+        { at: at("2026-08-12T02:00:12"), kind: "keep-awake-released" },
+        { at: at("2026-08-12T09:13:56"), kind: "keep-awake-acquired" },
+        {
+          at: at("2026-08-12T09:30:04"),
+          kind: "phase-transition",
+          from: "wake-warmup",
+          to: "service",
+        },
+      ],
+      [
+        "2026-08-12 02:37:10 +0800 Sleep                Entering Sleep state due to 'Sleep Service Back to Sleep'",
+        "2026-08-12 09:15:00 +0800 Wake                 DarkWake to FullWake from Deep Idle due to UserActivity Assertion",
+      ].join("\n"),
+    );
+
+    expect(report.checks.find((check) => check.code === "keep-awake-reacquire")).toEqual({
+      code: "keep-awake-reacquire",
+      status: "passed",
+      detail: "TCB reacquired keep-awake for the scheduled wake",
+    });
+    expect(report.status).toBe("complete");
+  });
+
   it("does not treat optional natural sleep as failed when release was observed", () => {
     const report = history(
       [{ at: at("2026-08-12T02:00:12"), kind: "keep-awake-released" }],
