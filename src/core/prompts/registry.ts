@@ -12,7 +12,7 @@ export const ACTION_SCOPE_RANK: Record<PromptActionScope, number> = {
 export const GOVERNED_PROMPTS: readonly PromptSpec[] = [
   {
     id: "loop.supervisor.main",
-    version: 1,
+    version: 2,
     owner: "src/core/loop/work-order.ts",
     audience: "active-agent",
     riskLevel: "high",
@@ -22,7 +22,7 @@ export const GOVERNED_PROMPTS: readonly PromptSpec[] = [
   },
   {
     id: "loop.supervisor.finalization",
-    version: 1,
+    version: 2,
     owner: "src/core/loop/work-order.ts",
     audience: "active-agent",
     riskLevel: "high",
@@ -32,7 +32,7 @@ export const GOVERNED_PROMPTS: readonly PromptSpec[] = [
   },
   {
     id: "loop.supervisor.revision",
-    version: 1,
+    version: 2,
     owner: "src/core/loop/work-order.ts",
     audience: "active-agent",
     riskLevel: "high",

@@ -114,6 +114,12 @@ system gate must preserve that bot-repairable finding, and project recovery must
 keep or return the linked repair to bounded automatic retry instead of accepting
 the blocked summary as terminal. This signal reports adoption drift only; it
 does not pull, switch branches, or restart the service.
+The exception is the expected pre-gate source gap after the same WorkOrder's
+validated bot-owned PR has merged and every other deterministic gate passed. The
+supervisor must report completion instead of blocking solely on that gap, so the
+system gate can revalidate the PR and fast-forward the configured clean source
+switch-back branch before independent assessment. The worker still must not
+pull, switch, or restart the source runtime itself.
 When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
 the task ledger must close that task with `repairStatus=blocked`; Daily Task
 Audit and dashboard attention must not keep it as pending repair work.

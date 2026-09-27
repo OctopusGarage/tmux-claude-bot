@@ -72,6 +72,12 @@ validated bot-owned PR is already merged, it fast-forwards the configured clean
 source switch-back branch before independent assessment. This is the ordinary
 post-merge reconciliation path moved ahead of assessment, not authority for a
 repair worker to pull arbitrary source checkouts or restart a running service.
+The supervisor must not preempt that path by returning `blocked` solely for the
+expected pre-gate source gap after its own validated PR has merged and every
+other deterministic gate passed. It reports completion and leaves the guarded
+fast-forward to the system gate. Unexplained drift, unsafe source state, or drift
+without that same-WorkOrder merged-PR evidence still uses the structured blocked
+finding and automatic recovery path.
 The deterministic architecture assessment also tolerates the legacy app-home
 form of `TCB_STATE_DIR` by resolving accepted Loop evidence from its canonical
 nested `state/` directory. This prevents a draining stale managed-development

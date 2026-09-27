@@ -1872,8 +1872,13 @@ prReview:
       runId: "1752643800000-datavibe",
     });
 
-    expect(buildLoopSupervisorPrompt(workOrder)).toContain(
-      'repairFinding with code "stale-runtime-source-adoption"',
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+    expect(prompt).toContain('repairFinding with code "stale-runtime-source-adoption"');
+    expect(prompt).toContain(
+      "Do not block solely for the expected pre-gate source gap when this WorkOrder's validated bot-owned PR is already merged",
+    );
+    expect(prompt).toContain(
+      "report completed so the deterministic system gate can validate and fast-forward the configured clean source switch-back branch before independent assessment",
     );
   });
 
