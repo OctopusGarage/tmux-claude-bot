@@ -190,6 +190,8 @@ and output keeps the newest 200 events. A released assertion followed by no slee
 is reported as `not-observed`, because macOS owns the sleep decision; missing TCB
 or host evidence is `incomplete`, never inferred as success from configuration.
 Checks correlate only evidence from the newest quiet-window cycle in the lookback.
+Keep-awake reacquisition may precede the full-wake record by up to the existing
+two-minute wake-correlation tolerance when TCB starts during macOS DarkWake.
 
 ---
 

@@ -257,7 +257,7 @@ export function readPowerHistory(input: {
       event.kind === "keep-awake-acquired" &&
       scheduledWake !== undefined &&
       inSelectedCycle(event.at) &&
-      event.at >= scheduledWake.at,
+      (event.at >= scheduledWake.at || nearClock(event.at, wakeClock, input.config.timezone)),
   );
   const resumed = application.events.find(
     (event) =>
@@ -285,8 +285,8 @@ export function readPowerHistory(input: {
         ? check("scheduled-wake", "passed", "full wake observed near the configured wake time")
         : check("scheduled-wake", "incomplete", "no full wake near the configured wake time"),
     reacquire
-      ? check("keep-awake-reacquire", "passed", "TCB reacquired keep-awake after wake")
-      : check("keep-awake-reacquire", "incomplete", "no post-wake reacquisition evidence"),
+      ? check("keep-awake-reacquire", "passed", "TCB reacquired keep-awake for the scheduled wake")
+      : check("keep-awake-reacquire", "incomplete", "no scheduled-wake reacquisition evidence"),
     resumed
       ? check("service-resume", "passed", "TCB entered service phase near quiet end")
       : check("service-resume", "incomplete", "no service-phase resume evidence"),
