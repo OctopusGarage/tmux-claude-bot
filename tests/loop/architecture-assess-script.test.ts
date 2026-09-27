@@ -127,6 +127,38 @@ function writeCompletedRun(stateDir: string, projectId: string): void {
   );
 }
 
+function writeInFlightCompletedSummary(
+  stateDir: string,
+  projectId: string,
+  workOrderId: string,
+): void {
+  const runDir = join(stateDir, "loop-runs", projectId, workOrderId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "supervisor-final-summary.json"),
+    JSON.stringify(
+      {
+        status: "completed",
+        projectId,
+        actionsTaken: ["Verified that no project change is justified."],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          deterministicGates: [
+            { name: "tests", result: "passed" },
+            { name: "types", result: "passed" },
+            { name: "lint", result: "passed" },
+          ],
+        },
+        commits: [],
+        followUps: [],
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 describe("loop architecture assessment script", () => {
   let dirs: string[] = [];
 
@@ -207,6 +239,28 @@ describe("loop architecture assessment script", () => {
     expect(result.findings).toHaveLength(0);
     expect(result.suggestedBotImprovements).toContain(
       "recent completed loop evidence: 1785429000000-demo-harness-auto (system accepted)",
+    );
+  });
+
+  it("excludes the current WorkOrder summary from previous completed-run evidence", () => {
+    const repo = makeRepo();
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-assess-state-"));
+    const currentWorkOrderId = "1790476765284-sample-active-delegate";
+    dirs.push(repo, stateDir);
+    writeCompletedRun(stateDir, "sample");
+    writeInFlightCompletedSummary(stateDir, "sample", currentWorkOrderId);
+
+    const result = assess(
+      repo,
+      ["--state-dir", stateDir, "--guard-files", "pyproject.toml|uv.lock|tests|missing.guard"],
+      { ...process.env, LOOP_WORK_ORDER_ID: currentWorkOrderId },
+    );
+
+    expect(result.suggestedBotImprovements).toContain(
+      "recent completed loop evidence: 1785429000000-demo-harness-auto (system accepted)",
+    );
+    expect(result.suggestedBotImprovements).not.toContain(
+      `recent completed loop evidence: ${currentWorkOrderId}`,
     );
   });
 });

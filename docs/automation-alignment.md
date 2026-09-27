@@ -842,6 +842,11 @@ connection status must enter the existing network-probed, debounced keepalive
 recovery path. A still-pending initial connection remains untouched, and the
 failure must not crash the Telegram path or silently disable Lark until restart.
 
+Loop architecture assessment may use accepted prior-run evidence, but it must
+exclude the current `LOOP_WORK_ORDER_ID`. An in-flight supervisor summary is not
+historical evidence and must not lower or inflate its own independent system
+gate score.
+
 Telegram and Lark Dashboard copy is localized through the message catalogs,
 including health, domain, attention, and fleet-count labels. The terminal-only CLI
 and TUI remain intentionally English operator surfaces; their copy is not a chat

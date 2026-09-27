@@ -58,11 +58,12 @@ function executableExists(projectPath, command) {
   return result.status === 0;
 }
 
-function latestCompletedRunScore(projectId, stateDir) {
+function latestCompletedRunScore(projectId, stateDir, currentWorkOrderId) {
   const runDir = join(stateDir, "loop-runs", projectId);
   if (!existsSync(runDir)) return { score: 0, notes: ["no previous loop run evidence"] };
   const dirs = readdirSync(runDir)
     .map((name) => join(runDir, name))
+    .filter((path) => basename(path) !== currentWorkOrderId)
     .filter((path) => {
       try {
         return statSync(path).isDirectory();
@@ -158,7 +159,11 @@ function architectureScore(input) {
     : 0;
   notes.push(`architecture guard files: ${guardFiles.length}/${input.guardFiles.length}`);
 
-  const previous = latestCompletedRunScore(input.projectId, input.stateDir);
+  const previous = latestCompletedRunScore(
+    input.projectId,
+    input.stateDir,
+    input.currentWorkOrderId,
+  );
   score += Math.min(15, previous.score);
   notes.push(...previous.notes);
 
@@ -216,6 +221,7 @@ const input = {
   projectPath,
   stateDir,
   targetScore,
+  currentWorkOrderId: args["work-order-id"] ?? process.env.LOOP_WORK_ORDER_ID,
   verificationCommands: splitList(args["verification-commands"] ?? ""),
   affectedFiles: splitList(args["affected-files"] ?? ""),
   requiredDocs: splitList(args["required-docs"] ?? "README.md|CLAUDE.md|AGENTS.md"),
