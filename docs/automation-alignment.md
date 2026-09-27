@@ -837,6 +837,11 @@ cross-process connection evidence. Prompt Library similarly reports configured o
 disabled today; degraded is reserved for a future authoritative failure signal and
 must never be inferred by spawning or probing the MCP server during refresh.
 
+Feishu/Lark initial connection failures that occur before the SDK exposes
+connection status must enter the existing network-probed, debounced keepalive
+recovery path. A still-pending initial connection remains untouched, and the
+failure must not crash the Telegram path or silently disable Lark until restart.
+
 Telegram and Lark Dashboard copy is localized through the message catalogs,
 including health, domain, attention, and fleet-count labels. The terminal-only CLI
 and TUI remain intentionally English operator surfaces; their copy is not a chat
