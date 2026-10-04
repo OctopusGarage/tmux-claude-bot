@@ -25,6 +25,8 @@ import { recordReplyTarget } from "./reply-target.js";
 
 const log = createLogger("lark.executor");
 
+type LarkActionPreview = "text" | "voice" | "image";
+
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * project session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
@@ -80,7 +82,7 @@ export async function enqueueLarkAction(
   text: string,
   sessionOverride?: string,
   operatorFallbackOk = false,
-  preview: "text" | "voice" = "text",
+  preview: LarkActionPreview = "text",
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) {
@@ -90,9 +92,11 @@ export async function enqueueLarkAction(
   const m = messages("lark");
   const tag = projectTag(session);
   const prepared =
-    action === "text"
+    action === "text" && preview !== "image"
       ? await prepareUserPromptDelivery("lark", text, preview)
-      : ({ ok: true, text } as const);
+      : action === "text"
+        ? ({ ok: true, text, origin: "user", promptSource: "lark" } as const)
+        : ({ ok: true, text } as const);
   if (!prepared.ok) {
     await sendText(channel, chatId, `${m.promptTranslateFailed}\n${tag}`);
     return;
@@ -123,7 +127,9 @@ export async function enqueueLarkAction(
       action,
       ...(action === "text" && "preview" in prepared
         ? userPromptQueueFields(prepared)
-        : { text: prepared.text }),
+        : action === "text"
+          ? { text: prepared.text, origin: "user", promptSource: "lark" }
+          : { text: prepared.text }),
       callbacks: {
         resolve: (output) => {
           log.info(`resolve session=${session} output_len=${output.length}`);

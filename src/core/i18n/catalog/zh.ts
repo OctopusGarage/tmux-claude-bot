@@ -291,7 +291,7 @@ export const zh = {
   currentProjectTitle: "当前会话",
   noRecentProjects: "没有近期项目\n\n用 /add_project <路径> 添加一个",
   messageTooLong: (len: number, max: number) => `消息过长 · ${len} > ${max} 字符`,
-  onlyTextVoice: "暂仅支持文本和语音消息",
+  onlyTextVoice: "暂仅支持文本、语音和图片消息",
   handlerErrorTelegram: "⚠️ 处理消息时出错，请重试。",
   handlerError: "⚠️ 处理消息时出错，请重试；若群组无响应，可发送 /restore 重新连接项目。",
   unknownCommand: (name: string) => `未知命令：/${name}（发送 /help 查看命令）`,
@@ -312,6 +312,8 @@ export const zh = {
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
   taskStillRunningNotice: "⏳ 任务仍在进行中，完成后会自动推送结果 · /peek 查看当前画面",
   voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
+  imageDownloadFailed: "图片下载失败 · 网络波动,请重试",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>
     `♻️ tmux-claude-bot 异常重启 — 上次未正常退出（崩溃/被杀），已自动恢复 · ${time}`,

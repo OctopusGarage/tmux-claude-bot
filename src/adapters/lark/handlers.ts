@@ -37,6 +37,7 @@ import {
   handleRestore,
   handleUnbind,
 } from "./group-commands.js";
+import { findLarkImageResource, handleLarkImage } from "./image.js";
 import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
@@ -147,11 +148,15 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         : undefined;
 
       if (!isTextLikeContentType(msg.rawContentType)) {
-        // Voice/audio → transcribe and process as text (like Telegram); other
-        // media isn't supported yet.
+        // Voice/audio → transcribe and process as text (like Telegram).
         const audio = msg.resources.find((r) => r.type === "audio");
         if (audio) {
           await handleLarkVoice(channel, deps, msg, audio, replySession);
+          return;
+        }
+        const image = findLarkImageResource(msg.resources);
+        if (image) {
+          await handleLarkImage(channel, deps, msg, image, replySession);
           return;
         }
         await sendText(channel, msg.chatId, messages("lark").onlyTextVoice);

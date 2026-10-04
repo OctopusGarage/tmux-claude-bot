@@ -266,7 +266,7 @@ export const zhTW: Messages = {
   currentProjectTitle: "目前工作階段",
   noRecentProjects: "沒有近期專案\n\n用 /add_project <路徑> 加入一個",
   messageTooLong: (len, max) => `訊息過長 · ${len} > ${max} 字元`,
-  onlyTextVoice: "目前僅支援文字和語音訊息",
+  onlyTextVoice: "目前僅支援文字、語音和圖片訊息",
   handlerErrorTelegram: "⚠️ 處理訊息時發生錯誤，請重試。",
   handlerError: "⚠️ 處理訊息時發生錯誤，請重試；若群組無回應，可傳送 /restore 重新連接專案。",
   unknownCommand: (name) => `未知指令：/${name}（傳送 /help 查看指令）`,
@@ -285,6 +285,8 @@ export const zhTW: Messages = {
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後透過 /peek 查看目前結果\n\n${body}`,
   taskStillRunningNotice: "⏳ 任務仍在進行中，完成後會自動推送結果 · /peek 查看目前畫面",
   voiceDownloadFailed: "語音下載失敗 · 網路不穩,請重試",
+  imageDownloadFailed: "圖片下載失敗 · 網路不穩,請重試",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot 異常重啟 — 上次未正常結束（當機/被中止），已自動恢復 · ${time}`,

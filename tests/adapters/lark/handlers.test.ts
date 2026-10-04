@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { downloadMessageResource } = vi.hoisted(() => ({
+  downloadMessageResource: vi.fn(),
+}));
+
 // Keep the voice path deterministic & fast: stub voice readiness so the audio
 // route returns the hint immediately instead of spawning real whisper.
 // Pass through VOICE_LANGS so voiceLangCard (used by /voice_lang) still works.
@@ -11,6 +15,11 @@ vi.mock(import("../../../src/core/read/voice-support.js"), async (importOriginal
     resolveWhisperLanguage: () => "en",
   };
 });
+
+vi.mock("../../../src/adapters/lark/resource.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/adapters/lark/resource.js")>()),
+  downloadMessageResource,
+}));
 
 const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers.js");
 const { recordReplyTarget, removeReplyTargetSession } = await import(
@@ -31,6 +40,7 @@ const nodePath = await import("node:path");
 describe("makeMessageHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    downloadMessageResource.mockResolvedValue(undefined);
   });
 
   it("drops messages from non-allowlisted open_id (no send, no enqueue)", async () => {
@@ -229,10 +239,26 @@ describe("makeMessageHandler", () => {
     // The voice handler ran (offered the one-tap install card) — NOT the
     // unsupported-media message.
     expect(JSON.stringify(channel.cards())).toContain("voiceinstall");
-    expect(channel.texts().join("\n")).not.toContain("暂仅支持文本和语音消息");
+    expect(channel.texts().join("\n")).not.toContain("暂仅支持文本、语音和图片消息");
   });
 
-  it("replies unsupported for non-text, non-audio media", async () => {
+  it("replies unsupported for non-text, non-audio, non-image media", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    const handler = makeMessageHandler(channel, deps);
+
+    await handler(
+      fakeMessage({
+        rawContentType: "video",
+        content: "",
+        resources: [{ type: "video", fileKey: "fk-video" }] as never,
+      }),
+    );
+
+    expect(channel.texts()).toContain("暂仅支持文本、语音和图片消息");
+  });
+
+  it("routes image resources to the image handler path (non-text content)", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
     const handler = makeMessageHandler(channel, deps);
@@ -240,12 +266,23 @@ describe("makeMessageHandler", () => {
     await handler(
       fakeMessage({
         rawContentType: "image",
-        content: "",
+        content: "Please explain this screenshot",
         resources: [{ type: "image", fileKey: "fk-img" }] as never,
       }),
     );
 
-    expect(channel.texts()).toContain("暂仅支持文本和语音消息");
+    expect(downloadMessageResource).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      "fk-img",
+      expect.stringContaining("fk-img"),
+      "image",
+    );
+    expect(deps.queue.enqueued).toHaveLength(1);
+    expect(deps.queue.enqueued[0]?.action).toBe("text");
+    expect(deps.queue.enqueued[0]?.text).toContain("Please explain this screenshot");
+    expect(deps.queue.enqueued[0]?.text).toContain("Image path:");
+    expect(channel.texts().join("\n")).not.toContain("暂仅支持文本、语音和图片消息");
   });
 
   it("enqueues plain text as a 'text' action immediately (no debounce, like Telegram)", async () => {
@@ -285,7 +322,7 @@ describe("makeMessageHandler", () => {
 
     await handler(fakeMessage({ rawContentType: "post", content: prompt }));
 
-    expect(channel.texts()).not.toContain("暂仅支持文本和语音消息");
+    expect(channel.texts()).not.toContain("暂仅支持文本、语音和图片消息");
     expect(deps.queue.enqueued).toHaveLength(1);
     expect(deps.queue.enqueued[0]?.action).toBe("text");
     expect(deps.queue.enqueued[0]?.text).toBe(prompt);

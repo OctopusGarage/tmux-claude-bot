@@ -279,7 +279,7 @@ export const es: Messages = {
   currentProjectTitle: "Sesión actual",
   noRecentProjects: "No hay proyectos recientes\n\nAñade uno con /add_project <ruta>",
   messageTooLong: (len, max) => `Mensaje demasiado largo · ${len} > ${max} caracteres`,
-  onlyTextVoice: "Solo se admiten mensajes de texto y de voz",
+  onlyTextVoice: "Solo se admiten mensajes de texto, voz e imagen",
   handlerErrorTelegram: "⚠️ Error al procesar el mensaje; inténtalo de nuevo.",
   handlerError:
     "⚠️ Error al procesar el mensaje; inténtalo de nuevo. Si el grupo no responde, envía /restore para reconectar el proyecto.",
@@ -301,6 +301,8 @@ export const es: Messages = {
   taskStillRunningNotice:
     "⏳ Aún en curso — el resultado se enviará automáticamente al terminar · /peek para verlo en vivo",
   voiceDownloadFailed: "Falló la descarga de voz · problema de red, reintenta",
+  imageDownloadFailed: "Falló la descarga de imagen · problema de red, reintenta",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 Tú",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot se recuperó de una salida anómala (caída / kill) · ${time}`,

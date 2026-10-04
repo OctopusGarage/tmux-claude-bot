@@ -271,7 +271,7 @@ export const en: Messages = {
   currentProjectTitle: "Current session",
   noRecentProjects: "No recent projects\n\nAdd one with /add_project <path>",
   messageTooLong: (len, max) => `Message too long · ${len} > ${max} chars`,
-  onlyTextVoice: "Only text and voice messages are supported",
+  onlyTextVoice: "Only text, voice, and image messages are supported",
   handlerErrorTelegram: "⚠️ Something went wrong handling that message; please retry.",
   handlerError:
     "⚠️ Something went wrong handling that message; please retry. If the group stops responding, send /restore to reconnect the project.",
@@ -292,6 +292,8 @@ export const en: Messages = {
   taskStillRunningNotice:
     "⏳ Still running — the result will be pushed automatically when it finishes · /peek for a live look",
   voiceDownloadFailed: "Voice download failed · network hiccup, please retry",
+  imageDownloadFailed: "Image download failed · network hiccup, please retry",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 You",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot recovered from an unclean exit (crash / kill) · ${time}`,

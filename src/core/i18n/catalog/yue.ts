@@ -267,7 +267,7 @@ export const yue: Messages = {
   currentProjectTitle: "當前會話",
   noRecentProjects: "沒有近期項目\n\n請用 /add_project <路徑> 新增",
   messageTooLong: (len, max) => `訊息過長 · ${len} > ${max} 字`,
-  onlyTextVoice: "暫僅支援文字與語音訊息",
+  onlyTextVoice: "暫僅支援文字、語音同圖片訊息",
   handlerErrorTelegram: "⚠️ 處理訊息時發生錯誤，請重試。",
   handlerError: "⚠️ 處理訊息時發生錯誤，請重試；若群組沒有回應，可傳送 /restore 重新連接專案。",
   unknownCommand: (name) => `未知命令：/${name}（傳送 /help 查看命令）`,
@@ -286,6 +286,8 @@ export const yue: Messages = {
   taskStillRunning: (body) => `⏳ 任務仍在進行中，請稍後用 /peek 查看當前結果\n\n${body}`,
   taskStillRunningNotice: "⏳ 任務仍在進行中，完成後會自動推送結果 · /peek 查看當前畫面",
   voiceDownloadFailed: "語音下載失敗 · 網絡波動,請重試",
+  imageDownloadFailed: "圖片下載失敗 · 網絡波動,請重試",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot 異常重啟 — 上次未正常退出（崩潰／被殺），已自動恢復 · ${time}`,

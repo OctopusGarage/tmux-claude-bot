@@ -15,7 +15,8 @@ detailed references where they exist: the full command table in
 tmux-claude-bot runs a coding agent — **Claude Code** or **OpenAI Codex** — inside
 managed project sessions on your computer, and lets you **drive it remotely**:
 
-- from **Telegram** and/or **Feishu/Lark** on your phone (text + voice), and
+- from **Telegram** and/or **Feishu/Lark** on your phone (text and voice, plus
+  Feishu/Lark images), and
 - from a **terminal UI** (`tcb tui`) at the PC.
 
 Each project gets its own session; you can run several in parallel, switch
@@ -61,6 +62,9 @@ descriptions is in [docs/commands.md](commands.md)**; this is the orientation.
 ### Talking to the agent
 - **Send any text** → it's typed into the current session's agent; the reply comes
   back when the agent finishes. **Voice messages** are transcribed and sent as text.
+  On Feishu/Lark, image messages are downloaded to the bot's local attachment
+  store and forwarded to the active agent session as a prompt containing the local
+  image path.
   Optional local prompt translation can be enabled with
   `pnpm translate:install` or `/translate_install`, plus `PROMPT_TRANSLATE_MODE=argos`,
   `PROMPT_TRANSLATE_FROM=zh`, and `PROMPT_TRANSLATE_TO=en`; it applies to text,

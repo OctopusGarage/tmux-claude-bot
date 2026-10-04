@@ -277,7 +277,7 @@ export const ja: Messages = {
   currentProjectTitle: "現在のセッション",
   noRecentProjects: "最近のプロジェクトがありません\n\n/add_project <パス> で追加してください",
   messageTooLong: (len, max) => `メッセージが長すぎます · ${len} > ${max} 文字`,
-  onlyTextVoice: "テキストと音声メッセージのみ対応しています",
+  onlyTextVoice: "テキスト、音声、画像メッセージのみ対応しています",
   handlerErrorTelegram: "⚠️ メッセージの処理中にエラーが発生しました。再試行してください。",
   handlerError:
     "⚠️ メッセージの処理中にエラーが発生しました。再試行してください。グループが応答しない場合は /restore でプロジェクトに再接続できます。",
@@ -299,6 +299,8 @@ export const ja: Messages = {
   taskStillRunningNotice:
     "⏳ まだ実行中です · 完了時に結果が自動送信されます · /peek で現在の画面を確認",
   voiceDownloadFailed: "音声のダウンロードに失敗 · 通信が不安定です。再試行してください",
+  imageDownloadFailed: "画像のダウンロードに失敗 · 通信が不安定です。再試行してください",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 あなた",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot が異常終了（クラッシュ/強制終了）から自動復旧しました · ${time}`,

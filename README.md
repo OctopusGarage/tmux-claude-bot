@@ -86,7 +86,7 @@ tcb service status
 | Surface | Purpose |
 | --- | --- |
 | Telegram | Owner chat, commands, inline controls, voice prompts, notifications. |
-| Feishu/Lark | Owner chat, project-bound groups, commands, cards, notifications. |
+| Feishu/Lark | Owner chat, project-bound groups, commands, cards, text/voice/image prompts, notifications. |
 | CLI | Local control through `tcb ...` and script-friendly commands. |
 | TUI | Keyboard-driven local dashboard and project control panel. |
 | Scheduler | Recurring Loop Engineering, Daily Task Audit, and runtime checks. |

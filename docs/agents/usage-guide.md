@@ -16,7 +16,7 @@ if they want more. Prefer giving the one concrete command over describing option
 
 tmux-claude-bot runs a coding agent (**Claude Code** or **Codex**) inside managed
 sessions on the user's computer, and lets them **drive it remotely** from **Telegram /
-Feishu** (phone, text + voice) and from a **terminal UI** (`tcb tui`) at the PC. The
+Feishu** (phone, text, voice, and Feishu/Lark images) and from a **terminal UI** (`tcb tui`) at the PC. The
 bot is a long-running, auto-restarting service; it's the single brain — phone, Feishu,
 and TUI are all just clients of it. One session per project; multiple projects run
 in parallel.
@@ -42,7 +42,9 @@ the app; their own open_id is captured as the allow-list.
 
 **Send a prompt / get a reply** → just send text in the chat; it's typed into the
 current session's agent and the reply returns when the agent finishes. Voice messages
-are auto-transcribed. Optional local prompt translation: run `pnpm translate:install`
+are auto-transcribed. Feishu/Lark accepts image messages too: images are downloaded
+to the bot's local attachment store and forwarded to the active agent session as a
+prompt containing the local image path. Optional local prompt translation: run `pnpm translate:install`
 or send `/translate_install` in Telegram/Feishu, then set `PROMPT_TRANSLATE_MODE=argos`,
 `PROMPT_TRANSLATE_FROM=zh`,
 `PROMPT_TRANSLATE_TO=en` (or source-specific `TELEGRAM_...` / `LARK_...` /
