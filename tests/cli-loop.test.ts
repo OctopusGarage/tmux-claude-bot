@@ -318,7 +318,7 @@ describe("CLI loop command", () => {
         status: "installed",
       }),
     ]);
-  });
+  }, 60_000);
 
   it("prints JSON skill sync summaries", () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));

@@ -1,20 +1,87 @@
-import { Domain } from "@larksuiteoapi/node-sdk";
-import { describe, expect, it } from "vitest";
-import {
-  larkChannelOptions,
-  logIncomingMessageBoundary,
-} from "../../../src/adapters/lark/start.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { HandlerDeps } from "../../../src/core/deps.js";
+import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
+import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
+
+const mocks = vi.hoisted(() => {
+  const channel = {
+    on: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    getConnectionStatus: vi.fn(() => ({ state: "closed" })),
+  };
+  return {
+    channel,
+    createLarkChannel: vi.fn(() => channel),
+    makeMessageHandler: vi.fn(() => vi.fn()),
+    makeCardActionHandler: vi.fn(() => vi.fn()),
+    startKeepalive: vi.fn(),
+    registerLarkNotifications: vi.fn(),
+  };
+});
+
+vi.mock("@larksuiteoapi/node-sdk", () => ({
+  createLarkChannel: mocks.createLarkChannel,
+  Domain: { Feishu: "feishu", Lark: "lark" },
+  LoggerLevel: { info: "info" },
+}));
+
+vi.mock("../../../src/adapters/lark/handlers.js", () => ({
+  makeMessageHandler: mocks.makeMessageHandler,
+}));
+
+vi.mock("../../../src/adapters/lark/card-actions.js", () => ({
+  makeCardActionHandler: mocks.makeCardActionHandler,
+}));
+
+vi.mock("../../../src/adapters/lark/keepalive.js", () => ({
+  startKeepalive: mocks.startKeepalive,
+}));
+
+vi.mock("../../../src/adapters/lark/notifications.js", () => ({
+  registerLarkNotifications: mocks.registerLarkNotifications,
+}));
+
+function deps(): HandlerDeps {
+  return {
+    config: {
+      lark: {
+        appId: "cli_x",
+        appSecret: "secret",
+        domain: "feishu",
+        allowedOpenIds: new Set(["ou_owner"]),
+      },
+    },
+    notifications: new NotificationGateway(),
+    channelSenders: new ChannelSenderRegistry(),
+  } as unknown as HandlerDeps;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("larkChannelOptions", () => {
-  it("disables the SDK mention filter (policy.requireMention=false) so bound project groups work without @bot", () => {
-    // Regression guard: the SDK's PolicyGate defaults requireMention=true, which
-    // silently drops non-@ group messages before our handler runs. Must stay false.
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("disables the SDK mention filter so bound project groups work without @bot", async () => {
+    const { Domain } = await import("@larksuiteoapi/node-sdk");
+    const { larkChannelOptions } = await import("../../../src/adapters/lark/start.js");
+
     const opts = larkChannelOptions({ appId: "cli_x", appSecret: "s" }, Domain.Feishu);
+
     expect(opts.policy?.requireMention).toBe(false);
   });
 
-  it("carries the credentials, domain and source tag", () => {
+  it("carries the credentials, domain and source tag", async () => {
+    const { Domain } = await import("@larksuiteoapi/node-sdk");
+    const { larkChannelOptions } = await import("../../../src/adapters/lark/start.js");
+
     const opts = larkChannelOptions({ appId: "cli_x", appSecret: "s" }, Domain.Lark);
+
     expect(opts).toMatchObject({
       appId: "cli_x",
       appSecret: "s",
@@ -23,17 +90,18 @@ describe("larkChannelOptions", () => {
     });
   });
 
-  it("caps the dedup TTL to the 30-min stale window so card buttons aren't locked out for the SDK's 12h default", () => {
-    // The SDK's default dedup TTL is 12h, and the SAME cache gates card-action
-    // re-clicks — so a user can't re-press the same button on the same card for
-    // 12h. Message-redelivery dedup only needs to outlast the 30-min stale window
-    // (older events are dropped before dedup), so matching that window keeps message
-    // dedup correct while freeing re-clicks after 30 min instead of 12h.
+  it("caps the dedup TTL to the 30-min stale window", async () => {
+    const { Domain } = await import("@larksuiteoapi/node-sdk");
+    const { larkChannelOptions } = await import("../../../src/adapters/lark/start.js");
+
     const opts = larkChannelOptions({ appId: "cli_x", appSecret: "s" }, Domain.Feishu);
+
     expect(opts.safety?.dedup?.ttl).toBe(30 * 60_000);
   });
 
-  it("lets LARK_DEDUP_TTL_MS override the dedup TTL", () => {
+  it("lets LARK_DEDUP_TTL_MS override the dedup TTL", async () => {
+    const { Domain } = await import("@larksuiteoapi/node-sdk");
+    const { larkChannelOptions } = await import("../../../src/adapters/lark/start.js");
     const prev = process.env.LARK_DEDUP_TTL_MS;
     process.env.LARK_DEDUP_TTL_MS = "120000";
     try {
@@ -46,8 +114,36 @@ describe("larkChannelOptions", () => {
   });
 });
 
+describe("startLark", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mocks.channel.connect.mockReset();
+    mocks.channel.disconnect.mockReset();
+  });
+
+  it("retries the initial websocket connection after a transient startup failure", async () => {
+    mocks.channel.connect
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(undefined);
+    const { startLark } = await import("../../../src/adapters/lark/start.js");
+
+    startLark(deps());
+    await flushMicrotasks();
+
+    expect(mocks.channel.connect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
+
+    expect(mocks.channel.connect).toHaveBeenCalledTimes(2);
+    expect(mocks.registerLarkNotifications).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("logIncomingMessageBoundary", () => {
-  it("accepts normalized message metadata before business routing", () => {
+  it("accepts normalized message metadata before business routing", async () => {
+    const { logIncomingMessageBoundary } = await import("../../../src/adapters/lark/start.js");
+
     expect(() =>
       logIncomingMessageBoundary({
         chatId: "oc_group",

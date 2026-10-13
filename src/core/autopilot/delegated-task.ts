@@ -23,6 +23,7 @@ import {
   prepareLoopExecutionWorktrees,
 } from "../loop/execution-worktree.js";
 import { recoverInvalidOutputFromFinalSummaryAsync } from "../loop/final-summary-recovery.js";
+import { RepositoryReviewQueue } from "../loop/repository-review-queue.js";
 import {
   runGitCommand,
   runShellCommand,
@@ -364,6 +365,18 @@ export async function startActiveDelegatedTask(
       status: "blocked",
       reason: `no project path is recorded for session "${input.session}"`,
       showQueue: false,
+    };
+  }
+  const readyRepositoryReviewCount = readyRepositoryPullRequestReviewCount();
+  if (
+    input.resourceTrigger === "background" &&
+    input.trustedRunId === undefined &&
+    readyRepositoryReviewCount > 0
+  ) {
+    return {
+      status: "blocked",
+      reason: `repository PR review queue has ready work (${readyRepositoryReviewCount}); deferring background active delegation so PR auto-merge can run first`,
+      showQueue: true,
     };
   }
 
@@ -1304,6 +1317,15 @@ function activeDelegatedAdmissionContext(deps: HandlerDeps) {
     ownerLastActivityAt: ownerLastActivityAt(deps),
     interactiveBusy: ownerInteractiveWorkBusy(deps),
   };
+}
+
+function readyRepositoryPullRequestReviewCount(now = Date.now()): number {
+  try {
+    return new RepositoryReviewQueue().listReady(now).length;
+  } catch (err) {
+    log.warn("active delegated task could not inspect repository PR review queue", { err });
+    return 0;
+  }
 }
 
 function cleanupPreparedDelegatedWorktree(workOrder: LoopWorkOrder): void {

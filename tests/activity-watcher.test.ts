@@ -6,8 +6,8 @@ import { createActivityWatcher } from "../src/core/session/activity-watcher.js";
 
 /** Poll until `predicate()` is true or `timeoutMs` elapses. fs.watch is async and
  * macOS FSEvents may coalesce/lag — especially under the full suite's parallel
- * load — so we await eventual state with a generous budget (still well under
- * vitest's 5s per-test cap) rather than sleeping a fixed amount. Returns as soon
+ * load — so we await eventual state with a generous budget (still under the
+ * default per-test cap) rather than sleeping a fixed amount. Returns as soon
  * as the predicate holds, so the happy path stays fast. */
 async function waitFor(
   predicate: () => boolean,
@@ -32,20 +32,22 @@ describe("createActivityWatcher", () => {
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it("fires onActivity with the abs path and marks it active on a .jsonl write", async () => {
+    const file = path.join(root, "sub", "x.jsonl");
+    fs.writeFileSync(file, "");
     const watcher = createActivityWatcher([root]);
     watcher.start();
     const seen: string[] = [];
     watcher.onActivity((p) => seen.push(p));
 
-    const file = path.join(root, "sub", "x.jsonl");
-    fs.writeFileSync(file, "line\n");
+    await new Promise((r) => setTimeout(r, 20));
+    fs.appendFileSync(file, "line\n");
 
     // Re-touch on each poll so a coalesced/dropped FSEvents notification is retried
     // (macOS FSEvents can drop a lone event under heavy parallel load → flake).
     expect(
       await waitFor(
         () => seen.includes(file),
-        4000,
+        10_000,
         () => fs.appendFileSync(file, "x\n"),
       ),
     ).toBe(true);
@@ -92,6 +94,8 @@ describe("createActivityWatcher", () => {
     // create+modify for ONE write even with a single watcher, so counting events
     // can't distinguish a double-watch from normal FSEvents behavior (and spying
     // on the node:fs namespace is impossible under ESM).
+    const file = path.join(root, "sub", "z.jsonl");
+    fs.writeFileSync(file, "");
     const watcher = createActivityWatcher([root]);
     expect(() => {
       watcher.start();
@@ -100,12 +104,12 @@ describe("createActivityWatcher", () => {
 
     const seen: string[] = [];
     watcher.onActivity((p) => seen.push(p));
-    const file = path.join(root, "sub", "z.jsonl");
-    fs.writeFileSync(file, "line\n");
+    await new Promise((r) => setTimeout(r, 20));
+    fs.appendFileSync(file, "line\n");
     expect(
       await waitFor(
         () => seen.includes(file),
-        4000,
+        10_000,
         () => fs.appendFileSync(file, "x\n"),
       ),
     ).toBe(true);

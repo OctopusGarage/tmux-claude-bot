@@ -22,6 +22,7 @@ import {
   resumeQueuedActiveDelegatedTasks,
 } from "../../src/core/autopilot/delegated-task.js";
 import type { HandlerDeps } from "../../src/core/deps.js";
+import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import {
   readLoopSupervisorWorkerLeaseState,
   writeLoopSupervisorWorkerLeaseState,
@@ -161,6 +162,31 @@ describe("active delegated task supervisor pool", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-delegate-pool-"));
     startLoopSupervisor.mockReset();
     restartLoopSupervisor.mockReset();
+  });
+
+  it("defers background active delegation while repository PR review work is ready", async () => {
+    const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
+    const now = Date.now();
+    new RepositoryReviewQueue().enqueue({
+      repositoryId: "tmux-claude-bot-all-prs",
+      scheduledAt: now - 1,
+      priority: 1000,
+      now,
+    });
+    setPathForSession("tmux_proj_app", "/fixture/app");
+
+    const result = await startActiveDelegatedTask(deps(1), {
+      session: "tmux_proj_app",
+      requirement: "continue maintenance",
+      resourceTrigger: "background",
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: expect.stringContaining("repository PR review queue has ready work"),
+      showQueue: true,
+    });
+    expect(startLoopSupervisor).not.toHaveBeenCalled();
   });
 
   it("rejects a recovery workspace identity absent from configuration", async () => {

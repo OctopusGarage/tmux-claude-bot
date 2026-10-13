@@ -34,37 +34,69 @@ export function createActivityWatcher(roots: string[]): ActivityWatcher {
   const lastWrite = new Map<string, number>();
   const listeners = new Set<(absPath: string) => void>();
   const watchers = new Set<fs.FSWatcher>();
+  const watchedDirs = new Set<string>();
+
+  function recordWrite(absPath: string): void {
+    const now = Date.now();
+    lastWrite.set(absPath, now);
+    // `isActiveWithin` only cares about writes in the last few seconds, so
+    // entries older than the retention window are dead weight. Sweep them
+    // when the map grows, so a days-long process doesn't accumulate one
+    // entry per transcript file ever written.
+    if (lastWrite.size > MAX_TRACKED) {
+      for (const [p, t] of lastWrite) if (now - t > RETAIN_MS) lastWrite.delete(p);
+    }
+    for (const listener of listeners) listener(absPath);
+  }
+
+  function watchDir(dir: string): void {
+    if (watchedDirs.has(dir)) return;
+    watchedDirs.add(dir);
+    try {
+      const watcher = fs.watch(dir, (_event, filename) => {
+        const name = filename?.toString();
+        if (!name) return;
+        const absPath = join(dir, name);
+        try {
+          if (fs.existsSync(absPath) && fs.statSync(absPath).isDirectory()) {
+            watchDir(absPath);
+            return;
+          }
+        } catch {
+          // The path may have disappeared between the event and stat; ignore it.
+        }
+        if (absPath.endsWith(".jsonl")) recordWrite(absPath);
+      });
+      watchers.add(watcher);
+    } catch {
+      // Missing/unreadable directory — skip it; the watcher must not throw on start.
+    }
+  }
+
+  function watchTree(root: string): void {
+    watchDir(root);
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        watchTree(join(root, entry.name));
+      }
+    } catch {
+      // Missing/unreadable root — skip it; the watcher must not throw on start.
+    }
+  }
 
   function start(): void {
     if (watchers.size > 0) return; // idempotent: don't double-watch
     for (const root of roots) {
       if (!fs.existsSync(root)) continue;
-      try {
-        const watcher = fs.watch(root, { recursive: true }, (_event, filename) => {
-          const relativePath = filename?.toString();
-          if (!relativePath?.endsWith(".jsonl")) return;
-          const absPath = join(root, relativePath);
-          const now = Date.now();
-          lastWrite.set(absPath, now);
-          // `isActiveWithin` only cares about writes in the last few seconds, so
-          // entries older than the retention window are dead weight. Sweep them
-          // when the map grows, so a days-long process doesn't accumulate one
-          // entry per transcript file ever written.
-          if (lastWrite.size > MAX_TRACKED) {
-            for (const [p, t] of lastWrite) if (now - t > RETAIN_MS) lastWrite.delete(p);
-          }
-          for (const listener of listeners) listener(absPath);
-        });
-        watchers.add(watcher);
-      } catch {
-        // Missing/unreadable root — skip it; the watcher must not throw on start.
-      }
+      watchTree(root);
     }
   }
 
   function stop(): void {
     for (const watcher of watchers) watcher.close();
     watchers.clear();
+    watchedDirs.clear();
   }
 
   return {

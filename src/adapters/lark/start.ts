@@ -14,6 +14,8 @@ import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
 
 const log = createLogger("lark.start");
+const CONNECT_RETRY_INITIAL_MS = 5_000;
+const CONNECT_RETRY_MAX_MS = 60_000;
 
 export function logIncomingMessageBoundary(msg: NormalizedMessage): void {
   log.info(
@@ -102,10 +104,20 @@ export function startLark(deps: HandlerDeps): void {
   });
   registerLarkNotifications(deps, cfg, channel);
 
-  channel
-    .connect()
-    .then(() => {
-      log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
-    })
-    .catch((err) => log.error("connect failed", { err }));
+  const connectWithRetry = (delayMs = CONNECT_RETRY_INITIAL_MS): void => {
+    channel
+      .connect()
+      .then(() => {
+        log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
+      })
+      .catch((err) => {
+        log.error("connect failed", { err, data: { retryInMs: delayMs } });
+        const timer = setTimeout(
+          () => connectWithRetry(Math.min(delayMs * 2, CONNECT_RETRY_MAX_MS)),
+          delayMs,
+        );
+        timer.unref?.();
+      });
+  };
+  connectWithRetry();
 }
