@@ -107,7 +107,7 @@ describe("managed install and release script contracts", () => {
     const result = await execFile(nodePath.join(ROOT, "scripts", "verify-biome-schema.sh"), [], {
       cwd: ROOT,
     });
-    expect(`${result.stdout}${result.stderr}`).toContain("Biome schema version ok: 2.5.14");
+    expect(`${result.stdout}${result.stderr}`).toContain("Biome schema version ok: 2.5.15");
 
     const fixture = await mkdtemp(nodePath.join(tmpdir(), "tcb-biome-schema-"));
     try {
