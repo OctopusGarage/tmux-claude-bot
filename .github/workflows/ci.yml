@@ -63,5 +63,12 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: All matrix checks passed
-        run: test "${{ needs.checks.result }}" = "success"
+      - name: All CI jobs passed
+        env:
+          CI_CHECK_RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_CHECK_RESULTS"
+          for result in $CI_CHECK_RESULTS; do
+            test "$result" = "success"
+          done

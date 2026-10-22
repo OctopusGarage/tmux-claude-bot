@@ -2,6 +2,28 @@
 
 We use [Vitest](https://vitest.dev). Tests live under `tests/`, mirroring `src/`.
 
+## Main merge requirements
+
+GitHub protects `main` with pull requests, strict up-to-date required checks,
+administrator enforcement, and disabled force pushes/deletion. Required checks
+come from GitHub Actions (app ID 15368):
+
+- `verify`: all CI jobs, including both Linux and macOS matrices.
+- `scan`: Gitleaks secret scanning.
+- `Analyze (javascript-typescript)` and `Analyze (actions)`: CodeQL analyses.
+
+The stable `verify` job runs with `always()` and succeeds only when every
+upstream result is exactly `success`; missing, failed, cancelled, skipped or
+neutral results fail the gate. `tests/ci-workflow.test.ts` executes that shell
+with accepted/rejected results and requires `verify.needs` to include every other
+CI job. Add future CI jobs to that dependency list. Add new PR validation
+workflows to the server's required-check list when introducing them.
+
+Weekly mutation testing and release/publishing use their own triggers. Local
+`pnpm verify:local` remains mandatory before push; server-side checks determine
+merge eligibility. A failed or pending required check blocks the PR, including
+for administrators. Changing branch protection requires repository administration.
+
 ## What we unit-test
 
 - **Pure logic — always.** Parsers, formatters, auth guards, card builders,

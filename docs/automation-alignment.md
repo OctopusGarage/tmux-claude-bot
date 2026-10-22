@@ -70,6 +70,14 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Main promotion alignment: GitHub requires pull requests into `main`, up-to-date
+GitHub Actions checks (`verify`, `scan`, `Analyze (javascript-typescript)`, and
+`Analyze (actions)`), and administrator compliance; force pushes and deletion
+remain disabled. `verify` aggregates every other CI job, runs with `always()`,
+and accepts only nonempty all-success results. Workflow contract tests prevent
+new CI jobs from bypassing the aggregate. New PR validation workflows must also
+be added to main's required checks. `docs/TESTING.md` owns the check inventory.
+
 Remote-access security alignment: identity allowlists and Feishu card signatures
 precede the shared remote guard. Existing installs remain compatible until
 interactive `tcb security setup` enrolls TOTP, immediately requiring channel/user/
