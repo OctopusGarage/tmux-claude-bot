@@ -14,6 +14,9 @@
     "access": "public"
   },
   "pnpm": {
+    "overrides": {
+      "follow-redirects": "1.16.1"
+    },
     "onlyBuiltDependencies": [
       "esbuild",
       "node-pty",
@@ -122,6 +125,7 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.71.1",
+    "vite": "8.2.4",
     "vitest": "^5.0.3"
   },
   "packageManager": "pnpm@10.13.1"
