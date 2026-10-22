@@ -1,5 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tildeifyHomeDeep } from "../../shared/utils/path.js";
+import { readEvalReportFile } from "../eval/report.js";
+import type { EvalOutcome } from "../eval/types.js";
+import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 
 export type LoopReportRecord = {
   runId: string;
@@ -10,7 +14,25 @@ export type LoopReportRecord = {
   endedAt: number;
   markdownPath: string;
   summaryPath: string;
+  evalReportPath?: string;
+  evalOutcome?: Pick<EvalOutcome, "status" | "finalVerification" | "reviewDecision" | "reason">;
 };
+
+export type LoopReportQuery = {
+  limit?: number;
+  projectId?: string;
+  status?: LoopReportRecord["status"];
+};
+
+export type LoopReportQueryResult = {
+  items: LoopReportRecord[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+};
+
+export const DEFAULT_LOOP_REPORT_LIMIT = 20;
+export const MAX_LOOP_REPORT_LIMIT = 100;
 
 type LoopSupervisorReportSummary = {
   runId: string;
@@ -23,21 +45,49 @@ type LoopSupervisorReportSummary = {
     startedAt: number;
     endedAt: number;
   };
+  evalReportPath?: string;
 };
 
 export function listLoopReportRecords(root: string): LoopReportRecord[] {
   if (!existsSync(root)) return [];
   const records: LoopReportRecord[] = [];
-  for (const projectId of readdirSync(root)) {
-    const projectDir = join(root, projectId);
-    for (const runId of readdirSync(projectDir)) {
-      const record = readReportRecord(join(projectDir, runId));
+  for (const projectEntry of readdirSync(root, { withFileTypes: true })) {
+    if (!projectEntry.isDirectory()) continue;
+    const projectDir = join(root, projectEntry.name);
+    for (const runEntry of readdirSync(projectDir, { withFileTypes: true })) {
+      if (!runEntry.isDirectory()) continue;
+      const record = readReportRecord(join(projectDir, runEntry.name));
       if (record !== null) records.push(record);
     }
   }
   return records.sort(
     (a, b) => b.startedAt - a.startedAt || a.projectId.localeCompare(b.projectId),
   );
+}
+
+export function queryLoopReportRecords(
+  root: string,
+  query: LoopReportQuery = {},
+): LoopReportQueryResult {
+  const requestedLimit = query.limit ?? DEFAULT_LOOP_REPORT_LIMIT;
+  const limit = Math.min(
+    MAX_LOOP_REPORT_LIMIT,
+    Math.max(
+      1,
+      Math.floor(Number.isFinite(requestedLimit) ? requestedLimit : DEFAULT_LOOP_REPORT_LIMIT),
+    ),
+  );
+  const filtered = listLoopReportRecords(root).filter(
+    (record) =>
+      (query.projectId === undefined || record.projectId === query.projectId) &&
+      (query.status === undefined || record.status === query.status),
+  );
+  return {
+    items: tildeifyHomeDeep(filtered.slice(0, limit)),
+    total: filtered.length,
+    limit,
+    truncated: filtered.length > limit,
+  };
 }
 
 function readReportRecord(dir: string): LoopReportRecord | null {
@@ -49,7 +99,7 @@ function readReportRecord(dir: string): LoopReportRecord | null {
 }
 
 function readCommandReportRecord(dir: string): LoopReportRecord | null {
-  const summaryPath = join(dir, "summary.json");
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.commandSummary);
   if (!existsSync(summaryPath)) return null;
   const parsed = JSON.parse(readFileSync(summaryPath, "utf8")) as {
     record?: LoopReportRecord;
@@ -58,9 +108,15 @@ function readCommandReportRecord(dir: string): LoopReportRecord | null {
 }
 
 function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
-  const summaryPath = join(dir, "supervisor-summary.json");
+  const summaryPath = join(dir, LOOP_RUN_ARTIFACTS.supervisorSummary);
   if (!existsSync(summaryPath)) return null;
   const supervisor = JSON.parse(readFileSync(summaryPath, "utf8")) as LoopSupervisorReportSummary;
+  const defaultEvalReportPath = join(dir, LOOP_RUN_ARTIFACTS.evalReport);
+  const evalReportPath =
+    supervisor.evalReportPath ??
+    (existsSync(defaultEvalReportPath) ? defaultEvalReportPath : undefined);
+  const evalReport = readEvalReportFile(evalReportPath);
+  const evalOutcome = evalReport.ok ? evalReport.report.outcome : undefined;
   return {
     runId: supervisor.runId,
     projectId: supervisor.project.id,
@@ -68,7 +124,9 @@ function readSupervisorReportRecord(dir: string): LoopReportRecord | null {
     status: supervisor.status === "completed" ? "passed" : "failed",
     startedAt: supervisor.timestamps.startedAt,
     endedAt: supervisor.timestamps.endedAt,
-    markdownPath: join(dir, "supervisor.md"),
+    markdownPath: join(dir, LOOP_RUN_ARTIFACTS.supervisorMarkdown),
     summaryPath,
+    ...(evalReportPath !== undefined ? { evalReportPath } : {}),
+    ...(evalOutcome !== undefined ? { evalOutcome } : {}),
   };
 }

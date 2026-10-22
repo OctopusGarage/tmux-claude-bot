@@ -1,0 +1,1545 @@
+# Intelligent Automation
+
+## Autonomous work rhythm
+
+Recurring autonomous work uses a durable occurrence window rather than changing
+the prompt or pretending to be a person. For each scheduled occurrence, Loop
+Engineering draws one cryptographically random offset within the configured
+task-family window and persists the resulting `notBefore` time. Restarts reuse
+that exact decision. The scheduler normally coalesces missed occurrences to the
+latest one instead of replaying a burst after sleep or downtime.
+
+Admission is revalidated before reservation and immediately before agent-backed
+execution. It considers quiet hours, recent owner activity, an active user queue,
+the Resource Guardian circuit, and the running agent's locally observable usage
+capacity. Official exhausted-capacity evidence pauses both operator and background
+agent work until the known reset or the next bounded local probe; it never switches
+accounts, bypasses a provider limit, or calls a model-provider API. Constrained
+capacity reserves the remaining budget for operator work. Unknown capacity permits
+at most one autonomous start, spaces starts by 30 minutes, and blocks repair chains.
+
+Prompt text remains governed and stable. Dynamic fields may truthfully describe
+the current task, evidence, and limits, but prompts are never paraphrased or padded
+to imitate human behavior. The persisted capacity and occurrence state is projected
+through the canonical Runtime Overview, so CLI, Control, TUI, chat, Observer MCP,
+and Home read the same decision evidence.
+
+The default execution window is enabled with a 60-minute task-family maximum;
+an explicit `scheduler.jitter.enabled: false` is the fixed-time opt-out. A
+secret-free daily JSONL journal records planned, superseded, deferred, admitted,
+settled, and capacity-transition evidence for 30 days. `tcb automation capacity
+status` and bounded `history` are the administrative projection. Meaningful
+capacity transitions notify the operator; repeated identical observations do
+not create repeated notifications.
+
+## Recovery state-machine guarantees
+
+Supervisor delivery has a bounded worker-consumption watchdog. A prompt that
+remains queued because the worker never becomes ready is cancelled with an
+explicit retryable delivery failure; it is not left indefinitely in an
+ambiguous queued state.
+Completion polling retries transient pane-capture failures, but a definitive
+tmux missing-session response ends the wait immediately so terminal cleanup or
+cancellation cannot occupy a command queue until the full completion horizon.
+
+A supervisor pane that reports a recognized agent startup failure such as an
+authentication refresh, MCP startup, or hook initialization failure is not
+healthy capacity merely because its process remains alive. The dispatcher
+recreates that supervisor session and retries the same WorkOrder once through
+the existing bounded readiness path. A repeated failure remains durable
+bot-repairable evidence for normal recovery instead of causing an unbounded
+restart loop.
+
+Supervisor concurrency and supervisor queueing are separate controls. The pool
+size limits active supervisor workers, while each supervisor session has the
+configured message queue capacity (30 by default). A task may wait in that
+queue behind an active supervisor lease; it is only rejected when the queue is
+full or the supervisor session cannot be ensured.
+
+Project recovery is project-scoped: an existing leased or running recovery is
+never duplicated, and later findings are attached as deferred work. A recovery
+is closed only from an authoritative `supervisor-final-summary.json` reporting
+completed with a passing decision. Queue and ledger state are reconciled
+together so a successful environment repair does not remain falsely pending.
+An accepted blocked closure is not terminal when its system gate contains an
+automatic bot-repairable finding. The allowlisted
+`stale-runtime-source-adoption` finding means verified revision evidence showed
+that the running bot had not adopted the checked-out source; recovery retains
+or reopens the linked work for bounded retry, while source adoption and service
+restart remain separate operator/deployment actions.
+The system gate prevents one source of this drift: when the same WorkOrder's
+validated bot-owned PR is already merged, it fast-forwards the configured clean
+source switch-back branch before independent assessment. This is the ordinary
+post-merge reconciliation path moved ahead of assessment, not authority for a
+repair worker to pull arbitrary source checkouts or restart a running service.
+The supervisor must not preempt that path by returning `blocked` solely for the
+expected pre-gate source gap after its own validated PR has merged and every
+other deterministic gate passed. It reports completion and leaves the guarded
+fast-forward to the system gate. Unexplained drift, unsafe source state, or drift
+without that same-WorkOrder merged-PR evidence still uses the structured blocked
+finding and automatic recovery path.
+The deterministic architecture assessment also tolerates the legacy app-home
+form of `TCB_STATE_DIR` by resolving accepted Loop evidence from its canonical
+nested `state/` directory. This prevents a draining stale managed-development
+runtime from turning existing accepted evidence into a false low score.
+Verified source worktree or source branch divergence is still retryable
+automation repair work; an accepted blocked supervisor summary must not
+terminalize that case as an owner decision.
+If a shared project-recovery queue contains an older accepted blocked attempt,
+a newer authoritative artifact with source-divergence evidence reopens the queue
+instead of inheriting the historical terminal classification.
+When a ledger `reportPath` names a run directory, recovery classification reads
+the final supervisor summary and system gate inside that directory. It must not
+discard those artifacts and turn recoverable orchestration evidence into a
+generic owner decision.
+Text fallback classification requires a concrete bot-owned failure signal. A
+successful or superseded mention of `open-worker` does not make an otherwise
+accepted blocked outcome retryable; explicit control timeouts and structured
+automatic bot-repairable findings still do.
+Failed Autopilot delegations for configured projects follow the same recovery
+path as Loop Engineering failures; invalid or missing supervisor summaries are
+retryable orchestration evidence. Capacity, active-project, or supervisor
+reservation deferrals remain pending and immediately claimable, not terminal
+blocked outcomes.
+If any live WorkOrder already owns the project, project recovery defers without
+claiming the queue record or consuming a retry attempt; admission resumes after
+that WorkOrder reaches a terminal state.
+A `dispatching` WorkOrder must advance to queued/in-flight once its prompt is
+consumed. Remaining in `dispatching` beyond the five-minute reservation grace
+is abandoned even if its supervisor lease leaked; the stale lease is settled
+with the failed WorkOrder instead of keeping the project blocked indefinitely.
+Scheduled and forced Daily Audit invocations are serialized by a process-local
+mutex, preventing overlapping audits from creating duplicate recovery attempts.
+Actively discovered scheduled occurrences are persisted as expected ledger
+records before repair admission. If they are missing, the worker receives the
+same durable task ids and the eventual repair outcome closes those occurrences;
+an in-memory-only missing item must not be rediscovered and delegated forever.
+Closing an abandoned WorkOrder advances the scheduler checkpoint for its
+occurrence, preventing an immediate duplicate dispatch; a valid delegated final
+summary is authoritative even if the WorkOrder state is still `in-flight`.
+Each recovery delegation is linked to its generated Autopilot task, and a
+passing authoritative recovery result closes the original failed task and its
+repair queue record together.
+Project-recovery queue records are owned exclusively by the project-recovery
+admission path; the generic Daily Audit repair dispatcher excludes them so a
+completed historical recovery cannot be redispatched through a second path.
+If a queue links to a missing historical ledger task but every remaining linked
+outcome is terminal, reconciliation closes the queue as blocked with the
+uncertainty preserved for human review instead of retrying indefinitely.
+Queue records that resolve to no ledger evidence are likewise terminalized as
+blocked; an agent cannot safely repair an unidentifiable task.
+Repository-wide PR review has a narrower decision contract: every in-scope PR
+must be recorded as `merged`, `closed`, `retry`, or `manual-review`. `retry`
+remains claimable through the review queue and backoff path; `manual-review` is
+the explicit human terminal state only when accompanied by a validated
+structured boundary code. Evidence prose cannot create that state. A PR may be closed automatically only with
+an evidence-backed `duplicate`, `obsolete`, `non-actionable`, or `invalid`
+reason. Draft, conflict, age, pending checks, and ordinary repair failures are
+not close reasons by themselves.
+A global admission closure moves repository-review retries that would become due
+inside the closed window to the shared retry time without consuming attempts, so
+operator views do not advertise a retry that cannot run yet.
+A supervised repair or recovery that proves the repository already healthy is a
+successful no-delta completion. Even when commit and PR policy are enabled, it
+must record a clean worktree, passing deterministic verification, and
+`commits: []`; it must not manufacture an empty commit or no-op PR.
+An open project-recovery lease linked only to terminal WorkOrders is released
+before the next admission pass when no live WorkOrder remains; an unknown live
+recovery is still deferred to preserve the one-project mutation invariant.
+The same linkage is required for Daily Task Audit bot-owned repairs; a failed
+delegation returns the original item to `pending` immediately instead of
+leaving it falsely `running`.
+Stale running repair statuses are evaluated per linked WorkOrder, not globally:
+an unrelated live delegation cannot block cleanup of another terminal repair.
+Daily Audit reconciles those ledger and queue records before project-recovery
+admission so completed or orphaned WorkOrders cannot hold a recovery lease.
+When an Autopilot ledger record is linked to a terminal WorkOrder, it is
+reopened immediately rather than waiting for the general stale-status timeout.
+Startup reconciliation gives queued, dispatching, and in-flight WorkOrders with
+an existing worker pane a bounded two-minute grace period for the agent process
+to appear, preventing a normal startup race from being recorded as an orphaned
+worker.
+If that terminal delegation failed, the linked project-recovery lease is released
+and both the original and delegated records return to pending in the same audit
+pass, so the next available worker can retry without waiting for lease expiry.
+
+Runtime Guardian does not self-repair target-project or external blockers. Dirty
+target worktrees, branch-policy conflicts, GitHub permission failures, and
+network/TLS failures are terminalized as blocked; stale invalid-output records
+are reconciled from later gate artifacts as fixed or not-reproducible. Only
+confirmed bot-owned runtime findings enter the bot self-repair WorkOrder.
+A completed repair WorkOrder fixes its durable queue record. A failed, timed-out,
+or cancelled repair WorkOrder is detached and returned to bounded retry so a
+service restart cannot leave global repair ownership stuck in `running`.
+Resource Guardian treats severe event-loop lag as active local pressure because
+control-socket requests and worker delivery cannot be trusted while the service
+event loop is stalled beyond the normal control request window. That lag must
+close background admission in protect mode until a later healthy sample reopens
+the circuit.
+
+Every terminal supervised WorkOrder also has a cleanup closure. Successful runs
+release the worker and immediately remove their bot-owned isolated execution
+worktree. Failed, timed-out, cancelled, and invalid-output runs retain the worker
+for the configured inspection TTL, then the next service reconciliation removes
+the isolated worktree and releases the lease. Source worktrees are never removed;
+the cleanup helper verifies both the state-owned path boundary and Git toplevel
+before issuing `git worktree remove --force`.
+If a bot-owned isolated worktree has a missing worktree directory before normal
+cleanup, absence is not cleanup proof. Terminal reconciliation uses the
+WorkOrder's verified source repository to remove only that exact stale Git
+worktree registration, then releases the matching worker lease. It never
+guesses another repository and never removes a source worktree.
+If an eligible bot-owned cleanup target has become a standalone detached
+checkout, cleanup may remove that state-owned directory only after Git reports
+`worktree remove` cannot handle it as a main worktree and the checkout is clean
+and branchless.
+If the service dies after creating an isolated worktree but before persisting its
+WorkOrder, periodic reconciliation can still close the orphan. It waits through
+the default 72-hour evidence window, proves that every durable WorkOrder resource
+path and worker lease is unrelated, and then applies the same state-boundary and
+Git-toplevel verification before removal. This recovery never shortens normal
+failure retention or treats a source worktree as an orphan.
+
+## State And Outcome Vocabulary
+
+The task ledger and Repair Coordinator use different layers of state. A task
+with `status=failed`, `missing`, or `running-timeout` is an observed execution
+problem; its `repairStatus` describes whether recovery is still open. A queue
+record with `pending`, `leased`, `running`, or `retry-wait` is still in progress
+and must not be reported as resolved. `retry-wait` means the bounded backoff has
+not expired yet; once `nextAttemptAt` is due, the record is immediately eligible
+for the next available repair worker. The shared retry budget is three failed
+attempts. Reaching that budget, including when loading a legacy record that has
+already exceeded it, terminalizes the queue record as `dead-letter` before any
+consumer can claim it again.
+
+Terminal repair outcomes are `fixed`, `blocked`, `not-reproducible`,
+`superseded`, and `dead-letter` for queue records. Ledger repair outcomes also
+include `not-needed`, `completed`, and `failed`: `not-needed` is a successful
+no-op, `completed` is terminal recovery evidence for flows such as a
+repository-review recovery that proved there was no remaining PR work, and
+`failed` remains open for classification or retry. `blocked` is reserved for a
+proven safety, ownership, configuration, or external dependency boundary; it is
+not a synonym for queue capacity or a temporary worker shortage. `superseded`
+means a newer or higher-priority linked repair owns the same task, and
+`not-reproducible` means the original evidence could not be reproduced after
+the prescribed verification. Daily Audit and Runtime Guardian must reconcile
+these outcomes with the linked ledger task ids before declaring a repair clean.
+
+Repository PR review queue records additionally expose `manual-review` as a
+terminal status distinct from retryable `retry-wait`. The queue may complete
+only after all structured PR decisions are terminal (`merged` or allowlisted
+`closed`), or retain the item as `manual-review` when every unresolved decision
+explicitly requires an owner under a structured ownership, protected-branch,
+product, migration, security, legal/compliance, or organization-policy boundary. Generic architecture
+or design review, diff size, Draft state, merge conflicts, and ordinary code
+repair are not human boundaries: the contract downgrades those claims to
+`retry`, returning the item to the shared repair queue. Missing or malformed PR
+decisions are orchestration failures and return to retry, never to a false
+completed state. `action_required`, supported workflow approval, safe
+private-fork workflow configuration, conflicts, pending checks, and transient
+GitHub failures are system-repairable states. The system binds recovery to the
+configured GitHub account, re-observes the exact head SHA before mutation,
+records durable intent and outcome evidence, and never enables fork access to
+write tokens, secrets, or variables.
+
+Security Maintenance assessments use the same deterministic contract everywhere:
+the configured command must emit a JSON object with numeric `riskScore` from
+0–100. Optional `critical: true` or `severity: "critical"` forces dispatch;
+optional string arrays `findings` and `suggestedBotImprovements` are retained as
+assessment notes. Non-zero exit status, invalid JSON, or a missing numeric
+`riskScore` blocks dispatch without repository mutation. The default action and
+critical thresholds are 70 and 90, respectively. The bundled dependency
+assessment supports npm and pnpm lockfiles. For Python projects it prefers the
+target's `.venv/bin/pip-audit`, then falls back to `pip-audit` on `PATH`; each
+external audit has a bounded runtime so assessment cannot become an unbounded
+resource consumer.
+When the bundled dependency audit cannot execute or return the expected audit
+metadata, it emits `failureKind=dependency-audit-unavailable` with retryable
+ownership. Valid vulnerability metadata remains actionable even when the audit
+command exits non-zero. The pre-dispatch ledger keeps an availability occurrence
+pending and Project Recovery may retry it through the normal bounded admission
+path. Other non-zero or malformed assessment commands remain blocked unless they
+provide that exact structured failure contract.
+
+This document is the maintenance map for tmux-claude-bot's intelligent
+automation features. It defines the names, ownership boundaries, execution flow,
+and configuration relationships so future changes do not blur Loop Engineering,
+Loop Supervisor, Autopilot, Opportunity Discovery, PR review, Daily Task Audit,
+or Runtime Guardian.
+
+For the end-to-end architecture view, see
+`docs/intelligent-automation-architecture.md`. For command-level usage, see
+`docs/manual.md`, `docs/commands.md`, and `docs/agents/usage-guide.md`. For
+the governed system prompt inventory, allowed-action scope, and prompt eval
+rules, see `docs/prompt-governance.md`. For role-based AI-facing CLI, MCP, and
+skill exposure, see `docs/ai-tool-surface-governance.md`.
+
+## System Model
+
+tmux-claude-bot is the long-running local service. Telegram, Feishu/Lark, the
+TUI, and the CLI are client surfaces that drive the same service.
+
+```text
+Telegram / Feishu / TUI / CLI
+        |
+        v
+tmux-claude-bot service
+        |
+        +-- project agent sessions: Claude/Codex inside target project tmux panes
+        +-- Loop Supervisor sessions: reserved Claude/Codex orchestrators for WorkOrders
+        +-- Loop worker sessions: reserved target-project execution panes
+        +-- system gates: output, git, PR, CI, mergeability, switch-back checks
+        +-- state/logs/ledger: run reports, task audit evidence, notifications
+```
+
+The bot is the coordinator and final gatekeeper. Agents may reason and adapt,
+but system-level code still verifies required outputs, worktree state, PR status,
+CI, mergeability, notification delivery, and branch switch-back.
+
+## Module Map
+
+Intelligent automation is one supervised platform, not a collection of unrelated
+agent features. New behavior should fit into this map unless there is a documented
+reason to add a new module.
+
+```text
+Ingress surfaces
+  Telegram / Feishu / TUI / CLI / scheduler tick
+        |
+        v
+Intent modules
+  Loop Engineering        scheduled project/workspace health work
+  Autopilot               owner-confirmed active delegation
+  Opportunity Discovery   read-only proposals before owner approval
+  PR Review               loop-created or repository-wide PR review/merge
+  Daily Task Audit        retrospective schedule audit and self-repair
+  Runtime Guardian        near-real-time runtime artifact self-healing
+        |
+        v
+  Repair Coordinator      durable repair queue, dedupe, leases, retry, recovery
+        |
+        v
+  Execution contract
+  WorkOrder               bounded task, policy, paths, final marker, artifacts
+        |
+        v
+Orchestration
+  Loop Supervisor         agent-backed orchestration, retries, revision prompts
+  Loop worker             isolated target-project execution context
+        |
+        v
+System acceptance
+  system-gate.json        output, git, PR, CI, mergeability, branch, notification
+        |
+        v
+Evidence and feedback
+  ledger / logs / reports / notifications / audit repair / runtime guardian
+```
+
+The interface between these modules is deliberately narrow: intent modules
+materialize a WorkOrder; the supervisor executes it; the system gate accepts or
+rejects it; ledger/log/notification artifacts explain the result. Avoid adding
+feature-specific completion rules outside this path.
+
+Daily Task Audit and Runtime Guardian are repair producers, not independent
+repair schedulers. They enqueue logical repair findings into the shared Repair
+Coordinator. The Coordinator imports historical unresolved ledger records only
+when they are owned by the bot project, using an exact task-family boundary
+instead of a substring match; configured project records remain under project
+recovery ownership. If project recovery reuses an equivalent nonterminal record
+that an earlier ledger import created, the Coordinator transfers that record's
+source to project recovery without replacing its identity, attempt, lease,
+WorkOrder, or task links. This keeps repeated audit ticks from reimporting and
+superseding the same recovery. It deduplicates findings, enforces one mutating WorkOrder per project, owns lease
+expiry and retry backoff, and reconciles each linked task into a terminal or
+retryable repair status. This is the only service-owned consumer of durable
+repair backlog state; manual force-triggering is an operator diagnostic, not a
+required recovery path.
+On process startup, Loop reconciliation is an explicit barrier: durable final
+summaries and terminal resources are settled before persisted supervisor prompts
+are restored and before Autopilot recovery may resume a delegation. Persisted
+prompts whose WorkOrder already has a valid final summary are discarded rather
+than replayed. After that barrier, queued or dispatching Autopilot WorkOrders are reattached
+to the current background executor when no active worker lease exists. Active
+leases are checked against their actual queue-consuming supervisor session and
+agent; the WorkOrder's derived worker-session name is not substituted for that
+lease owner. Because supervisor agents remain alive between turns, process
+liveness is necessary but not sufficient: the leased pane must also retain an
+active-turn or confirmation-gate signal after the startup grace. A lease whose
+consumer is gone or idle is recorded as a bounded invalid-output failure,
+released, and handed back to project recovery.
+A service restart or machine reboot must therefore preserve live delegations,
+and automatically requeue delegations whose worker disappeared, instead of
+leaving a WorkOrder permanently queued or falsely failing a live pool session.
+During normal finalization, a valid final summary can precede `system-gate.json`
+and terminal WorkOrder state. That settling WorkOrder continues to reserve its
+project: delegated-task reconciliation waits for the gate, and project recovery
+cannot release or claim another recovery for the same project during the gap.
+Agent lifecycle detection must not treat a stale Codex `esc to interrupt` line
+as newer than a subsequent `Goal achieved` footer or `Worked for <duration>`
+completion banner. This keeps final-summary consumption prompt without
+weakening active-turn protection.
+Terminal ledger invariants are enforced during every audit tick: successful
+tasks and ordinary skipped tasks carry `repairStatus=not-needed`; skipped
+occurrences closed because a later run replaced them retain
+`repairStatus=superseded`; failed tasks retain their explicit repair outcome.
+
+## Native Agent Capability Boundary
+
+tmux-claude-bot should not implement its own heavy multi-agent orchestration
+layer inside the service. The service owns task boundaries, execution isolation,
+prompt policy, durable artifacts, and system acceptance. The active Claude Code
+or Codex worker owns the actual reasoning strategy, including any native
+subagent, parallel exploration, planning, or evaluation capability that the
+agent surface supports.
+
+Do not model researcher, evaluator, planner, or implementation subagents as
+bot-managed task types, queues, leases, or lifecycle state unless there is a
+separate product requirement and an enforced system contract. Prefer governed
+prompt guidance that tells the worker when broad exploration, independent review,
+or evidence synthesis is useful, then require the worker to summarize the result
+in the WorkOrder final summary and handoff artifacts.
+
+This boundary does not forbid repo-owned evaluation contracts, schemas, reports,
+or deterministic gates. An eval module may standardize task outcomes, grader
+results, trace references, and `reviewGate` evidence, but it must not imply a
+separate evaluator runtime, session, task queue, or service role. Evaluation
+execution stays worker-internal unless the service must own authorization,
+cross-run state, recovery, or deterministic acceptance.
+
+The intended split is:
+
+```text
+tmux-claude-bot = task boundary + isolation + prompt policy + artifacts + system gate
+worker agent = reasoning strategy + optional native subagents + implementation + self-review
+```
+
+This keeps the platform thin enough to benefit from improvements in the
+underlying agent products. The bot should not duplicate native agent capability
+with a second scheduler unless the work needs service-level state, cross-run
+recovery, authorization, or deterministic acceptance that prompt guidance cannot
+provide.
+
+## Task Family Agent Methodology
+
+When adding or revising a WorkOrder task family, design the task as a bounded
+system contract plus a professional worker prompt. Do not start by asking how
+many bot-managed agents, sessions, or queues the platform should create. Start
+by deciding what the active worker should investigate, what evidence it must
+return, what it may change, and what deterministic gates will accept the result.
+
+Use this formula as prompt-design guidance:
+
+```text
+Task family = service-owned boundary + worker-owned exploration + final evidence synthesis
+```
+
+The multi-agent value described in agent literature maps to tmux-claude-bot as
+worker-internal capability unless a product requirement proves otherwise:
+
+- Parallel exploration: useful for open research, large codebase investigation,
+  comparing candidate fixes, workspace contracts, security surfaces, coverage
+  gaps, and opportunity discovery. Encode it as "use native exploration when
+  useful", then require compressed conclusions.
+- Context isolation: useful when each direction has enough detail to pollute the
+  main prompt. Let the active worker use native subagents or equivalent context
+  tools when available, but require the WorkOrder final summary and handoff
+  artifacts to carry only synthesized evidence.
+- Role separation: useful for planner, researcher, implementer, and evaluator
+  perspectives. Express those as prompt roles or review passes inside the
+  worker, not as tmux-claude-bot service roles.
+- External feedback: useful for UI/product experience, PR review, security,
+  migrations, and long task implementation. Encode it as a required review pass,
+  rubric, deterministic gate, real-environment check, or `reviewGate` evidence.
+  For complex, UI/product-experience, PR-review, security, workspace,
+  harness-auto, or long delegated tasks, the final summary should use
+  `reviewGate.evidence` for synthesized evaluator-style findings instead of
+  creating a bot-managed Evaluator role.
+
+A task family is a good candidate for native multi-perspective worker guidance
+only when all of these are true:
+
+- Independent directions can be explored without editing the same state.
+- The result can be verified through tests, static checks, PR/CI state, logs,
+  reports, user paths, or other durable evidence.
+- The worker can synthesize conflicting findings into a small decision set.
+- The cost of exploration is justified by risk, ambiguity, codebase size, or
+  expected value.
+
+Keep the task simple and mostly serial when the work is small, strictly
+sequential, has shared mutable state, lacks objective success criteria, or would
+spend more effort coordinating than solving. In those cases, the prompt should
+tell the worker to do one focused pass, verify it, and stop.
+
+Every task-family prompt that encourages broad exploration or role separation
+should also require structured synthesis. The worker may use any native child
+agent format internally, but the persisted result should answer:
+
+```text
+Question investigated:
+Conclusion:
+Evidence:
+- ...
+Uncertainty:
+Recommended next step:
+```
+
+This evidence format is a reporting discipline, not a new WorkOrder schema by
+default. Add schema fields only when downstream code, Daily Task Audit, Runtime
+Guardian, reports, or system gates need to consume the structure mechanically.
+The supervisor's critical skill is synthesis and acceptance, not reading every
+raw transcript from worker-internal exploration.
+
+## Agentic Coding Work Loop
+
+Claude Code and Codex are agentic coding environments, not chat boxes. A good
+WorkOrder gives the active worker a verifiable, correctable, and replayable
+environment. Every code-changing task family should inherit this loop:
+
+```text
+Explore -> Plan -> Code -> Verify -> Review -> Record
+```
+
+- Explore: inspect relevant source, tests, error output, logs, run reports,
+  ledger records, prior handoff artifacts, `system-gate.json`, and project
+  constraints before editing.
+- Plan: define the smallest coherent slice, expected behavior, risk, validation
+  commands, and stop conditions. Complex or owner-delegated tasks should record
+  this in the delegation brief, planning contract, `actionsTaken`, or
+  `reviewGate.notes`.
+- Code: make the minimum bounded change needed for the verified goal. Avoid
+  broad rewrites, unrelated cleanup, dependency churn, and speculative product
+  scope.
+- Verify: run deterministic checks appropriate to risk, such as reproduction
+  commands, tests, typecheck, lint, coverage, browser/E2E, PR/CI, mergeability,
+  or the narrowest available local verification.
+- Review: inspect the resulting behavior, diff, boundaries, regressions,
+  over-engineering, security, data, migration, deployment, and user-visible
+  risks before finalizing.
+- Record: preserve what happened in durable artifacts. A failure should say
+  whether it should become a regression test, eval, monitor, trace, checklist,
+  documentation update, Daily Task Audit signal, or Runtime Guardian finding.
+  Preserve acceptance targets from the WorkOrder, task policy, and planning
+  contract by marking them passed, blocked, or deferred in final summary
+  evidence; do not silently narrow the target list to claim completion.
+
+When users report that an agent or model "got worse", treat it as a system
+diagnosis until evidence says otherwise. Check routing, session identity,
+context history, prompt/policy changes, reasoning effort defaults, cache or
+history handling, tool output processing, infrastructure failures, provider
+transients, and deterministic gate evidence before blaming the model. A useful
+postmortem changes the system: add a regression test or eval, improve a monitor
+or trace, tighten a prompt or gate, or update the checklist that would have
+caught the issue earlier.
+
+## Transient Agent Failures
+
+Agent-provider capacity, rate limiting, readiness, queue pressure, and network
+transients are platform failures, not target-project code failures. Treat errors
+such as `Selected model is at capacity. Please try a different model.` as
+retryable agent transient evidence unless later system-gate evidence proves a
+project problem.
+Interactive readiness is also ordered evidence: a completed Codex goal footer
+may follow and supersede a stale visible working marker, while a newer working
+marker means the turn is active again. This prevents completed supervisor panes
+from holding repair delivery open until the outer timeout.
+Likewise, a supervisor final summary is not terminal by itself while the live
+queue turn that produced it is still running. Periodic reconciliation defers
+that WorkOrder and its abandoned-resource cleanup until the queue owner settles;
+after a restart, durable summary recovery proceeds because no live owner remains.
+
+Responsibility is layered:
+
+- Loop Supervisor runner owns short, bounded retries for provider transients
+  while executing a supervisor prompt. It must not loop forever or edit project
+  code to "fix" provider capacity.
+- Loop Service and supervisor completion own schedule recovery. If a supervisor
+  dispatch ultimately fails for a retryable agent transient, the due schedule
+  must remain retryable instead of being silently consumed.
+- Daily Task Audit owns retrospective visibility. The ledger should classify
+  model capacity/rate-limit failures explicitly so repair candidates are not
+  reported as unknown project failures.
+- Runtime Guardian owns near-real-time artifact gaps. A terminal supervised
+  WorkOrder with dispatch-failed agent transient evidence is a bot-runtime
+  finding and may delegate tmux-claude-bot repair; it must not edit the target
+  project repository mentioned by the failed WorkOrder.
+
+## Design Rules For New Automation
+
+Use these rules when adding a task family, button, command, scheduled flow, or
+repair path:
+
+- Prefer a new WorkOrder task kind or WorkOrder policy over a side-channel prompt
+  into a project chat.
+- Prefer prompt-level worker guidance over service-level subagent orchestration.
+  If a task benefits from parallel investigation, role-played review, or
+  generator/evaluator separation, describe that expectation in the governed
+  prompt and final-summary evidence contract instead of adding bot-managed
+  researcher/evaluator/worker task queues.
+- Register governed system prompts and task-family policy changes according to
+  `docs/prompt-governance.md`; do not add code-changing, PR-changing, merge, or
+  self-repair prompt behavior without metadata and deterministic contract tests.
+- Register task-family behavior in the task-family governance registry before
+  relying on prompt prose. The registry owns scheduling, action scope, owner
+  confirmation, planning, AI/eval expectations, default isolation, and stop-rule
+  facts for WorkOrder task kinds.
+- Reuse the existing supervisor pool, worker isolation, conflict planner,
+  system-gate artifact, task ledger, and notification gateway.
+- Keep AI judgment agent-backed through the managed Claude/Codex sessions. Do
+  not add provider SDKs, model API keys, or direct model HTTP calls.
+- Pick the verification profile from risk. Read-only/no-op work can use smoke or
+  focused checks; narrow code edits need focused regression and affected local
+  verification; full verification is required when the change touches shared
+  contracts, CI gates, security boundaries, or release-critical behavior.
+- Treat cleanup aggressiveness as an explicit WorkOrder policy, not an implicit
+  agent mood. `cleanupPolicy: conservative` is the default; it fixes only the
+  confirmed issue and directly related dead code. `balanced` may remove
+  unsupported stale paths when docs, commands, tests, and integrations prove
+  they are not part of the supported contract. `aggressive` may actively remove
+  obsolete compatibility paths, duplicate entry points, transition code, and
+  stale docs after recording evidence and verification.
+- Record the selected verification profile and any skipped stronger gate in the
+  final summary. A skipped full suite is acceptable only when the recorded
+  evidence explains why it was not necessary or was blocked.
+- Treat notification delivery as part of the result, not cosmetic output. A task
+  whose owner-facing result could not be delivered must leave auditable delivery
+  evidence for Daily Task Audit. New recurring notification shapes should be
+  represented as notification events before adapter-specific formatting.
+- Keep project/workspace paths authoritative. Validate git toplevel before
+  mutating commands, and never infer the target repository from the current shell.
+- Add conflict tests when a task can edit a worktree, branch, PR, or shared
+  runtime artifact. The test should prove what runs, what skips, and what waits.
+- Document any intentional channel difference between Telegram and Feishu/Lark.
+  The goal is capability parity, not identical card layouts.
+
+If a proposed feature cannot follow these rules, write down which module owns the
+exception, what evidence gates it uses instead, and how Daily Task Audit can
+diagnose it later.
+
+## Execution Isolation
+
+Long-running automation must isolate execution context while keeping management
+centralized.
+
+- Ordinary user chat stays in the project-bound session. Scheduled jobs,
+  Autopilot delegation, PR review, harness-auto, Daily Task Audit repair, and
+  other bounded WorkOrders must not be injected into that ordinary chat context.
+- Worktree isolation is configurable per WorkOrder family and defaults to
+  `isolated`. `source` mode keeps the dedicated supervisor/worker context but
+  executes in the source worktree; use it only for explicit live/self-repair
+  flows after clean-worktree preflight. `auto` resolves to the safe default for
+  the task family, with read-only opportunity discovery allowed to avoid a
+  disposable worktree.
+- Every WorkOrder carries the authoritative `projectId`, `projectPath`, and
+  execution-isolation contract. The configured path is the only trusted source
+  for selecting a target repository.
+- Before sync, assessment, edits, PR review, or any mutating shell command, the
+  supervisor or worker must verify `git -C <projectPath> rev-parse --show-toplevel`
+  matches the configured path. Workspace WorkOrders must perform the same check
+  for every repository they touch.
+- If that check fails only because a normal checkout with its own `.git/`
+  directory was accidentally configured with `core.bare=true`, preparation may
+  restore `core.bare=false` and repeat the exact-path check. A genuine bare
+  repository or any other Git failure remains blocked.
+- In isolated execution, the worker must stay on the WorkOrder branch and must
+  not checkout, rebase, or mutate the shared base/switch-back branch or the
+  original source worktree. Preparation may fetch a remote ref for the isolated
+  worktree, but must never run `git switch` or `git pull --rebase` in the source
+  checkout. The bot system owns source branch switch-back after acceptance; this
+  prevents an isolated worker from advancing a branch ref while leaving the
+  user's source worktree on an older tree. When a validated WorkOrder PR is
+  already merged, the system gate may perform that clean, exact-branch
+  fast-forward before its independent assessment so the assessment observes the
+  accepted source revision.
+- A dedicated supervised worker context should be leased per WorkOrder or per
+  bounded run slice. It must use the reserved session name shape
+  `<projectSessionPrefix>loop-worker-*`; generated WorkOrders include the run
+  identity in that worker name so retained failure transcripts cannot block the
+  next run for the same project. `open-worker` must not create ordinary project
+  sessions. Reset the worker with the configured `compact` or `clear` policy
+  before substantive work and between unrelated subtasks.
+- The Loop Supervisor owns orchestration, revision prompts, final summary
+  validation, and system-gate retry. Worker sessions perform the bounded target
+  work; they are not the final acceptance authority.
+- On successful system acceptance, release the worker. On failure, timeout,
+  cancellation, or invalid output, retain the worker transcript for the
+  configured TTL so the run can be inspected, then allow cleanup.
+- Active and retained worker leases are persisted under the state directory as
+  `loop-supervisor-worker-leases.json`; this file is an operational artifact,
+  not source configuration.
+- Expired retained leases are consumed before a supervisor worker is ensured:
+  the old tmux session is killed best-effort, the lease is removed, and the
+  normal supervisor startup path recreates the worker when it is still needed.
+- Accepted completed WorkOrders clean up their loop worker tmux session
+  immediately. Long-idle loop worker sessions without accepted completion
+  evidence are reclaimed by the session idle reaper using
+  `SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS` (default 6 hours), separate from
+  the ordinary project-agent threshold. Unlike ordinary project sessions, a
+  reclaimed loop worker has its whole tmux session killed because it is
+  automation infrastructure, not a human chat context.
+- Persist enough artifact data to replay the run without reopening the worker:
+  leased worker/session name, expected path, actual git toplevel, reset action,
+  cleanup decision, PR/check state, verification commands, and final summary.
+
+Lifecycle matrix:
+
+| Session kind | Name shape | Visible in project pickers | Work source | Cleanup |
+| --- | --- | --- | --- | --- |
+| Ordinary project | `<projectSessionPrefix><path>` or free slot | Yes | Human chat, TUI, direct CLI | Idle reaper exits the agent, preserving the tmux session context. |
+| Loop Supervisor | `<projectSessionPrefix>loop-supervisor[-N]` | No | WorkOrder orchestration | Supervisor lease/retained TTL cleanup. |
+| Loop worker | `<projectSessionPrefix>loop-worker-*` | No | Target-project delegated execution | Idle reaper kills the tmux session after the idle threshold; retained failure transcripts are controlled by WorkOrder artifacts and leases. |
+
+## Terms
+
+| Term | Meaning | Not This |
+| --- | --- | --- |
+| Project agent | The Claude/Codex session attached to one target repository. | The final authority for PR/CI gates. |
+| Loop Engineering | Scheduled project/workspace health platform. | One-off user delegation. |
+| Loop Supervisor | Reserved Claude/Codex worker that executes bounded WorkOrders. | A replacement for system gates. |
+| WorkOrder | The strict task contract passed to a supervisor. | An open-ended chat prompt. |
+| Autopilot | Active delegation of a user-confirmed current task to Loop Supervisor. | Keep-alive, cron, goal-cycle, goal-picker, or global keepalive UI. |
+| Opportunity Discovery | Read-only suggestion generation before owner approval. | Implementation or PR creation. |
+| Daily Task Audit | Bot-owned scheduled task audit and auto-repair loop. | General project health maintenance. |
+| Runtime Guardian | Near-real-time watcher for bot-owned runtime artifacts that can delegate tmux-claude-bot self-repair. | Target-project maintenance or a replacement for system gates. |
+| `pullRequestReview` | Project/workspace loop-created PR review. | Repository-wide open PR processing. |
+| `prReview.repositories` | Repository-wide all-open-PR queue processing. | Only loop-created PRs. |
+
+Legacy Autopilot keep-alive and goal-cycle code has been removed. New
+user-facing delegation buttons, commands, opportunity handoffs, or scheduled
+flows must route through Supervisor-backed WorkOrders.
+
+## Execution Flow
+
+Scheduled Loop Engineering and active Autopilot delegation use the same
+supervised execution shape:
+
+```text
+trigger
+  -> discover/validate due task
+  -> conflict and queue checks
+  -> sync latest base branch
+  -> risk-selected preflight checks (read-only smoke work may skip dependency preflight)
+  -> materialize bounded WorkOrder
+  -> record planning contract when the work is agent-driven or owner-delegated
+  -> assign Loop Supervisor
+  -> lease isolated supervised worker context
+  -> classify retryable agent/provider transients before blaming project code
+  -> verify configured projectPath / workspace repository paths
+  -> supervisor writes delegationBrief before substantive execution when planning is required
+  -> supervisor analyzes, verifies, edits, and reports through the worker
+  -> write strict final summary JSON
+  -> include planReview when the WorkOrder carried planning
+  -> system gate validates marker, summary, git state, PR, CI, mergeability
+  -> recoverable failures are sent back to the same supervisor
+  -> final PR merge or report-only completion
+  -> switch back to configured base branch
+  -> rebase local base branch onto origin
+  -> release successful worker or retain failed worker transcript until TTL
+  -> write logs, ledger, reports, handoff artifacts, notifications
+```
+
+The supervisor must not be detached just because it printed something that looks
+done. The system gate owns completion. If the summary is malformed, PR checks are
+pending, the worktree is dirty, the branch is wrong, or the PR body needs cleanup,
+the bot should send a bounded revision prompt and re-run the gate. Non-recoverable
+platform failures, such as missing GitHub permission, should fail with a concrete
+blocker.
+For isolated execution, "the worktree" means the isolated target. Concurrent
+owner edits in the source checkout are independent activity: the gate verifies
+the configured source branch but does not fail the WorkOrder merely because that
+source checkout became dirty after dispatch.
+
+PR publication is also system-owned when the project explicitly enables it. A
+verified supervised result with commits may finish before the agent creates a
+PR, especially when the service restarts between final-summary and gate writes.
+The gate therefore pushes the exact WorkOrder branch and creates the configured
+base PR when lookup confirms that it is missing, then continues through the
+same commit, CI, mergeability, merge, and switch-back checks. Authentication,
+permission, network, and ambiguous lookup failures remain blockers rather than
+authorization to create anything.
+Restart recovery uses the same bounded supervisor revision contract for
+recoverable acceptance failures before it writes terminal state. A process
+reload may change who drives finalization, but it must not weaken the gate or
+turn a correctable summary/PR gap into another self-repair WorkOrder.
+Durable `system-gate.json` evidence makes that terminal reconciliation
+idempotent. A closed or merged PR is a terminal external blocker and must not
+trigger a revision that pushes the old branch again.
+
+Every supervised run must persist system gate evidence beside the supervisor
+report as `system-gate.json`. This artifact records whether the gate accepted the
+run, which checks justified acceptance, which failures blocked acceptance, and
+which failures were recoverable. Daily Task Audit and human debugging should
+prefer this artifact over a stale `supervisor-final-summary.json` when they
+disagree.
+
+Every supervised run must also write `handoff.json` and `handoff.md` beside the
+supervisor report. These are the resumable long-task artifacts: they summarize
+the WorkOrder goal, task kind, structured planning contract, acceptance criteria,
+stop conditions, actions taken, commits, verification status, structured review
+evidence, learning candidates, next steps, and remaining risks. Capability eval
+candidates are non-blocking learning signals until stabilized; regression
+candidates protect behavior already accepted as working and should become
+blocking only when the evidence is deterministic or stable enough. Future
+supervisors and human debuggers should use these artifacts before reopening
+retained worker transcripts or guessing from chat context.
+
+Completed supervised runs also write `eval-report.json` as a normalized view of
+the final summary's worker-internal review evidence, deterministic gates,
+outcome, and learning candidates. This artifact is an eval contract/report, not
+an independent evaluator runtime or service role. The system gate embeds the
+normalized eval report in `system-gate.json` and must reject completed runs whose
+eval outcome is not `passed`. Diagnostic surfaces should preserve that chain of
+evidence: `loop reports list --json` exposes the parsed eval outcome, text report
+lists show the eval status, Daily Task Audit includes rejected eval outcome
+details in discovered task records, and Runtime Guardian raises a finding when a
+terminal completed run has persisted non-passing eval outcome evidence.
+
+Loop run artifact names and paths are product contracts. Code that writes,
+reads, indexes, or links run reports must use the loop run artifact registry
+rather than hardcoded filenames so diagnostics such as report listing, task
+audit discovery, Runtime Guardian, and notifications stay aligned.
+
+## Task Families
+
+Loop Engineering supports these project and workspace task families:
+
+- `architecture`: improve architecture in small verified slices. It assesses a
+  score first and stops when the target score is met, commonly 95, to avoid
+  optimizing for its own sake. This is a hard pre-dispatch gate for both
+  project Architecture and cross-repository workspace Architecture: a score at
+  or above target creates no WorkOrder, while an invalid assessment blocks
+  dispatch without mutating a repository.
+- `bugFix`: find and fix confirmed functional, reliability, or production-risk
+  bugs. It must ignore nits, style preferences, and feature requests.
+- `testCoverage`: raise meaningful test coverage, commonly toward 80%. It must
+  add tests for real behavior and plausible regressions, not metric-padding tests.
+  If coverage work exposes a real bug, fix it narrowly and add regression
+  coverage when practical.
+- `securityMaintenance`: assess confirmed security risks before dispatch,
+  including dependency advisories, GitHub security findings, static analysis,
+  secret exposure, auth boundaries, CORS, file/path handling, command
+  execution, sensitive logging, CI secrets, and supply-chain issues. Critical
+  or actionable risks may run; lower-risk findings are recorded as not-needed,
+  and missing or invalid evidence blocks code changes.
+- `harnessAuto`: orchestrate multiple health subtasks as one run, one branch, and
+  one PR. It should assess health first, select only justified enabled subtasks,
+  and stop when configured health or no-confirmed-issue conditions are met.
+  Its `cleanupPolicy` acts as the default cleanup stance for selected subtasks
+  unless a subtask family has a more specific override. It is a prompt-guided
+  worker strategy, not permission for tmux-claude-bot to start several
+  bot-managed subagents or competing mutation workers for the same resource.
+- `opportunityDiscovery`: inspect repository evidence and propose useful feature
+  or optimization opportunities. It must not edit files, create branches, commit,
+  push, or open PRs.
+- `automationGovernanceReview`: review tmux-claude-bot's own automation
+  governance, including task taxonomy, WorkOrder prompts, scheduler/ledger
+  evidence, notification visibility, Runtime Guardian and Daily Task Audit
+  boundaries, AI/eval policy, and merge discipline. It may create at most one
+  repair PR only for a concrete P0/P1 governance finding and must not auto-merge
+  that PR.
+- `pullRequestReview`: review loop-created PRs for one configured project or
+  workspace, require configured clean review passes, and merge only after CI and
+  mergeability are acceptable.
+
+Workspace entries are generic multi-repository WorkOrders. They are not limited
+to architecture. The internal job kind `workspace-architecture` exists only for
+historical run-id compatibility.
+
+`harnessAuto` is a containing task. When it is active or due for the same
+resource and has an enabled subtask for architecture, bug-fix, test-coverage, or
+security-maintenance, the overlapping standalone task should skip or wait instead
+of creating a second branch or PR. This is a conflict rule, not a prompt
+preference.
+
+## Autopilot
+
+Autopilot is the active-delegation path for user-confirmed work. It is used when
+the owner and agent have already clarified the requirement, or when a current
+project conversation should be continued by the supervisor.
+
+Inputs include:
+
+- `/autopilot [requirement]`
+- `/autopilot delegate [requirement]`
+- `tcb autopilot <project> "<requirement>"`
+- Telegram/Feishu "Continue via supervisor" actions
+- Opportunity delegation after owner approval
+
+If no explicit requirement is supplied, the supervisor should use current
+session context plus repository evidence: live pane, git status, recent commits,
+existing PRs, reports, and prior verification output.
+
+Autopilot is not cron. It should reuse the Loop Supervisor WorkOrder path and the
+same system gates as scheduled jobs.
+
+When an active delegation runs in a system-prepared isolated worktree, its base
+sync fetches the configured base but keeps the worker on its configured
+WorkOrder branch. It must never switch, rebase, or merge the shared base or
+switch-back branch from that isolated worktree; the source worktree owns those
+operations.
+
+Before substantive execution, active delegation must form a task advancement
+contract from the user requirement, current session context, and repository
+evidence. The contract is recorded as a concise `delegationBrief` in the
+supervisor final-summary evidence, not as a private chat-only plan. It should
+include objective, current assessment, optional current and target scores when a
+real scoring rubric exists, task checklist, acceptance criteria, stop
+conditions, non-goals, risk review, and verification plan.
+
+If the active agent surface supports a durable goal command, the supervisor may
+create or update a goal from the `delegationBrief`, but the WorkOrder remains the
+authoritative system contract. A goal command is an execution aid, not a second
+source of truth.
+
+Interactive chat surfaces expose two Autopilot handoff buttons. **Delegate now**
+starts the active WorkOrder immediately for already-clear scope. **Review plan
+first** shows the pre-delegation objective, checklist, acceptance criteria, stop
+conditions, non-goals, risks, and verification plan, then starts the same
+WorkOrder only after **Confirm delegation**. CLI and typed `/autopilot` commands
+remain direct handoff paths because their requirement text is already explicit.
+
+The delegation brief is a planning gate, not a bureaucracy gate. If the
+requirement is clear and bounded, the supervisor records the brief and proceeds.
+If the requirement is broad, ambiguous, high-risk, or cannot produce clear
+acceptance criteria and stop conditions, the supervisor should block or ask for
+owner clarification instead of guessing. The final summary must record a
+`planReview` in actionsTaken or reviewGate notes: checklist completion, score
+target result when applicable, stop condition result, over-optimization check,
+verification result, and remaining risks.
+
+The WorkOrder may carry a structured `planning` contract so this rule is visible
+in prompt renders, logs, tests, and final-summary validation. Prompt text should
+not be the only place where delegated planning, acceptance criteria, stop
+conditions, and non-goals are defined.
+
+## Opportunity Discovery
+
+Opportunity Discovery is proposal generation, not execution.
+
+The intended flow is:
+
+```text
+scheduled discovery
+  -> read repository evidence
+  -> write opportunities.json
+  -> bot dedupes and sends concise Telegram/Feishu suggestions
+  -> owner discusses or dismisses
+  -> approved work enters Autopilot active delegation
+```
+
+Discussion and execution are intentionally decoupled. A suggestion message may
+offer discussion actions, but implementation should go through the same active
+delegation pipeline as any other user-confirmed task.
+
+Feishu/Lark suggestion cards should include enough per-item problem, value, and
+approach detail to decide whether to act, with view, discuss, and dismiss
+actions on each suggestion plus batch controls when suggestions are related.
+Telegram should align with per-suggestion discuss/dismiss buttons while each
+`callback_data` payload fits Telegram's 64-byte limit; when it cannot, the
+message falls back to typed `/opportunity` commands rather than sending unsafe
+callbacks.
+
+Opportunity discussion prompts should prepare a delegation brief draft from the
+stored suggestion: objective, checklist, acceptance criteria, stop conditions,
+non-goals, risks, and verification plan. The draft is not permission to edit; it
+exists so the owner can tighten scope before handing the confirmed work to
+Autopilot.
+
+## PR Review Modes
+
+There are two PR review surfaces:
+
+- `pullRequestReview` is scoped to configured project/workspace loop-created PRs.
+  It answers: "Did yesterday's loop task introduce a bug, fail CI, or create an
+  unsafe PR?"
+- `prReview.repositories` is the repository-wide open-PR queue processor. It
+  answers: "Which open PRs in this repository can be reviewed, repaired narrowly
+  if needed, and merged?"
+
+Loop Engineering targets support a consistent top-level pause switch:
+`projects[]`, `workspaces[]`, and `prReview.repositories[]` all accept
+`enabled`. The default is `true`; set it to `false` to pause that configured
+target without deleting schedules, prompts, GitHub account bindings, or repair
+policy.
+
+Both should focus on introduced bugs, failing checks, mergeability, security,
+data loss, migrations, and user-visible regressions. They should not block on
+style nits. When auto-merge is enabled, both use the configured `mergeMethod`
+(`squash`, `merge`, or `rebase`; default `squash`) rather than assuming one
+GitHub merge mode.
+
+Draft is a review state, not an exclusion. Every open PR must be inspected before
+the review run is finalized. For a same-repository Draft, the supervisor reviews
+the diff, checks, ownership, and mergeability, then either performs bounded repair
+and runs `gh pr ready <number>` before merging, closes obsolete/duplicate/non-
+actionable work with `gh pr close <number> --comment <reason>`, or records a
+specific human decision blocker. A new loop-created PR is ready by default; it
+may remain Draft only when a concrete incomplete-work or human-decision blocker
+is recorded.
+If the review worker cannot perform the ready transition itself, it records
+`outcome: "approved"` with `reviewedHeadSha` set to the exact reviewed head SHA;
+system recovery may then mark the Draft ready only after revalidating that head,
+successful current checks, clean mergeability, and mutation authority.
+
+Same-repository conflicting PRs are also active work: take over the existing head
+branch, sync the base, resolve bounded and reviewable conflicts, push, and repeat
+the checks and review passes. Close obsolete conflicts with evidence. Fork PRs or
+changes requiring owner permissions, product judgment, migrations, or broad
+security decisions remain explicit human blockers, but they must still receive a
+per-PR decision. No Draft or conflict may be silently skipped.
+
+Repository-wide PR review uses a durable queue separate from the general Loop
+tick. Cron is a discovery and reconciliation fallback: it creates one
+idempotent queue item per repository review occurrence and releases the
+scheduler immediately. Independent consumers lease pending items when a
+supervisor is available, enforce the existing per-project conflict rule, and
+reuse the normal WorkOrder, system gate, final-summary, merge, and cleanup path.
+If a review needs delegated editing, its WorkOrder supplies one deterministic
+isolated worker session so terminal reconciliation can release the worker rather
+than leaving an untracked tmux session behind.
+Queue states are `pending`, `leased`, `running`, `retry-wait`, `completed`,
+`blocked`, `manual-review`, and `dead-letter`; expired leases return to
+`pending`, transient supervisor failures use bounded backoff, and a service
+restart does not lose an uncompleted review. Infrastructure retries have a
+five-attempt budget; reaching it, including while loading an over-budget legacy
+record, terminalizes the occurrence as `dead-letter` before another lease. When
+historical `manual-review` or `dead-letter` evidence has no valid structured
+human boundary and the PR remains open, the repository-review consumer may
+reopen it once as `retry-wait`. Reopening increments a retry epoch, resets only
+that epoch's bounded attempt counter, retains migration evidence, and yields to
+any newer or active occurrence for the same repository.
+An isolated repository-review WorkOrder synchronizes to a detached remote base
+when it does not own an execution branch. It never checks out or pulls the base
+branch already owned by the source worktree.
+Before a repository-review WorkOrder enters `dispatching`, it must hold the
+matching active supervisor-worker lease. Recovery may mark a queue occurrence
+`running` only when that same lease remains active; an unleased dispatch
+reservation is not evidence of execution and remains eligible for the normal
+stale-dispatch recovery path.
+Supervisor capacity and project-conflict planning must include active worker
+leases even when their WorkOrder artifact has already become terminal, so no
+new review can select a supervisor that is still executing another task.
+This prevents an unrelated long WorkOrder from starving repository PR review.
+
+Loop-owned remote branches follow the terminal WorkOrder/PR lifecycle, not the local
+worktree retention lifecycle. Repositories should enable GitHub's native
+delete-on-merge for the normal merge path. A service-startup and 30-minute
+fallback reconciliation scans only configured `loop/<project-id>/...` prefixes
+and deletes a ref only after exact repository, branch, observed SHA,
+protected/base branch, and live WorkOrder/lease checks pass twice. A terminal
+WorkOrder may authorize cleanup when its exact branch has no PR; a closed but
+unmerged PR needs a structured close reason (`duplicate`, `obsolete`,
+`non-actionable`, or `invalid`) in durable supervisor evidence. Every mutation
+writes an intent before deletion and a sanitized outcome afterward. This allows
+a failed WorkOrder's local isolated worktree to remain available for forensic
+retention without leaking its terminal remote branch indefinitely.
+
+## Daily Task Audit And Auto Repair
+
+Daily Task Audit is the bot's self-check and self-healing schedule audit. It
+discovers tmux-claude-bot-owned launchd/service and Loop Engineering tasks,
+merges that expected set with the shared task ledger, sends a final Telegram /
+Feishu summary, and can dispatch supervisor repair when
+`TASK_AUDIT_AUTO_REPAIR=true`.
+Autopilot active delegations are registered in the same ledger at queue/start
+and completion. Each Daily Task Audit tick reconciles terminal supervisor
+artifacts back into that ledger before auditing, so a crashed completion path
+cannot leave an Autopilot delegation permanently marked `running`.
+
+Auto-repair is evidence-led:
+
+- state the concrete problem first
+- verify it from ledger, report, log, git, scheduler, or service evidence
+- classify whether it is a tmux-claude-bot bug, target-project issue, external
+  service problem, auth problem, or network problem
+- edit this repository only for bot-owned bugs
+- run local verification and record the outcome
+
+Daily Task Audit must also audit its own previous execution. A previous audit
+that failed, timed out, left `repair-dispatch=failed|blocked|unavailable`, or
+delivered only a partial/failed notification is a first-class self-repair
+candidate. Self-repair records already marked `running` must not be dispatched
+again until their current repair resolves.
+
+System Self-Heal is the hourly trigger for this same repair surface. It is
+intentionally independent from the daily audit notification schedule: the tick
+runs reconciliation and due repair-queue consumption even when no daily summary
+is due, and it normalizes the audit config to avoid `TASK_AUDIT_ENABLED=false`
+or `TASK_AUDIT_TICK_MS=0` disabling core state reconciliation. It then queues an
+active-agent self-heal sweep through operator-equivalent admission with a broad
+operator-equivalent prompt when
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, so newly observed gaps are not
+limited to a hard-coded checklist. The sweep must also ask why each abnormality
+was not already detected, retried, or repaired by existing automation; when that
+reason is a bot-owned automation gap, the same repair slice should fix the gap
+instead of waiting for an operator to rediscover it. When the sweep changes this
+repository, it must verify locally, commit on `dev`, push to `origin/dev`, run
+`git pull --rebase` after the successful push, and leave the worktree clean. It
+must still reuse Daily Task Audit repair dispatch, Project Recovery dispatch,
+Repair Coordinator leases, Resource Guardian admission, and the normal WorkOrder
+gates. It is not permission to bypass owner-decision, external-wait, official
+exhausted-capacity, resource-pressure, clean-worktree, or verification blockers;
+it also does not count as an interactive notification flow. A blocked broad
+sweep is durable evidence: the tick records a `system-self-heal` ledger failure
+with the admission reason when no WorkOrder is created.
+
+Historical Loop failures use project-scoped recovery. The recovery classifier
+reads ledger evidence and supervisor artifacts, resolves only projects,
+repository-review targets, and workspaces present in the active Loop config, and
+recreates safe retryable work through that target's existing branch, worktree,
+agent, and verification policy. Transient environment or orchestration failures
+are retried with bounded backoff and one recovery WorkOrder per project. CI,
+billing, network, and runner failures wait for external recovery; draft PRs,
+merge conflicts, design decisions, ambiguous ownership, and exhausted retries
+remain blocked for an owner. Unconfigured repositories are never guessed or
+edited by this bot. Recovery outcomes are persisted in the shared Repair
+Coordinator queue and reconciled back to every original ledger task id.
+
+Daily Task Audit should flag "successful" loop artifacts when durable evidence
+contradicts success. Examples include a completed supervisor final summary whose
+`finalVerification` is not `passed`, risky unresolved follow-up text, or a
+`system-gate.json` artifact with `accepted=false`. Harmless follow-up reminders
+are not repair candidates by themselves.
+
+Notification delivery results are audit evidence. Failed or partial deliveries
+should preserve the channel, error, whether the main message was sent, and the
+failed stage (`message`, `attachment`, validation, or missing sender), so repair
+work can distinguish "nothing reached the owner" from "the message arrived but
+an attachment failed."
+
+## Resource Guardian
+
+Resource Guardian owns host resource pressure, its sustained-pressure incident
+record, and a durable admission circuit. Task 6 makes active delegated task
+admission the authoritative check before project-path lookup, worktree
+preparation, supervisor reservation, or durable WorkOrder/ledger/worker-lease
+writes. Loop Engineering checks every due target before it can create a ledger,
+WorkOrder, worker lease, or scheduler fire anchor; denied work stays due and
+does not consume a retry. Daily Task Audit, Runtime Guardian, and Project Recovery send their
+automated delegations as background work. `resourceForce` is an internal,
+reserved input to the authoritative gate; current chat, control, and CLI
+surfaces expose no force option, and default operator work remains subject to a
+closed circuit. Any future force surface requires separate authorization,
+documentation, and tests. It is an observer/protector: observe mode
+records evidence and always leaves the circuit open, while protect mode records
+the closure that consumers honor. It does not create process ownership from CPU
+evidence, directly invoke a model API, or materialize a WorkOrder. Later
+Resource Guardian repair reuses the supervised WorkOrder path only after ten
+minutes of durable healthy recovery. It selects only the most recent ended,
+bot-owned incident with failed deterministic-cleanup evidence, persists a
+repair intent before delegation, and shares the global Repair Coordinator's
+one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
+external/unknown attribution, or missing durable evidence blocks repair.
+The same shared admission gate serializes autonomous background heavy work per
+agent even when usage capacity is available. A new background or resource-repair
+heavy task waits while another autonomous heavy lease is active, which prevents
+multiple local verification-heavy workers from piling onto one host.
+
+Task 7 adds a read-only ownership resolver for deep process samples. Strong
+bot attribution requires an exact `pid` plus process-start identity, a verified
+ancestor path from a bot pane or recorded bot launch, and either a durable
+WorkOrder-linked launch or a consistent pane/WorkOrder/lease reservation. A
+process name, command, pane path, or cwd is never sufficient:
+automation-looking processes without that evidence remain unknown. The resolver
+records no signal, cancellation, cleanup, or repair action outside an emergency
+protect-mode pass. Task 8 first durably closes background admission and
+reconciles terminal supervisor resources, cooperatively cancels a single
+bot-active delegated task, then resamples and revalidates ownership before TERM
+or KILL. Observe, elevated, critical, degraded sampling, external, unknown,
+changed-instance, and still-active processes never receive a signal.
+The deep snapshot validates pane ids before and after collection and records an
+unknown attribution when they change. `ps` start times are only second-granular
+on supported platforms, so exact identity remains conservative and Task 8 must
+revalidate immediately before any future action; command text is never process
+identity.
+Task 8 persists its protect-mode action intent before reconciliation, cooperative
+cancellation, or signaling, and records the eventual outcome for restart-safe
+rate limiting. In observe mode it records a proposed action from the same fresh
+ownership evidence but performs no process effects. Resource action failures are
+separate notifications and never reopen or otherwise change admission.
+The intent records the revalidated PID/start identity and durable WorkOrder
+correlation only, never command text, cwd, or an absolute path. Observe proposals
+do not consume protect-mode rate-limit state, so a later protect transition may
+act immediately from fresh ownership evidence.
+
+Task 10 provides the safe local operator surface: `tcb resource status`,
+`tcb resource incidents`, `tcb resource mode observe|protect`, and
+`tcb resource profile balanced|conservative`. Status and incident history are
+read-only (with bounded, secret-free JSON when requested); presentation tildeifies
+home-relative paths. Generic configuration may change only the Guardian enable
+and tick settings. Mode and profile use their dedicated commands, persist the
+environment file atomically, and write a matching live operator override with
+a durable recovery journal. Before reading the live override, every Guardian
+tick completes an update whose environment value committed, or discards an
+intent whose environment value did not change. Protect mode refuses to activate
+until the Guardian is enabled and running. The existing `sysload` diagnostic in
+the CLI, control client, Telegram, and Lark displays the current Guardian state;
+it adds no chat command, protocol action, or button.
+
+## Runtime Guardian
+
+Runtime Guardian owns durable runtime artifact correctness and may enqueue
+confirmed bot-owned repair findings. It does not own host pressure, process-load
+attribution, or Resource Guardian's admission circuit. Both modules can affect
+whether a future WorkOrder is safe, but neither is permission to bypass the
+active Claude/Codex agent boundary.
+
+Runtime Guardian is the running-service guardrail for problems that appear while
+Loop Supervisor, workers, PR gates, notifications, launchd/dev-service runtime,
+or task-audit evidence are active. It complements Daily Task Audit:
+
+- Daily Task Audit is scheduled retrospective checking.
+- Runtime Guardian is near-real-time runtime artifact checking.
+
+`RUNTIME_GUARDIAN_MODE=fast-heal` delegates a bounded self-repair WorkOrder
+through the existing Loop Supervisor when it finds confirmed system evidence,
+such as a terminal WorkOrder missing `system-gate.json`, a terminal WorkOrder
+whose `system-gate.json` records `accepted=false`, a terminal `invalid-output`
+state, an active worker lease still attached to a terminal WorkOrder, or a
+read-only smoke active delegation blocked by target dependency preflight because
+isolated worktrees do not carry ignored dependency directories.
+`observe` records the finding without repair delegation.
+By default it only considers terminal artifacts updated within
+`RUNTIME_GUARDIAN_LOOKBACK_MS` so enabling it does not replay historical
+pre-guardian backlog as fresh runtime incidents. The lookback bounds new artifact
+discovery only: a finding already admitted to the durable Repair Coordinator
+remains eligible when its `nextAttemptAt` becomes due, even after the underlying
+artifact ages out of discovery. Runtime Guardian projects those due records back
+into bounded findings before deciding that a tick has no work. That durable due
+time is authoritative over the outer repository discovery cooldown. A clean
+worktree or branch readiness failure does not consume either cooldown or mark
+the finding handled, so the next tick retries automatically after the operator
+or another workflow restores readiness.
+When admission creates a fresh record beside a terminal historical duplicate,
+the fresh non-terminal record is authoritative. Successful delegation attaches
+the new WorkOrder id and delegated ledger task id to every claimed record;
+terminal WorkOrder or ledger reconciliation then closes those records without
+another discovery or manual force. Repeated discovery of the same runtime task
+reuses its active queue record even if evidence punctuation or presentation
+changes, so diagnostic text cannot produce unbounded superseded queue history.
+When one repair WorkOrder covers multiple findings, its derived Autopilot task
+link is shared settlement evidence rather than a dedupe key. Each finding keeps
+its queue record and all attached siblings reconcile from the aggregate outcome;
+failed aggregate retries retain those links without collapsing sibling findings.
+The reconciler also migrates due siblings misclassified as `superseded` by older
+dedupe behavior, reopening only the newest aggregate group whose original task
+identities have no active owner. Admission projects the original task identity,
+never the appended aggregate execution link, back into a Runtime Guardian finding.
+`RUNTIME_GUARDIAN_WORKTREE_ISOLATION=auto` resolves `fast-heal` repairs to
+source-worktree execution so managed-dev self-repair can take effect quickly; set
+it to `isolated` for PR-style conservative repair.
+Every Guardian tick also runs the same idempotent Autopilot terminal-artifact
+reconciliation. A recovered final summary is accepted only with a durable
+`system-gate.json`; otherwise the incident remains visible for repair, and
+terminal worker session records are cleaned up when the worker is no longer
+active.
+Terminal workspace cleanup verifies and removes each isolated member as its own
+Git worktree, then removes only the empty bot-owned run container. It does not
+treat the workspace coordination root or that non-Git container as a single
+repository.
+Loop Engineering reconciliation also converts stale non-terminal WorkOrders
+whose worker lease has disappeared into a durable failed/pending record. A
+`dispatching` reservation without a lease is considered abandoned after five
+minutes, while leased or in-flight work keeps the longer unfinished-work-order
+timeout. Runtime Guardian reports bot-owned stale dispatch reservations as
+repairable runtime findings; Loop Engineering remains authoritative for the
+state transition and never runs target-project commands during this recovery.
+When a configured project recovery is safe to retry but no worker or supervisor
+capacity is available, the Repair Coordinator keeps it `pending` with an
+immediate eligibility time. The next recovery pass can claim it as soon as
+capacity is available; it does not wait for the original task's cron schedule.
+On restart, the supervisor pool also reconciles the interactive panes themselves:
+dedicated panes without a live WorkOrder are interrupted before dispatch resumes.
+This closes the gap where a terminal WorkOrder had released its durable lease
+but its provider process was still consuming the old prompt.
+The same reconciliation applies to pending duplicate queue records: once all
+linked task outcomes are terminal, the record is closed rather than becoming a
+new repair attempt on the next audit.
+
+Runtime Guardian must keep these boundaries:
+
+- It repairs tmux-claude-bot orchestration/runtime code only.
+- It must not edit target project repositories mentioned by failing WorkOrders.
+- If a target project dependency preflight blocks a read-only smoke validation,
+  it should repair tmux-claude-bot's verification profile or WorkOrder policy,
+  not install dependencies in the target project.
+- It must re-check evidence before editing, fix narrowly, add focused regression
+  coverage when practical, run verification, inspect the diff, and commit only a
+  verified fix.
+- It must not dispatch self-repair while the tmux-claude-bot repository has
+  uncommitted changes; those runs should wait for a clean worktree.
+- It must use the same active delegated task path as Autopilot and Daily Task
+  Audit repair, so supervisor pool limits, worker isolation, system gates, PR
+  policy, and merge policy stay centralized.
+- It should record structured logs for each tick: mode, finding kind, projectId,
+  runId, runDir when available, dispatch status, and blocker details.
+
+## Conflict Rules
+
+Automation should remain serialized where work can collide:
+
+- One project should not run multiple code-editing jobs against the same worktree
+  at the same time.
+- User-originated ordinary chat/control prompts must not be injected into a
+  project agent while that project has an unfinished or recoverable Loop
+  Supervisor WorkOrder. System-originated supervisor prompts may continue because
+  they are the owner of that automation. Status, peek, interrupt, cancel, and
+  other diagnostic/escape controls should stay available.
+- `harnessAuto` contains architecture, bug-fix, test-coverage, and security
+  maintenance. When a harness run is active or due, overlapping standalone jobs
+  should skip or wait rather than create duplicate PRs.
+- PR review should not repair a branch while the originating task still owns it.
+- Opportunity Discovery is read-only, but discussion or delegation should block
+  when the target project has active automation, queued/in-flight user work, or a
+  dirty worktree.
+ - Repository-wide PR review may repair bounded, reviewable failures on
+   same-repository PR branches. Drafts and conflicts are active review states:
+   each must be made ready, merged, closed with evidence, or left with a
+   specific human blocker. Fork PRs and changes needing product/security design
+   judgment remain human-owned, but must not be silently skipped.
+
+## Notification Rules
+
+Telegram and Feishu/Lark should maintain capability parity. Feishu may use
+project-bound groups and interactive cards; Telegram may use inline keyboards,
+slash commands, or concise text actions. The standard is functional parity, not
+identical UI.
+
+Project-related notifications should route to the bound project group when the
+channel supports it, then fall back to owner/private targets according to the
+notification gateway policy. Chat is an escalation and interactive-result
+surface, not a duplicate event log: successful unattended work and expected
+environmental state stay in Runtime Overview, CLI history, ledgers, reports, and
+logs. Actionable failures notify on first observation or material state change;
+recovery notifies only after a delivered unhealthy alert. Explicit operator
+notifications and interactive task results remain visible.
+
+Bot-owned notification requests use durable per-channel delivery metadata.
+Successful delivery advances the bounded policy state; a failed channel remains
+retryable without duplicating channels that already succeeded. Visible copy is
+limited to a short title and one actionable fact. Source, incident, circuit,
+run, and path identifiers remain structured diagnostic evidence rather than
+routine chat text.
+
+## Current Config Shape
+
+The live Loop Engineering config is stored outside the repository, typically at:
+
+```bash
+~/.tmux-claude-bot/state/loop-engineering.yml
+```
+
+Do not copy the active project list into repository documentation. Project names,
+repository paths, GitHub accounts, schedules, and cleanup policies are user
+configuration and belong in the live config file, backups of that file, or
+operator notes outside the source tree. Validate the live config with:
+
+```bash
+tcb loop validate ~/.tmux-claude-bot/state/loop-engineering.yml --json
+```
+
+## Maintenance Checklist
+
+When changing intelligent automation behavior, update all relevant surfaces:
+
+- WorkOrder generation and supervisor prompt policy
+- system gates and retry/revision behavior
+- task discovery and daily audit expectations
+- Telegram and Feishu/Lark command/card/callback parity
+- TUI/CLI commands when applicable
+- conflict planner behavior and tests for overlapping worktrees, workspace jobs,
+  harness-contained subtasks, PR repair, and user-originated prompts
+- verification profile selection and final-summary evidence
+- runtime guardian and daily-audit visibility for new failure modes
+- `docs/manual.md`, `docs/agents/usage-guide.md`, and this document
+- `AGENTS.md` when the change is a rule future coding agents must obey
+- tests covering config parsing, scheduling, work-order text, notification
+  actions, and recovery behavior
+
+Avoid adding direct model-provider SDKs or API-key paths for bot-owned AI
+behavior. AI-backed work must route through the existing Claude/Codex agent
+sessions and control surface.
+
+## Active Delegation Iteration Checkpoints
+
+Single-repository active delegations receive an `iteration-checkpoint.json`
+template in initial, revision and finalization supervisor prompts. The agent
+writes this internal sidecar beside the final-summary artifact after each bounded
+slice, using a temporary sibling and atomic rename. It can therefore preserve
+progress before a final summary exists. Workspace tasks and other task families
+do not receive this protocol yet.
+
+The version-1 record contains WorkOrder and project identity, a hash of the
+complete WorkOrder contract, a reported sequence, reported repository HEAD and
+dirty state, the complete acceptance-item list, per-item command/result/artifact
+evidence, and the next action. Acceptance IDs are deterministic within the
+contract. A legacy delegation without planning uses its goal as the required item.
+
+The reader rejects malformed or oversized input, unsupported schema versions,
+non-regular files, mismatched identities/contracts, missing or duplicate items,
+and evidence for a different reported revision. A `reported-passed` item needs
+a reported clean revision and nonempty evidence whose results are all passed.
+Items may otherwise be pending or blocked; they cannot silently disappear.
+Evidence source is always `agent-reported`.
+
+Handoff JSON and Markdown expose validated checkpoint context even for timeout
+results. Invalid records produce a bounded diagnostic without copying their
+contents into recovery instructions. Missing checkpoints preserve compatibility
+with older agents and artifacts.
+
+The reader validates internal consistency; completion additionally passes a
+system checkpoint gate before existing Git/PR mutations. Once a checkpoint is
+observed, an internal `checkpoint-required.json` marker prevents a later missing
+checkpoint from silently restoring legacy acceptance. Required items must all
+be reported passed, and the configured repository must match Git's toplevel,
+current HEAD and clean worktree state. Missing checkpoints on older runs that
+have never opted into the protocol remain compatible. Incomplete, invalid,
+stale or dirty checkpoints enter the existing bounded supervisor revision path;
+unavailable or mismatched repositories block it.
+
+These checks verify repository facts, not behavioral correctness. Checkpoint
+commands are untrusted text and are never executed by the gate. Test results and
+artifact contents remain agent-reported; final-summary validation and existing
+system/PR/CI gates retain their authority. Checkpoint sequence is not a budget.
+When every item is reported passed, checkpoint acceptance also requires a passed
+`system-command` verification artifact for the same WorkOrder, contract hash and
+repository revision. The current `eval.command` run can supply that artifact. If
+eval is agent-only, the gate reruns the configured deterministic
+`assessment.command` and requires its finite score to meet `eval.minScore`, or
+the WorkOrder target score when no eval threshold exists. A stale, failed,
+foreign-contract, incomplete or missing verification fails closed. A complete
+record includes the configured command hash, output hash, exit status, failures,
+score and timestamps; its command hash must match the WorkOrder policy, and an
+agent-written checkpoint cannot substitute a partial record. Both command paths run against the verified clean repository with the
+standard Loop project environment and bind final checkpoint acceptance to
+system-observed behavior without executing checkpoint-supplied commands. Agent
+evaluation remains advisory and cannot itself create system-command provenance.
+
+The shared supervised runner persists `delegation-budget.json` before dispatch
+for this task family. It binds the full WorkOrder contract to an absolute deadline
+and consumed revision count. Recovery cannot renew the deadline or expand an
+established revision limit, including when a caller resets its in-memory counter.
+Corrupt state fails closed; budget rejection cannot be converted into completion
+by an old final-summary file. A cancelled or timed-out dispatch cannot start
+finalization or another transient retry when its late response arrives.
+
+Budget writes rely on existing WorkOrder serialization, not a new cross-process
+lease. These internal files are operational state, not tamper-proof storage
+against an agent with the same filesystem permissions. Legacy runs acquire a
+budget on their first dispatch through the updated runner; historical elapsed
+time is not reconstructed. Immutable iteration history and external-wait
+scheduling remain follow-up work. There is no new operator configuration or
+command in this slice.
+
+### Bounded continuation after partial turns
+
+When a successful dispatch ends without a final marker or valid final-summary
+file, the shared runner can repeat exactly the same prompt in the same isolated
+supervisor session. It reads the checkpoint before and after the turn. A fresh
+sequence must retain pending work, contain no blocked item, and pass strict
+contract validation. The system then independently checks configured Git
+toplevel, current HEAD and dirty state against the checkpoint. Dirty partial
+work may continue when it is accurately reported; completion still requires a
+clean revision. Checkpoint commands are never executed by this decision.
+
+Before each additional partial turn, the existing budget atomically records
+`continuationsUsed` and `lastContinuationSequence`. At most `maxRounds - 1`
+partial continuations are granted across initial and revision execution combined;
+these counters are separate from the existing system-gate revision limit and
+share its absolute deadline. Version-1 budgets without these new counters read
+as zero. A checkpoint sequence must also exceed the last consumed sequence,
+preventing replay after restoration. Sequence growth is reported progress, not
+proof of changed code or successful behavioral tests; the hard cap bounds such
+claims. Continuation preserves context and does not repeat the initial reset.
+
+Each granted partial turn also exclusively claims a content fingerprint under
+`continuation-evidence/`. The fingerprint covers revision, dirty-state report,
+item identity/status and deduplicated evidence; it excludes sequence, next-action
+wording and array order. Previously consumed reports, including A/B/A cycles,
+cannot grant another turn after checkpoint deletion or runner restart. Claims
+precede budget publication and dispatch: interrupted claims remain consumed and
+fail closed rather than authorizing an unaccounted retry. Older budgets retain
+their counters and deadline; historical reports without claims are not inferred.
+These are replay guards for agent reports, not proof of independent acceptance
+or a complete cross-process budget transaction. Independent acceptance is only
+available at the final checkpoint gate when a matching system-command
+verification artifact exists for the reported revision.
+
+A blocked, malformed, disappeared, unchanged or repository-mismatched partial
+checkpoint stops dispatch with an explicit reason. Budget/deadline rejection
+also stops; neither path launches finalization or accepts an old summary through
+transport recovery. A valid current-execution terminal summary retains precedence and goes through
+normal system acceptance. A valid all-passed checkpoint can use the existing
+one-shot finalization fallback. Legacy turns with no checkpoint before or after
+execution keep that fallback too. Once continuation consumes a checkpoint,
+acceptance remains required even if its file is later deleted.
+
+This decision is shared by scheduled execution, recovered supervisor revisions
+and Autopilot through their existing Git adapters. It adds no queue, scheduler,
+worker owner or autonomous retry for external blockers. A stopped run retains
+checkpoint context in its normal handoff for inspection and a separately
+authorized recovery.
+
+### Final-summary freshness during execution
+
+Before dispatching a single-repository active delegation or supervisor revision,
+the runner records the existing final-summary file version using its content and
+filesystem identity/change metadata. An unchanged pre-existing file is excluded
+for that execution invocation, including continuation, finalization and transport
+recovery after a dispatch failure or timeout. The prior artifact is preserved.
+A valid current response can supply the final summary directly; a newly written
+file can also supply it, including an atomic rewrite with identical JSON content.
+
+The freshness-aware reader reads one regular-file descriptor, rejects symbolic
+links/non-regular files and snapshots over 1 MiB, and validates the same JSON
+contract as normal final summaries. It does not execute artifact content. The
+exclusion travels with the in-memory run result to synchronous and asynchronous
+transport recovery. Other task families keep their existing parsing behavior.
+
+### Durable delegation transport attempts
+
+Managed single-repository delegation dispatch writes append-only records under
+`iteration-attempts/<queue-message-id>/`: `prepared.json` before enqueue,
+`started.json` for the start or pre-start cancellation decision, and
+`settled.json` after transport completion.
+Preparation binds the WorkOrder contract, worker session, exact prompt hash,
+pre-dispatch summary version and checkpoint snapshot. Settlement preserves the
+transport result and subsequent checkpoint/summary snapshots. Atomic exclusive
+publication prevents a second claim or replacement of the first settlement.
+
+A WorkOrder reserves its first attempt through `first.json`; each settled attempt
+can publish one successor through `next.json`. These append-only links serialize
+different queue IDs across processes without a replaceable current-owner file.
+Reservation precedes context reset and worker lease changes. Prepared, started,
+corrupt or incompletely published attempts block a new reservation. Existing
+unlinked attempt history requires reconciliation rather than automatic adoption.
+Start and pre-start cancellation compete for the same exclusive event record;
+`cancelledBeforeStart: true` records the latter without claiming that a worker
+ran. Only a callback that acquired execution may settle a started attempt.
+Ownership/preparation/settlement failures disable final-summary recovery, so a
+rejected dispatch cannot adopt a surviving worker's output.
+
+Persisted control messages retain the attempt ID. Restoration permits only a
+matching prepared attempt; started or invalid records await reconciliation, and
+settled attempts are excluded from replay. Live and restored completion probes
+exclude the recorded pre-existing summary. Queue records without an attempt ID keep their legacy
+restoration behavior; unlinked attempt journals await reconciliation.
+
+Journaled restore callbacks only settle transport. The existing reconciliation
+controller reads the current attempt's frozen summary (including summaries
+returned on stdout), runs the normal system acceptance gate, then publishes the
+report and settles WorkOrder state. A crash after settlement but before the
+callback or report can recover through this same path. Failed or cancelled
+transport cannot become success through a summary file. Missing or corrupt
+frozen evidence cannot fall back to a later mutable file. Prepared, started and
+invalid journals remain unfinished and are excluded from summary acceptance and
+stale-reservation cleanup until ownership reconciliation resolves them.
+
+These records describe transport, not independent acceptance. They do not prove
+which worker wrote a new summary. The ownership chain serializes transport
+attempts; it does not reconcile surviving workers or prove system acceptance.
+Interrupted reservations, restored budgets, legacy-history migration, competing
+acceptance controllers and crashes during report publication remain requirements in the
+[delivery ledger](future/ralph-roadmap-progress.md).
+Configured `eval.command` checks now run as independent system verification after checkpoint acceptance. The command is bound to the WorkOrder contract and Git revision, requires a clean repository before and after execution, and writes an immutable verification artifact. Agent-reported evaluation text cannot substitute for this evidence.

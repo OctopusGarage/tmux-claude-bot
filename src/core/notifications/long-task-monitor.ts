@@ -3,14 +3,17 @@ import { readAgentRecentConversations } from "../agents/read.js";
 import type { DashboardSnapshot } from "../dashboard/dashboard.js";
 import { buildDashboard } from "../dashboard/dashboard.js";
 import type { HandlerDeps } from "../deps.js";
+import { isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { ConversationRound } from "../read/transcript.js";
-import type { NotificationGateway, NotificationRequest } from "./gateway.js";
+import { notificationRequestForEvent } from "./events.js";
+import type { NotificationGateway } from "./gateway.js";
 import type { OwnerActivityTracker } from "./owner-activity.js";
 import { resolveNotificationTargetPlan } from "./target-resolver.js";
 
 export const LONG_TASK_CHECK_MS = 5 * 60 * 1000;
 export const LONG_TASK_THRESHOLD_MS = 3 * 60 * 1000;
+export const LONG_TASK_MAX_NOTIFY_MS = 24 * 60 * 60 * 1000;
 
 type SnapshotProvider = () => Promise<Pick<DashboardSnapshot, "sessions" | "generatedAt">>;
 type FinishedTaskWindow = {
@@ -35,6 +38,8 @@ export type LongTaskMonitorOptions = {
   ownerActivity: OwnerActivityTracker;
   latestHistory?: LatestHistoryProvider;
   thresholdMs?: number;
+  maxNotifyTaskMs?: number;
+  projectSessionPrefix?: string;
 };
 
 const log = createLogger("notifications.long-task-monitor");
@@ -45,7 +50,9 @@ export class LongTaskMonitor {
   private readonly ownerActivity: OwnerActivityTracker;
   private readonly latestHistory: LatestHistoryProvider;
   private readonly thresholdMs: number;
+  private readonly maxNotifyTaskMs: number;
   private readonly watched = new Map<string, WatchedTask>();
+  private readonly projectSessionPrefix: string;
 
   constructor(opts: LongTaskMonitorOptions) {
     this.snapshot = opts.snapshot;
@@ -53,6 +60,8 @@ export class LongTaskMonitor {
     this.ownerActivity = opts.ownerActivity;
     this.latestHistory = opts.latestHistory ?? (async () => null);
     this.thresholdMs = opts.thresholdMs ?? LONG_TASK_THRESHOLD_MS;
+    this.maxNotifyTaskMs = opts.maxNotifyTaskMs ?? LONG_TASK_MAX_NOTIFY_MS;
+    this.projectSessionPrefix = opts.projectSessionPrefix ?? "tmux_proj_";
   }
 
   async tick(): Promise<void> {
@@ -61,7 +70,8 @@ export class LongTaskMonitor {
     const snap = await this.snapshot();
     const seen = new Set<string>();
     for (const row of snap.sessions) {
-      if (row.operator) continue;
+      if (row.operator || isReservedInfrastructureSession(row.session, this.projectSessionPrefix))
+        continue;
       seen.add(row.session);
       const watched = this.watched.get(row.session);
       if (!row.busy) {
@@ -86,6 +96,10 @@ export class LongTaskMonitor {
       }
 
       const taskMs = row.taskMs ?? 0;
+      if (!isWatchableTaskMs(taskMs, this.maxNotifyTaskMs)) {
+        this.watched.delete(row.session);
+        continue;
+      }
       this.watched.set(row.session, {
         session: row.session,
         label: row.label,
@@ -110,6 +124,7 @@ export class LongTaskMonitor {
   ): Promise<void> {
     const channels = this.notifications.registeredChannels();
     if (channels.length === 0) return;
+    if (!isWatchableTaskMs(task.lastTaskMs, this.maxNotifyTaskMs)) return;
 
     let latestHistory: string | null = null;
     try {
@@ -124,7 +139,15 @@ export class LongTaskMonitor {
         err,
       });
     }
-    const request = completionRequest(task, reason, latestHistory);
+    const request = notificationRequestForEvent({
+      kind: "long-task.finished",
+      session: task.session,
+      label: task.label,
+      status: reason,
+      durationMs: task.lastTaskMs,
+      latestHistory,
+    });
+    if (request === null) return;
     const plan = resolveNotificationTargetPlan({
       registeredChannels: channels,
       session: task.session,
@@ -147,43 +170,6 @@ export class LongTaskMonitor {
   }
 }
 
-function completionRequest(
-  task: WatchedTask,
-  reason: string,
-  latestHistory: string | null,
-): Omit<NotificationRequest, "channel"> {
-  const body = [
-    `session: ${task.session}`,
-    `status: ${reason}`,
-    `duration: ${formatDuration(task.lastTaskMs)}`,
-  ];
-  const history = formatHistorySnippet(latestHistory);
-  if (history) body.push("", "latest history:", history);
-  return {
-    level: "success",
-    source: "long-task-monitor",
-    session: task.session,
-    title: `Long task finished: ${task.label}`,
-    body: body.join("\n"),
-  };
-}
-
-const HISTORY_SNIPPET_LIMIT = 1800;
-
-function formatHistorySnippet(text: string | null): string | null {
-  const trimmed = text?.trim();
-  if (!trimmed) return null;
-  if (trimmed.length <= HISTORY_SNIPPET_LIMIT) return trimmed;
-  return `${trimmed.slice(0, HISTORY_SNIPPET_LIMIT)}\n\n[truncated]`;
-}
-
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
-}
-
 export function startLongTaskMonitor(
   deps: HandlerDeps,
   opts: { checkMs?: number; thresholdMs?: number } = {},
@@ -192,6 +178,9 @@ export function startLongTaskMonitor(
     snapshot: () => buildDashboard(deps),
     notifications: deps.notifications,
     ownerActivity: deps.ownerActivity,
+    projectSessionPrefix:
+      (deps as { config?: { projectSessionPrefix?: string } }).config?.projectSessionPrefix ??
+      "tmux_proj_",
     latestHistory: async (session, task) => {
       const projectPath = getPathBySession(session) ?? session;
       return latestAssistantForTaskWindow(
@@ -225,4 +214,8 @@ function latestAssistantForTaskWindow(
     return assistant;
   }
   return null;
+}
+
+function isWatchableTaskMs(taskMs: number, maxNotifyTaskMs: number): boolean {
+  return Number.isFinite(taskMs) && taskMs >= 0 && taskMs <= maxNotifyTaskMs;
 }

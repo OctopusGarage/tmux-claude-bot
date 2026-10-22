@@ -1,8 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AutomationOccurrenceStore } from "../../src/core/automation/occurrence-window.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import { runLoopSchedulerTick } from "../../src/core/loop/scheduler.js";
 
-const configText = `
+const originalStateDir = process.env.TCB_STATE_DIR;
+
+beforeEach(() => {
+  process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-scheduler-"));
+});
+
+afterEach(() => {
+  if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+  else process.env.TCB_STATE_DIR = originalStateDir;
+});
+
+const projectConfigText = `
 projects:
   - id: due
     name: Due
@@ -13,7 +28,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
   - id: manual
     name: Manual
     path: /repo/manual
@@ -22,8 +37,14 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
+
+const configText = `
+scheduler:
+  jitter:
+    enabled: false
+${projectConfigText}`;
 
 describe("runLoopSchedulerTick", () => {
   it("reports due projects without advancing completion anchors", () => {
@@ -51,6 +72,37 @@ describe("runLoopSchedulerTick", () => {
       action: "would-run",
     });
     expect(lastFired).toEqual({});
+  });
+
+  it("skips disabled projects with scheduled task families", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "agent: codex",
+        [
+          "agent: codex",
+          "    enabled: false",
+          "    bugFix:",
+          "      enabled: true",
+          '      schedule: "5 10 * * *"',
+          "    runner:",
+          "      kind: agent-supervised",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(1);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "due",
+      }),
+    );
   });
 
   it("does not repeat projects whose anchor is already current", () => {
@@ -128,10 +180,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules pull request review jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    pullRequest:",
@@ -162,13 +214,50 @@ describe("runLoopSchedulerTick", () => {
     });
   });
 
+  it("schedules automation governance review jobs independently from architecture jobs", () => {
+    const config = parseLoopConfigYaml(
+      configText.replace(
+        "assessment:\n      command: pnpm assess",
+        [
+          "assessment:",
+          "      command: pnpm assess",
+          "    runner:",
+          "      kind: agent-supervised",
+          "    automationGovernanceReview:",
+          "      enabled: true",
+          '      schedule: "35 2 * * *"',
+          "      branch: loop/due/automation-governance-review",
+          "      targetScore: 90",
+          "      allowRepairPr: true",
+        ].join("\n"),
+      ),
+    );
+    const now = Date.parse("2026-07-16T02:40:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {
+        due: Date.parse("2026-07-16T02:40:00Z"),
+      },
+    });
+
+    expect(summary.due).toBe(1);
+    expect(summary.dueProjects[0]).toMatchObject({
+      projectId: "due",
+      jobKey: "due:automation-governance-review",
+      jobKind: "automation-governance-review",
+      scheduledAt: Date.parse("2026-07-16T02:35:00Z"),
+    });
+  });
+
   it("schedules bug-fix jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    bugFix:",
@@ -201,10 +290,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules test-coverage jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    testCoverage:",
@@ -238,10 +327,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules security-maintenance jobs independently from architecture jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    securityMaintenance:",
@@ -274,10 +363,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules harness-auto jobs independently from component jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    harnessAuto:",
@@ -310,10 +399,10 @@ describe("runLoopSchedulerTick", () => {
   it("schedules opportunity-discovery jobs independently from implementation jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    opportunityDiscovery:",
@@ -345,10 +434,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and pull request review as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    pullRequest:",
@@ -372,10 +461,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and bug-fix as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    bugFix:",
@@ -397,10 +486,10 @@ describe("runLoopSchedulerTick", () => {
   it("counts architecture and test-coverage as separate checked jobs", () => {
     const config = parseLoopConfigYaml(
       configText.replace(
-        "assessment:\n      command: npm run assess",
+        "assessment:\n      command: pnpm assess",
         [
           "assessment:",
-          "      command: npm run assess",
+          "      command: pnpm assess",
           "    runner:",
           "      kind: agent-supervised",
           "    testCoverage:",
@@ -451,6 +540,37 @@ prReview:
     );
   });
 
+  it("skips disabled repository-wide pull request review jobs", () => {
+    const config = parseLoopConfigYaml(`${configText}
+prReview:
+  repositories:
+    - id: janitor
+      name: PR Janitor
+      path: /repo/janitor
+      repo: OctopusGarage/janitor
+      agent: codex
+      enabled: false
+      schedule: "30 11 * * *"
+      base: dev
+      autoMerge: true
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(2);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "janitor",
+        jobKind: "repository-pull-request-review",
+      }),
+    );
+  });
+
   it("schedules workspace architecture jobs as one multi-repository target", () => {
     const config = parseLoopConfigYaml(`${configText}
 workspaces:
@@ -492,6 +612,45 @@ workspaces:
         jobKey: "workspace:geo:architecture",
         jobKind: "workspace-architecture",
         scheduledAt: Date.parse("2026-07-16T11:30:00Z"),
+      }),
+    );
+  });
+
+  it("skips disabled workspaces with scheduled task families", () => {
+    const config = parseLoopConfigYaml(`${configText}
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/realestate
+    agent: codex
+    enabled: false
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: /repo/realestate/geo-backend
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: /repo/realestate/geo-frontend
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "30 11 * * *"
+      goal: Improve frontend/backend architecture together.
+`);
+    const now = Date.parse("2026-07-16T11:35:00Z");
+
+    const summary = runLoopSchedulerTick({
+      config,
+      now,
+      lastFired: {},
+    });
+
+    expect(summary.checked).toBe(2);
+    expect(summary.dueProjects).not.toContainEqual(
+      expect.objectContaining({
+        projectId: "geo",
+        jobKind: "workspace-architecture",
       }),
     );
   });
@@ -642,9 +801,8 @@ workspaces:
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
-${configText}
+${projectConfigText}
 workspaces:
   - id: geo
     name: Geo Workspace
@@ -686,16 +844,20 @@ workspaces:
     );
   });
 
-  it("delays due jobs until their deterministic jitter effective time", () => {
+  it("delays due jobs until their persisted occurrence-window time", () => {
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
-${configText}`);
+${projectConfigText}`);
     const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
     const beforeJitter = scheduledAt + 60_000;
-    const afterJitter = scheduledAt + 180_000;
+    new AutomationOccurrenceStore({ randomOffset: () => 180_000 }).plan({
+      key: "due:architecture",
+      scheduledAt,
+      windowMs: 10 * 60_000,
+      now: scheduledAt,
+    });
 
     const early = runLoopSchedulerTick({
       config,
@@ -704,14 +866,6 @@ ${configText}`);
         due: Date.parse("2026-07-16T10:05:00Z"),
       },
     });
-    const due = runLoopSchedulerTick({
-      config,
-      now: afterJitter,
-      lastFired: {
-        due: Date.parse("2026-07-16T10:05:00Z"),
-      },
-    });
-
     expect(early.due).toBe(0);
     expect(early.skipped).toContainEqual(
       expect.objectContaining({
@@ -725,6 +879,15 @@ ${configText}`);
     expect(early.skipped.find((item) => item.projectId === "due")?.effectiveAt).toBeGreaterThan(
       beforeJitter,
     );
+    const effectiveAt = early.skipped.find((item) => item.projectId === "due")?.effectiveAt;
+    expect(effectiveAt).toBeTypeOf("number");
+    const due = runLoopSchedulerTick({
+      config,
+      now: (effectiveAt as number) + 1,
+      lastFired: {
+        due: Date.parse("2026-07-16T10:05:00Z"),
+      },
+    });
     expect(due.due).toBe(1);
     expect(due.dueProjects[0]).toMatchObject({
       projectId: "due",
@@ -738,7 +901,6 @@ ${configText}`);
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 30
 projects:
   - id: due
@@ -750,7 +912,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `);
     const scheduledAt = Date.parse("2026-07-16T10:00:00Z");
     const firstStartup = scheduledAt + 20 * 60_000;
@@ -779,7 +941,7 @@ projects:
 
   it("uses per-job jitter overrides before global defaults", () => {
     const config = parseLoopConfigYaml(
-      configText
+      projectConfigText
         .replace(
           'schedule: "*/5 * * * *"',
           ['schedule: "*/5 * * * *"', "    scheduleJitterMinutes: 0"].join("\n"),
@@ -790,7 +952,6 @@ projects:
             "scheduler:",
             "  jitter:",
             "    enabled: true",
-            "    seed: local-stable",
             "    architectureMaxDelayMinutes: 10",
             "projects:",
           ].join("\n"),

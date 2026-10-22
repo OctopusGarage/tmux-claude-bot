@@ -21,19 +21,10 @@ Constants: repo `OctopusGarage/tmux-claude-bot` · launchd label
    must already be committed — this flow only adds the version-bump commit. If
    there are uncommitted changes, STOP and tell the user to commit them first.
 2. `git fetch --tags origin` (tags are created server-side; may be absent locally).
-3. Run the verification gate; require all green:
-   - `npm test`
-   - `npm run lint`
-   - `npm run lint:sh` (shellcheck — install.sh / dev.sh / scripts)
-   - `npm run lint:types && npm run lint:types:tests`
-   - `npm run knip`
-   - Secret / personal-path scan (from CLAUDE.md). `/Users/x`, `/Users/test`,
-     `/home/user`, `/home/u` are allowed generic placeholders:
-     ```
-     grep -rn "/Users/[a-z]\+/\|/home/[a-z]\+/" --include="*.ts" --include="*.md" src/ tests/ docs/ \
-       | grep -vE "/Users/(x|test)/|/home/(user|u)/" || echo "clean"
-     ```
-     Expect `clean`.
+3. Run `pnpm verify:local`; require it to finish green. This is the canonical
+   pre-push/release gate and includes formatting, production/test types, coverage,
+   dead-code checks, dependency rules, deep lint, smoke, audit, shell lint when
+   available, and repository-boundary guards.
 
 ## Phase 0.5 — Consolidate commits (don't ship a pile of fragments)
 
@@ -89,13 +80,15 @@ the docs that could have gone stale.
 1. See what changed since the last tag:
    `git diff --stat $(git describe --tags --abbrev=0)..HEAD`.
 2. For each changed area, open the doc that documents it and fix any drift:
-   - **Commands / buttons** added, removed, or renamed → `README.md`,
-     `docs/commands.md`, the command tables in `CLAUDE.md`.
-   - **Config / env vars / flags / paths** → `README.md`, `INSTALL.md`, `.env`
-     examples, `CLAUDE.md`.
-   - **Behavior / architecture** (new feature or changed flow) → the `README.md`
-     feature list, `CONTEXT.md` domain model, and `docs/adr/` if a documented
-     decision changed.
+   - **Chat commands / buttons** added, removed, or renamed → `docs/commands.md`,
+     `docs/manual.md`, and `docs/automation-capability-matrix.md`.
+   - **CLI commands / options** → `docs/cli-reference.md`, `docs/manual.md`, and
+     `docs/agents/usage-guide.md`.
+   - **Config / env vars / paths** → `.env.example`, `INSTALL.md`,
+     `docs/manual.md`, and `docs/agents/usage-guide.md`.
+   - **Behavior / architecture** (new feature or changed flow) →
+     `docs/intelligent-automation.md`, `docs/automation-alignment.md`, and the
+     relevant `docs/adr/` only when a documented decision changed.
    - **Dev / release process, gates, scripts** → `CONTRIBUTING.md`,
      `docs/TESTING.md`.
    - **Security-relevant** (auth, allowlist, data handling) → `SECURITY.md`.
@@ -110,13 +103,13 @@ If nothing drifted, say so and move on.
 
 ## Phase 1 — Bump, tag, push
 
-`npm run release -- <bump>` does it all: it runs on `main`, requires a clean tree,
-`git pull --ff-only`, `npm version` (bumps package.json + lock, commits, tags
+`pnpm release -- <bump>` does it all: it runs on `main`, requires a clean tree,
+`git pull --ff-only`, `pnpm version` (bumps package.json + lock, commits, tags
 `vX.Y.Z`), then `git push --follow-tags origin main`. Capture the new tag it prints.
 
 **Branch protection blocks that push.** `main` is protected (`enforce_admins:true`
 + required `verify` check + a require-PR rule), so the script's `git push` is
-rejected as-is. Toggle `enforce_admins` off around the **whole** `npm run release`
+rejected as-is. Toggle `enforce_admins` off around the **whole** `pnpm release`
 call and restore it immediately — even if the push fails. The bump push is a
 fast-forward, so the `enforce_admins` toggle alone is enough (an exempt admin
 bypasses require-PR + required checks for a non-force push); `allow_force_pushes`
@@ -125,7 +118,7 @@ does NOT need touching here.
 ```bash
 B=repos/OctopusGarage/tmux-claude-bot/branches/main/protection
 gh api -X DELETE $B/enforce_admins --silent          # open
-npm run release -- <bump>                            # bumps, tags, pushes
+pnpm release -- <bump>                            # bumps, tags, pushes
 gh api -X POST   $B/enforce_admins --silent          # restore (run even on failure)
 gh api $B --jq '.enforce_admins.enabled'             # must print: true
 ```
@@ -150,7 +143,7 @@ If CI is unavailable, create it manually:
 
 Deploy the just-released tag to `~/.tmux-claude-bot` via the installer. It downloads
 the lean release asset, mirrors it in with `rsync --delete` (so a prior git-clone or
-source-archive install leaves no clutter), refreshes deps with `--omit=dev`, and
+source-archive install leaves no clutter), refreshes deps with `--prod`, and
 restarts the launchd service. `.env` and runtime state are gitignored and preserved.
 
 **First, wait out the raw CDN.** `raw.githubusercontent.com/.../main/install.sh` is

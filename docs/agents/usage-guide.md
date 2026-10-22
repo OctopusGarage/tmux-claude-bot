@@ -16,7 +16,7 @@ if they want more. Prefer giving the one concrete command over describing option
 
 tmux-claude-bot runs a coding agent (**Claude Code** or **Codex**) inside managed
 sessions on the user's computer, and lets them **drive it remotely** from **Telegram /
-Feishu** (phone, text + voice) and from a **terminal UI** (`tcb tui`) at the PC. The
+Feishu** (phone, text, voice, and Feishu/Lark images) and from a **terminal UI** (`tcb tui`) at the PC. The
 bot is a long-running, auto-restarting service; it's the single brain — phone, Feishu,
 and TUI are all just clients of it. One session per project; multiple projects run
 in parallel.
@@ -42,7 +42,9 @@ the app; their own open_id is captured as the allow-list.
 
 **Send a prompt / get a reply** → just send text in the chat; it's typed into the
 current session's agent and the reply returns when the agent finishes. Voice messages
-are auto-transcribed. Optional local prompt translation: run `npm run translate:install`
+are auto-transcribed. Feishu/Lark accepts image messages too: images are downloaded
+to the bot's local attachment store and forwarded to the active agent session as a
+prompt containing the local image path. Optional local prompt translation: run `pnpm translate:install`
 or send `/translate_install` in Telegram/Feishu, then set `PROMPT_TRANSLATE_MODE=argos`,
 `PROMPT_TRANSLATE_FROM=zh`,
 `PROMPT_TRANSLATE_TO=en` (or source-specific `TELEGRAM_...` / `LARK_...` /
@@ -69,21 +71,40 @@ id for that project. Use `/start` only when they want a fresh agent session.
 exactly ONE bot process (two cause a Telegram 409); (3) check network/proxy can reach
 the chat API; (4) on macOS, was it asleep? — see keep-awake.
 
-**Keep the Mac awake so it stays reachable** → a sleeping Mac drops the bot (an
-outbound long-poll can't be woken). Enable in setup or `tcb setup --reconfigure`: while
-the bot runs it holds `caffeinate -s`, which prevents system sleep only on AC power. On
-battery, the Mac may sleep normally. A **closed lid** still sleeps — for that they ALSO
-need `sudo pmset -a disablesleep 1` (persistent, drains battery; warn them). `tcb doctor`
-shows if it's active.
+**Balance reachability with natural Mac sleep** → `off` leaves sleep to macOS;
+`always` holds the legacy AC-only assertion; `scheduled` releases it during the
+default 02:00–09:30 quiet window after active work drains. Use the scheduled setup
+sequence in the CLI admin section below, diagnose current configuration with
+`tcb power status`, and audit the last quiet window with
+`tcb power history --since 24h`.
+A closed lid and battery operation continue to follow normal macOS behavior.
 
-**Use it from the PC terminal** → `tcb tui` (managed) or `npm run tui` (dev). Needs the
+**Use it from the PC terminal** → `tcb tui` (managed) or `pnpm tui` (dev). Needs the
 bot running. Keys: `j/k` move, `i` compose a prompt (multi-line paste works), `c`
 controls, `s` projects (switch/start), `R` recover, `l` logs, `m` machine load, `u`
 re-run input, `a` attach to the real session pane, `q` quit, `?` for all keys. Detail: tui.md.
 
-**Check status / "is something wrong?"** → `/dashboard` or `tcb dashboard` (every
-session, busy/idle, queue, version); `/sysload` or `tcb sysload` (machine load, heat,
-runaway processes); `/logs` or `tcb logs`; `tcb doctor` (install health).
+**Check status / "is something wrong?"** → use the canonical **Runtime Overview**:
+call `tcb.observer.status` from an Observer/Home MCP session, or run
+`tcb dashboard --json` when MCP is unavailable. The same snapshot backs `/dashboard`,
+the TUI overview (`o`), and `tcb dashboard`; it puts health and bounded attention
+items before active work. Use `/sysload` or `tcb sysload` for machine load, heat,
+runaway processes, and Resource Guardian state; `tcb resource status` or
+`tcb resource incidents --limit 20` for Guardian detail; `/logs` or
+`tcb logs --since 1h --run-id <id>`; `tcb doctor`
+(install health).
+
+**Inspect or change personal configuration safely** → use `tcb config list|get|set`
+instead of editing the durable `.env` directly. Reads redact secrets; generic
+writes accept only allowlisted non-secret keys, validate typed values before
+persistence, and preserve path/command strings without boolean coercion. Use setup
+or a dedicated command for credentials, owner identifiers, and guarded settings.
+
+**Enable Resource Guardian observation** → run
+`tcb config set RESOURCE_GUARDIAN_ENABLED true`, then
+`tcb resource mode observe`, `tcb resource profile balanced`, and
+`tcb service restart`. Confirm with `tcb resource status --json`; do not promote
+to protect mode until representative incident evidence has been reviewed.
 
 **Let another local project send notifications** → call `tcb notify` from that
 project. It uses the running bot's local control socket and configured Telegram /
@@ -92,6 +113,9 @@ Feishu owner targets; the caller does not need chat credentials or SDKs. Example
 Use `--stdin` for multi-line bodies. Use repeatable `--attach <file>` for owner
 notification files, for example:
 `tcb notify --source radar --title "Radar ready" --body "Daily report attached" --attach report.md --attach report.html`.
+When a project has a Feishu/Lark group bound to a bot session, add
+`--session <session>` so the notification is delivered to that group instead of
+the owner fallback.
 For scheduled monitors that should appear in the daily audit, also call
 `tcb task report --id <id> --source radar-monitor|article-monitor|external-monitor|launchd
 --name <name> --scheduled-at <iso> --status running|success|failed|skipped`.
@@ -101,19 +125,36 @@ After repair review, update the same task id with `--repair-status fixed`,
 closed failures.
 
 **Schedule recurring Loop Engineering maintenance** → create a Loop config and set
-`LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. Default projects use the
+`LOOP_ENGINEERING_CONFIG_FILE=/path/to/loop.yml`. For the automation terminology
+map, task-family boundaries, and maintenance checklist, see
+`docs/intelligent-automation.md`. Default projects use the
 deterministic system runner. For adaptive AI-managed scheduled work, enable the
 reserved supervisor with `LOOP_SUPERVISOR_ENABLED=true` and set a project
 `runner.kind: agent-supervised`; the bot queues a bounded WorkOrder to the
 `tmux_proj_loop-supervisor` session and writes `supervisor.md` /
-`supervisor-summary.json` under `loop-runs/<project>/<runId>/`. For projects with
+`supervisor-summary.json`, worker-internal `eval-report.json`, plus resumable
+`handoff.md` / `handoff.json` under `loop-runs/<project>/<runId>/`. For projects with
 commit/PR settings, the bot also checks the final worktree, switch-back branch,
 PR mergeability, and CI rollup after the supervisor reports completion. When
-`pullRequest.autoMerge: true` is set, the bot merges the checked PR and
-fast-forwards the local switch-back branch afterward. Use
-`pullRequest.githubAccount` when PR commands must run under a specific `gh`
-account; the loop uses a command-local `GH_TOKEN` for that account instead of the
-global active `gh` identity. To run a separate real-bug repair loop, add
+operating an existing install, inspect and pause the top-level loop with
+`tcb automation status`, `tcb automation pause loop`, and
+`tcb automation resume loop`. Inspect or pause individual configured projects,
+workspaces, or repository-wide PR-review entries with
+`tcb loop targets list <file>` and `tcb loop targets disable <file> <kind> <id>`
+instead of hand-editing YAML.
+Use `tcb config set LOOP_SUPERVISOR_ENABLED true` for the supervisor dependency,
+and confirm it in `tcb automation status --json` before relying on supervised
+Loop work or Runtime Guardian repair.
+
+`pullRequest.autoMerge: true` is set, the bot merges the checked PR and rebases
+the local switch-back branch onto origin afterward. Set
+`pullRequest.mergeMethod` to `squash`, `merge`, or `rebase` to choose the GitHub
+CLI merge mode; the default is `squash`. Use
+`pullRequest.githubAccount` when a project must run GitHub CLI commands under a
+specific `gh` account; the loop uses a command-local `GH_TOKEN` for `gh api`,
+`gh pr`, `gh run`, and related commands instead of the global active `gh`
+identity, including security-maintenance runs that only read GitHub alerts. To
+run a separate real-bug repair loop, add
 `bugFix.enabled: true` with its own `schedule`, `branch`, `maxRounds`, and
 `maxBugsPerRound`; the supervisor must prove a functional or reliability bug
 before editing, use the bug-fix branch instead of the architecture branch, avoid
@@ -134,9 +175,17 @@ reachability and severity before editing, avoid blind dependency churn, run the
 relevant security check plus local verification, and document impact, fix,
 verification, and residual risk in the PR. To review and merge loop-created PRs
 on a later schedule, add `pullRequestReview.enabled: true`
-with its own `schedule`, `lookbackHours`, `consecutivePasses`, and `autoMerge`;
+with its own `schedule`, `lookbackHours`, `consecutivePasses`, `autoMerge`, and
+optional `mergeMethod`;
 the supervisor performs repeat review passes focused on bugs, CI, and
-mergeability rather than nits.
+mergeability rather than nits. Drafts and same-repository conflicts are not
+excluded: inspect each one, repair and mark it ready when safe, close obsolete
+or non-actionable work with evidence, or leave a specific human blocker. Every
+open PR needs one of those decisions before the run is considered complete.
+Repository-wide reviews are placed in a durable queue when discovered. Cron is
+only the fallback discovery cadence; a queued review waits for an available
+supervisor, retries transient failures with bounded backoff, and is recovered
+after a service restart.
 To run one orchestrated project-health loop instead of several mechanical
 maintenance jobs, add `harnessAuto.enabled: true` with its own `schedule`,
 `branch`, `maxRounds`, `strategy`, `tasks`, and `stopWhen`. A harness run first
@@ -145,20 +194,35 @@ from architecture, bug-fix, test-coverage, and security-maintenance. It keeps
 one run id and one PR branch/PR for the whole run, stops when the configured
 health/issue condition is met, and must not run every subtask just because it is
 configured.
+For code-changing WorkOrders, `cleanupPolicy` controls cleanup risk:
+`conservative` is the default, `balanced` removes unsupported stale paths only
+with clear evidence, and `aggressive` is for explicit new-feature cleanup where
+obsolete compatibility paths, duplicate entry points, transition code, and stale
+docs should be removed after review and verification.
 To proactively surface new work for owner approval, add
 `opportunityDiscovery.enabled: true` with its own `schedule`, `maxSuggestions`,
 `minConfidence`, categories, and optional prompt. This job is intentionally
 read-only: the supervisor inspects the project, writes `opportunities.json`, and
 the bot sends Telegram/Feishu suggestions with `/opportunity` commands. Use
-`/opportunity discuss <number|id>` to get a decision prompt, `/opportunity
-delegate <number|id>` for compatibility, or `/opportunity dismiss <number|id>`
-when it is not worth doing. Feishu commands work in private chat and in the bound
-project group that received the suggestion. Feishu opportunity notifications are
-interactive cards: related suggestions in one notification are discussed as a
-single batch by default. The notification card keeps discussion and execution
-separate; after owner approval, use the project control panel's **Continue via
-supervisor** / **继续托管推进** button or `/autopilot delegate` so all implementation
-work goes through the same Loop Supervisor active-delegation pipeline.
+`/opportunity discuss <number|id>` to get a decision prompt, then use Autopilot /
+Continue via supervisor for confirmed work. Use `/opportunity dismiss
+<number|id>` when it is not worth doing. Feishu commands work in private chat and
+in the bound project group that received the suggestion. Feishu opportunity
+notifications are interactive cards with readable per-suggestion summaries and
+view, discuss, and dismiss actions for each item; bulk discuss/dismiss remains
+available for a related batch. Telegram notifications expose per-suggestion
+discuss/dismiss buttons when each callback fits Telegram's 64-byte
+`callback_data` limit; if an imported or unusual id is too long, Telegram falls
+back to the typed `/opportunity` commands in the message. The notification card
+keeps discussion and execution separate; after owner approval, use the project
+control panel's **Delegate now** button, or **Review plan first** followed by
+**Confirm delegation**, or `/autopilot delegate` so all implementation work goes
+through the same Loop Supervisor active-delegation pipeline. If all supervisor
+sessions are busy, the blocked Autopilot reply exposes a queue view; other
+blocks, such as project conflicts, missing session paths, or worktree
+preparation failures, do not pretend that the request was queued. Lark can
+cancel queued/running active-delegated tasks from that queue card, while
+scheduled system WorkOrders remain non-cancellable there.
 For coordinated frontend/backend or otherwise coupled repositories, add a
 `workspaces` entry. Workspace jobs create one scheduled multi-repository
 WorkOrder, ask the supervisor to inspect cross-repository contracts when
@@ -169,6 +233,15 @@ branch. Workspace entries support the same task families as projects:
 `workspace-architecture` job kind is only a compatibility name for architecture
 run ids; it is not the workspace feature boundary.
 
+Daily Task Audit and Runtime Guardian use the same repair coordinator. A worker
+delivery that is queued but never consumed times out as retryable; project
+recovery is deduplicated per project while an active recovery exists; and only
+an authoritative passing supervisor final summary closes the ledger and queue.
+An existing active recovery is reported as deferred rather than launched again.
+Runtime Guardian dashboard attention items drill into current findings with
+`tcb runtime-guardian findings --project <id> --limit 20`; this is a read-only
+Control-backed observation path and does not dispatch repairs.
+
 **Hand off a clarified interactive task** → use `/autopilot [requirement]`,
 `/autopilot delegate [requirement]`, or `tcb autopilot <project> "[requirement]"`.
 This is not a cron fire:
@@ -176,16 +249,24 @@ it creates a bounded active WorkOrder from the current project session and sends
 it to the reserved Loop Supervisor. If the requirement text is omitted, the
 supervisor uses the current session context plus repository state as the source
 of truth: live pane, git status, recent commits, existing PRs, and prior
-verification output. Telegram/Feishu expose the same one-click action as
-**Continue via supervisor** / **继续托管推进**. It then drives
-the target project agent through implementation, review, relevant tests, coverage
-review for touched risk paths, any justified existing agent-backed/deterministic
-AI eval, and the configured PR/merge/switch-back policy. The command returns a
-run id immediately; the final result is written under `loop-runs/...` and sent
-through Telegram/Feishu notifications.
-For scheduled suggestions, `/opportunity delegate <id>` uses the same active
-delegation pipeline with a requirement built from the stored evidence, scope,
-proposed plan, and acceptance checks.
+verification output. Telegram/Feishu expose **Delegate now** for immediate
+handoff and **Review plan first** for a pre-delegation preview with a
+confirmation button. Before substantive execution, the supervisor records a
+delegation brief with objective, checklist, acceptance criteria, stop
+conditions, non-goals, risks, and verification plan; ambiguous or high-risk work
+blocks for clarification instead of guessing. It then drives the target project
+agent through implementation, review, relevant tests, coverage review for
+touched risk paths, any justified existing agent-backed/deterministic AI eval,
+and the configured PR/merge/switch-back policy. The final summary records a plan
+review before completion. The command returns a run id immediately; the final
+result is written under `loop-runs/...` and sent through Telegram/Feishu
+notifications.
+For scheduled suggestions, approved implementation uses the same active
+delegation pipeline as Autopilot. The opportunity discussion prompt prepares a
+delegation brief draft from stored evidence, scope, proposed plan, acceptance
+checks, non-goals, risks, and verification expectations; execution begins only
+after the owner confirms that scope and invokes Autopilot / Delegate now or the
+plan-first confirmation flow.
 
 **Audit yesterday's scheduled work** → enable `TASK_AUDIT_ENABLED=true` and set
 `TASK_AUDIT_SCHEDULE` (UTC cron, e.g. `0 2 * * *` for 10:00 Singapore time).
@@ -198,10 +279,55 @@ project-health loop. After the repair dispatch decision, it sends the final
 Telegram/Feishu summary with the repair dispatch result. External scheduled
 systems should report through `tcb task report` rather than being inspected
 through project-specific adapters.
+Use `tcb automation status`, `tcb automation pause task-audit`, and
+`tcb automation resume task-audit` for day-to-day operator control.
 For an immediate manual check, run `tcb task audit --force` (add `--json` for
 machine-readable output). The command goes through the running bot's control
 socket, so it uses the same config, notification gateway, and auto-repair path as
 the scheduled service.
+
+`SYSTEM_SELF_HEAL_ENABLED=true` starts an hourly self-heal tick.
+It does not send the daily audit summary or wait for `TASK_AUDIT_SCHEDULE`; it
+reconciles terminal WorkOrders, task-ledger state, repair queue ownership, and
+project-recovery candidates, then consumes due repair queues through the normal
+Loop Supervisor admission gates. With
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=true`, it also queues a broad active-agent
+self-heal prompt through operator-equivalent admission, while keeping WorkOrder
+notifications autonomous, equivalent to an operator asking it to check the last
+24 hours, investigate across files/state/logs/PR evidence, fix safe bot-owned
+issues, and record real blockers. This is an open-ended investigation protocol,
+not a fixed checklist: every abnormality must also be checked for the reason
+existing automation did not detect, retry, or repair it without a manual prompt,
+and
+bot-owned automation gaps should be fixed in the same repair slice when
+evidence is sufficient. Set `SYSTEM_SELF_HEAL_TICK_MS=0` or
+`SYSTEM_SELF_HEAL_ENABLED=false` only when the operator intentionally wants to
+disable this background reconciliation; set
+`SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false` only to keep deterministic repair
+while disabling the broad agent prompt.
+
+Historical Loop failures are classified by the project-scoped Recovery
+Coordinator: retryable failures are recreated through the configured project's
+own WorkOrder policy, while external waits and owner decisions remain visible
+without unsafe edits.
+
+**Install or inspect Home Operator AI surfaces** → use `tcb ai-tools status`
+first. `tcb ai-tools install` provisions the bundled Home Operator skill plus
+Observer/Home MCP descriptors into `<state-dir>/home` and removes stale global
+skill copies. A global discovery copy is separate and explicit:
+`tcb skill install --scope global`. Installation location is not mutation
+authority; Observer stays read-only, and Home operations still require an
+explicit session plus the control service's normal conflict and WorkOrder gates.
+
+**Evaluate system prompts** → use `tcb prompts governed list --json` to see every
+repo-owned governed prompt, `tcb prompts governed show <promptId>` to inspect
+owner and safety metadata, `tcb prompts governed render <promptId>` to inspect
+the rendered prompt when a built-in fixture exists, `tcb prompts governed check
+--json` for deterministic governance checks, and `tcb prompts governed eval
+--all --output /tmp/tcb-prompt-eval.md` to generate an active-agent AI eval
+task. The eval command only prints or writes the assessment prompt; it must be
+handed to the current Claude Code / Codex surface and must not use direct
+model-provider APIs.
 
 **Restart the bot / deploy code changes** → it's a managed service, so restart via the
 manager: `tcb service restart` (or `launchctl kickstart -k …` / `systemctl --user
@@ -209,9 +335,10 @@ restart tmux-claude-bot`). To pick up SOURCE changes, deploy a fresh build:
 `node dist/cli.js install` (rebuilds `dist/` then restarts). Plain restart alone won't
 rebuild.
 
-**Recover after a reboot** → agents that were running before a reboot are relaunched
-automatically on boot; to do it on demand use `/recover` (chat) / `R` (TUI) / `tcb
-recover`. This is host-wide; for one accidentally exited current project use
+**Recover after a reboot** → unfinished bot-dispatched prompts are relaunched
+automatically on boot; idle project sessions are left alone. To manually recover
+the full roster, use `/recover` (chat) / `R` (TUI) / `tcb recover`. This is host-wide;
+for one accidentally exited current project use
 `/resume`.
 
 ---
@@ -233,9 +360,22 @@ recover`. This is host-wide; for one accidentally exited current project use
     `tcb control <project> <esc|enter|resume|restart|…>` — a control key
     (`--yes` is required for dangerous actions in scripts).
 - **CLI — admin**: `run` · `setup` / `setup:lark` · `doctor` · `dashboard` · `sysload`
-  · `tui` · `recover` · `logs` · `install` ·
+  · `power status|history|schedule install|schedule remove` ·
+  `automation capacity status|history` ·
+  `resource status|incidents|mode|profile` · `tui` · `recover` · `logs` · `install` ·
   `service <install|uninstall|status|pause|resume|restart|logs>`.
-  (`npm run dev|tui|doctor|service:*` for dev.)
+  (`pnpm dev|tui|doctor|service:*` for dev.)
+
+  To enable the default 02:00–09:30 Asia/Singapore natural-sleep window, run
+  `tcb config set TCB_KEEP_AWAKE_MODE scheduled`, then
+  `tcb power schedule install`, restart the service, and verify with
+  `tcb power status`. The managed wake is 09:15, providing a 15-minute reconnect
+  warmup. Schedule conflicts fail closed; do not overwrite them manually.
+- **AI status inspection**: prefer `tcb.observer.status` for a typed, read-only
+  Runtime Overview. Home inherits this Observer tool and adds only controlled send
+  and delegation tools; it does not define a second status contract. Fall back to
+  `tcb dashboard --json`, never direct reads of runtime state files or parsing of
+  human-formatted dashboard text.
 - **TUI keys**: see [tui.md](../tui.md).
 
 ---

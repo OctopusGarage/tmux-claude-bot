@@ -19,10 +19,10 @@ The bot must be running (the TUI connects to its control socket at
 # Managed service (normal install) — uses the same state dir as the service:
 tcb tui
 
-# Dev: start the bot, then run the TUI — `npm run tui` resolves the same dev
-# profile/state dir as `npm run dev`, so it finds the running bot's socket:
-npm run dev    # in one terminal (leave it running)
-npm run tui    # in another
+# Dev: start the bot, then run the TUI — `pnpm tui` resolves the same dev
+# profile/state dir as `pnpm dev`, so it finds the running bot's socket:
+pnpm dev    # in one terminal (leave it running)
+pnpm tui    # in another
 ```
 
 If the bot isn't up (or you piped it instead of running it in a real terminal) it
@@ -32,7 +32,8 @@ TUI is open, the TUI auto-reconnects.
 ## Layout
 
 ```
- tmux-claude-bot   1/6 busy · queue 0 · v0.2.0
+ Overall Health: healthy · attention 0 · active work 1
+ tmux-claude-bot · v0.2.0 · 1/6 busy · queue 0
 ╭ Sessions ───────────╮ ╭ geo-backend  busy ─────────────╮
 │● 🟠 tmux-claude-bot ││ <live peek of the selected pane> │
 │○ 🟠 geo-backend     ││                                  │
@@ -45,26 +46,35 @@ TUI is open, the TUI auto-reconnects.
   the project label, and the current-task duration while busy.
 - **Right** — a live snapshot (peek) of the selected session's pane plus its status.
   The list and peek refresh automatically when the bot reports activity.
+- **Ordering** — busy sessions appear first, stopped sessions needing attention
+  follow, and healthy idle sessions come last. Refresh preserves selection by
+  session identity even when rows move.
+- **Header / Runtime Overview** — the health-first header is the same canonical
+  snapshot used by `tcb dashboard` and MCP. Press `o` for its read-only domain,
+  Automation, AI Interface, and recent-outcome detail.
 
 ## Keys
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` (or ↓ / ↑) | move the selection (auto-peeks the selected session) |
+| `Enter` | refresh the peek |
 | `p` | refresh the peek |
 | `i` | compose a prompt for the selected session. **`Enter` sends**; **`Alt+Enter` inserts a newline** and **pasting multi-line text keeps its newlines** (bracketed paste) — so multi-line prompts work. `←`/`→` `↑`/`↓` move, `Ctrl-A`/`Ctrl-E` jump to line start/end, backspace edits at the cursor, `Esc` cancels. |
 | `e` | send `Esc` to the session |
 | `x` | send `Enter` to the session |
 | `r` | restart the session's agent (resumes the conversation); asks for `y/N` confirmation |
 | `l` | **logs** — recent WARN/ERROR for the selected session (any key to close) |
-| `m` | **system load** — machine load / thermal / top CPU / runaway shells (any key to close) |
+| `m` | **system load** — machine load / thermal / top CPU / runaway shells / current Resource Guardian state (any key to close) |
+| `o` | **Runtime Overview** — Attention, Active Work, Automation Families, Operator and AI Interfaces, Runtime Domains, and recent outcomes; `j`/`k` scroll, `Esc` closes |
 | `u` | **inputs** — recent inputs you sent to the selected session; `Enter` **re-runs** the selected one, `Esc` to close |
 | `c` | controls overlay — the full action set (interrupt / clear / compact / esc / enter / restart / ↑ / ↓ / tab); dangerous actions ask for `y/N` confirmation |
 | `s` | **projects** overlay — every project (live `●` + stopped `◌`, recents included); `Enter` **opens + starts** the selected one (switch to a project / start a stopped one), `Esc` to close |
 | `R` | **recover** — reboot recovery: relaunch the agents that were running before a restart (status shows launched / shell-only / already-alive counts) |
 | `T` | toggle local control prompt translation between off and Argos zh→en; full language-pair control is available with `tcb prompt-translate status|off|on [from] [to]` |
-| `A` | Autopilot is no longer a keep-alive/goal-cycle panel. Use `tcb autopilot <project> [requirement]` or the chat **Continue via supervisor** action to delegate clarified work to the Loop Supervisor. |
+| `A` | Autopilot delegates clarified work to the Loop Supervisor. Use `tcb autopilot <project> [requirement]` or the chat **Continue via supervisor** action. |
 | `a` | **attach** — drop into the session's real, fully-interactive pane; the TUI resumes when you detach (`Ctrl-b d`). When already attached, it switches client instead |
+| `?` | show the full keymap |
 | `q` | quit the TUI (the bot keeps running) |
 
 A sent prompt is acked immediately; its reply lands in the status line when the agent

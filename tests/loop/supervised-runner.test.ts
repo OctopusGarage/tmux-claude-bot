@@ -2,7 +2,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runLoopSupervisedProjectAsync } from "../../src/core/loop/supervised-runner.js";
+import {
+  runLoopSupervisedProjectAsync,
+  runLoopSupervisorRevisionAsync,
+} from "../../src/core/loop/supervised-runner.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const defaultFinalSummaryPath = join(
@@ -25,7 +28,7 @@ const workOrder: LoopWorkOrder = {
   blockedActions: ["direct-model-api"],
   skills: { approved: [] },
   preflight: { commands: [], repair: { agent: false } },
-  assessment: { command: "npm run assess" },
+  assessment: { command: "pnpm assess" },
   execution: { agent: true },
   recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
   commitPolicy: { enabled: false, perRound: true },
@@ -83,6 +86,168 @@ describe("runLoopSupervisedProjectAsync", () => {
       reason: "queue full",
       output: "partial output\nqueue full",
     });
+  });
+
+  it("retries supervisor dispatch when the model provider is temporarily at capacity", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "Selected model is at capacity. Please try a different model.",
+          };
+        }
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["retried after provider capacity"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["retried after provider capacity"],
+        finalVerification: "passed",
+      },
+    });
+  });
+
+  it("retries status-zero Codex transport failures before parsing supervisor output", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            status: 0,
+            stdout:
+              "unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses",
+            stderr: "",
+          };
+        }
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["retried after Codex transport failure"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["retried after Codex transport failure"],
+        finalVerification: "passed",
+      },
+    });
+  });
+
+  it("classifies exhausted status-zero Codex transport failures as dispatch failures", async () => {
+    const output =
+      "unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses";
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({ status: 0, stdout: output, stderr: "" }),
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: output,
+      output,
+    });
+  });
+
+  it("classifies Codex startup auth and MCP failures as dispatch failures", async () => {
+    const output = [
+      "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      "MCP startup incomplete (failed: english-pilot)",
+      "› Ask Codex to do anything",
+    ].join("\n");
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        dispatches += 1;
+        return { status: 0, stdout: output, stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
+      output,
+      repairDisposition: "bot-repairable",
+    });
+    expect(dispatches).toBe(1);
+  });
+
+  it("classifies Codex response-endpoint credential rejection as a startup auth failure", async () => {
+    const output = [
+      "unexpected status 401 Unauthorized: Incorrect API key provided: <redacted>",
+      "url: https://chatgpt.com/backend-api/codex/responses",
+      "› Ask Codex to do anything",
+    ].join("\n");
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        dispatches += 1;
+        return { status: 0, stdout: output, stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
+      output,
+      repairDisposition: "bot-repairable",
+    });
+    expect(dispatches).toBe(1);
+  });
+
+  it("classifies Codex startup hook failures as dispatch failures", async () => {
+    const output = ["Hook failed", "hook exited with code 1", "Ask Codex to do anything"].join(
+      "\n",
+    );
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => {
+        dispatches += 1;
+        return { status: 0, stdout: output, stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "agent startup reported authentication, MCP, or hook initialization failure",
+      output,
+      repairDisposition: "bot-repairable",
+    });
+    expect(dispatches).toBe(1);
   });
 
   it("returns timeout and aborts dispatch when dispatch does not finish before the deadline", async () => {
@@ -151,6 +316,26 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
   });
 
+  it("retries thrown supervisor model-capacity failures before failing the run", async () => {
+    let attempts = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: () => {
+        attempts += 1;
+        throw new Error("Selected model is at capacity. Please try a different model.");
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "Selected model is at capacity. Please try a different model.",
+      output: "Selected model is at capacity. Please try a different model.",
+    });
+  });
+
   it("returns failed when successful dispatch output has no final marker", async () => {
     const prompts: string[] = [];
     const result = await runLoopSupervisedProjectAsync({
@@ -167,9 +352,36 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "invalid-output",
       reason: "missing-final-marker",
       output: "done without marker\ndone without marker",
+      repairDisposition: "bot-repairable",
     });
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("did not include a parseable final summary");
+  });
+
+  it.each([
+    "Not running — use /resume to restore it, or /start for a new session",
+    "未运行，请使用 /resume 恢复，或 /start 新建",
+    "未執行，請使用 /resume 復原，或 /start 新建",
+    "実行されていません · /resume で復元、または /start で新規開始してください",
+    "No está en ejecución — usa /resume para restaurarlo, o /start para iniciar uno nuevo",
+  ])("classifies agent not-running output as dispatch readiness failure: %s", async (output) => {
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({
+        status: 0,
+        stdout: output,
+        stderr: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      status: "dispatch-failed",
+      reason: "no live loop supervisor session",
+      output,
+      repairDisposition: "bot-repairable",
+    });
   });
 
   it("asks the supervisor to finalize once when the first output misses the final marker", async () => {
@@ -262,9 +474,41 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "invalid-output",
       reason: "invalid-summary",
       output: "[LOOP_SUPERVISOR_DONE:wo-1]\n{}\n[LOOP_SUPERVISOR_DONE:wo-1]\n{}",
+      repairDisposition: "bot-repairable",
     });
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("could not run its final gates");
+  });
+
+  it("classifies structurally valid summaries that fail WorkOrder validation as repairable invalid-output", async () => {
+    const planningWorkOrder: LoopWorkOrder = {
+      ...workOrder,
+      planning: {
+        required: true,
+        source: "active-delegation",
+        requireOwnerConfirmation: false,
+        rubric: [],
+        acceptanceCriteria: [],
+        stopConditions: [],
+        nonGoals: [],
+      },
+    };
+    const output =
+      '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":[],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}';
+
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder: planningWorkOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      dispatch: async () => ({ status: 0, stdout: output, stderr: "" }),
+    });
+
+    expect(result).toEqual({
+      status: "invalid-output",
+      reason: "invalid-summary",
+      output: `${output}\n${output}`,
+      repairDisposition: "bot-repairable",
+    });
   });
 
   it("accepts a successful status alias from the finalization response", async () => {
@@ -352,6 +596,46 @@ describe("runLoopSupervisedProjectAsync", () => {
       status: "dispatch-failed",
       reason: "command timed out",
       output: "command timed out",
+    });
+  });
+});
+
+describe("runLoopSupervisorRevisionAsync", () => {
+  it("uses the shared finalization fallback when revision output is missing the final marker", async () => {
+    const prompts: string[] = [];
+    const result = await runLoopSupervisorRevisionAsync({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      timeoutMs: 1000,
+      failures: ["system gate rejected the final summary"],
+      attempt: 1,
+      maxAttempts: 2,
+      previousOutput: "previous supervisor output",
+      dispatch: async (request) => {
+        prompts.push(request.prompt);
+        expect(request.session).toBe("tmux_proj_loop-supervisor");
+        expect(request.timeoutMs).toBe(1000);
+        if (prompts.length === 1) {
+          expect(request.prompt).toContain("system gate rejected the final summary");
+          return { status: 0, stdout: "revision repaired state but omitted marker", stderr: "" };
+        }
+        expect(request.prompt).toContain("revision repaired state but omitted marker");
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"completed","projectId":"datavibe","actionsTaken":["finalized revision"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(result).toMatchObject({
+      status: "completed",
+      summary: {
+        actionsTaken: ["finalized revision"],
+        finalVerification: "passed",
+      },
     });
   });
 });

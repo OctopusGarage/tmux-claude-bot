@@ -22,7 +22,7 @@ export async function runTui(): Promise<void> {
     process.stderr.write(
       "Can't reach the bot's control socket — is the bot running?\n" +
         "  managed service:  tcb service start\n" +
-        "  dev:              npm run dev\n",
+        "  dev:              pnpm dev\n",
     );
     process.exitCode = 1;
     return;

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { OwnerActivityTracker } from "../../../src/core/notifications/owner-activity.js";
@@ -63,7 +62,6 @@ function deps(): HandlerDeps {
     queue: {
       flushPending: vi.fn(),
     },
-    notifier: new NotifierRegistry(),
     notifications: new NotificationGateway(),
     ownerActivity: new OwnerActivityTracker(),
     channelSenders: new ChannelSenderRegistry(),

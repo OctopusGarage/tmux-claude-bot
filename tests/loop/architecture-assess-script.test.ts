@@ -19,7 +19,11 @@ function run(command: string, args: string[], cwd: string): void {
   }
 }
 
-function assess(cwd: string, extraArgs: string[] = []): AssessmentOutput {
+function assess(
+  cwd: string,
+  extraArgs: string[] = [],
+  env: NodeJS.ProcessEnv = process.env,
+): AssessmentOutput {
   const result = spawnSync(
     process.execPath,
     [
@@ -42,7 +46,7 @@ function assess(cwd: string, extraArgs: string[] = []): AssessmentOutput {
       ".codegraph|.semgrep|pyproject.toml|uv.lock|tests",
       ...extraArgs,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env },
   );
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as AssessmentOutput;
@@ -76,6 +80,51 @@ function makeRepo(): string {
     dir,
   );
   return dir;
+}
+
+function writeCompletedRun(stateDir: string, projectId: string): void {
+  const runDir = join(stateDir, "loop-runs", projectId, "1785429000000-demo-harness-auto");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "supervisor-final-summary.json"),
+    JSON.stringify(
+      {
+        status: "completed",
+        projectId,
+        actionsTaken: ["Merged PR #30 into dev."],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            { name: "round verification", result: "passed" },
+            { name: "PR checks", result: "passed" },
+            { name: "auto-merge", result: "passed" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123 fix: demo", "def456 Merge PR #30"],
+        followUps: [],
+      },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    join(runDir, "system-gate.json"),
+    JSON.stringify(
+      {
+        resultStatus: "completed",
+        accepted: true,
+        evidence: ["auto-merge and switch-back gate passed"],
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 describe("loop architecture assessment script", () => {
@@ -120,5 +169,44 @@ describe("loop architecture assessment script", () => {
     expect(result.score).toBeNull();
     expect(result.findings).toHaveLength(0);
     expect(result.suggestedBotImprovements[0]).toContain("worktree is not clean");
+  });
+
+  it("counts completed final summaries and system gates as recent loop evidence", () => {
+    const repo = makeRepo();
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-assess-state-"));
+    dirs.push(repo, stateDir);
+    writeCompletedRun(stateDir, "sample");
+
+    const result = assess(repo, [
+      "--state-dir",
+      stateDir,
+      "--guard-files",
+      "pyproject.toml|uv.lock|tests|missing.guard",
+    ]);
+
+    expect(result.score).toBeGreaterThanOrEqual(95);
+    expect(result.findings).toHaveLength(0);
+    expect(result.suggestedBotImprovements).toContain(
+      "recent completed loop evidence: 1785429000000-demo-harness-auto (system accepted)",
+    );
+  });
+
+  it("normalizes a legacy app-home state environment before reading loop evidence", () => {
+    const repo = makeRepo();
+    const appHome = mkdtempSync(join(tmpdir(), "tcb-loop-assess-app-home-"));
+    const stateDir = join(appHome, "state");
+    dirs.push(repo, appHome);
+    writeCompletedRun(stateDir, "sample");
+
+    const result = assess(repo, ["--guard-files", "pyproject.toml|uv.lock|tests|missing.guard"], {
+      ...process.env,
+      TCB_STATE_DIR: appHome,
+    });
+
+    expect(result.score).toBeGreaterThanOrEqual(95);
+    expect(result.findings).toHaveLength(0);
+    expect(result.suggestedBotImprovements).toContain(
+      "recent completed loop evidence: 1785429000000-demo-harness-auto (system accepted)",
+    );
   });
 });

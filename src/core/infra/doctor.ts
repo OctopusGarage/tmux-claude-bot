@@ -4,6 +4,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { appStateFile } from "../../shared/state-dir.js";
 import {
+  defaultOperatorHomeAiToolFiles,
+  homeOperatorSkillFiles,
+} from "../ai-tools/install-contract.js";
+import { capabilityStatusForTaskFamily } from "../capabilities/catalog.js";
+import { LOOP_WORK_ORDER_TASK_KINDS } from "../loop/task-family.js";
+import { MCP_PROFILES, mcpProfilePath } from "../mcp/profiles.js";
+import {
   managedRestartCommand,
   managedServiceLoadedProbe,
   managedServiceName,
@@ -15,10 +22,11 @@ import {
 } from "../read/capability-readiness.js";
 import { ARGOS_VENV_PYTHON, resolvePromptTranslateConfig } from "../read/prompt-translation.js";
 import { WHISPER_VENV_BIN } from "../read/voice-support.js";
+import { type InstalledAgentSkill, listAgentSkills } from "../skills/registry.js";
 import { parseEnv, validateTokenShape } from "./onboarding.js";
 
 /**
- * Health checks for an installed bot, shared by the `npm run doctor` CLI and
+ * Health checks for an installed bot, shared by the `pnpm doctor` CLI and
  * the `/doctor` chat command. System access goes through {@link DoctorProbes}
  * so checks are unit-testable; renderers decide presentation — the chat one
  * is redacted (no app ids), the CLI one keeps full detail.
@@ -53,6 +61,7 @@ export interface DoctorProbes {
   /** macOS: whether `pmset disablesleep` is engaged (covers a closed lid). */
   sleepDisabled(): Promise<boolean>;
   fileExists(path: string): boolean;
+  agentSkills?(): InstalledAgentSkill[];
 }
 
 const run = promisify(execFile);
@@ -84,13 +93,10 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
     },
     botProcessCount: async () => {
       try {
-        const { stdout } = await run("pgrep", [
-          "-f",
-          "tmux-claude-bot.*(src/index.ts|dist/cli.js)",
-        ]);
-        return stdout.split("\n").filter((l) => l.trim()).length;
+        const { stdout } = await run("ps", ["-axo", "pid=,ppid=,command="]);
+        return countBotProcessRoots(stdout);
       } catch {
-        return 0; // pgrep exits 1 when there are no matches
+        return 0;
       }
     },
     caffeinateActive: async () => {
@@ -122,6 +128,25 @@ export function defaultProbes(root: string = process.cwd()): DoctorProbes {
   };
 }
 
+export function countBotProcessRoots(psOutput: string): number {
+  const rows = psOutput
+    .split("\n")
+    .flatMap((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      if (match === null) return [];
+      const [, pid, ppid, command] = match;
+      if (pid === undefined || ppid === undefined || command === undefined) return [];
+      return [{ pid, ppid, command }];
+    })
+    .filter(
+      (row) =>
+        /tmux-claude-bot.*(src\/index\.ts|dist\/cli\.js)/.test(row.command) &&
+        !/dist\/cli\.js\s+doctor(?:\s|$)/.test(row.command),
+    );
+  const matchedPids = new Set(rows.map((row) => row.pid));
+  return rows.filter((row) => !matchedPids.has(row.ppid)).length;
+}
+
 export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const ok = (text: string, sensitiveDetail?: string) =>
@@ -132,7 +157,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   // 1. .env + at least one chat adapter (Telegram via TELEGRAM_BOT_TOKEN, Feishu via LARK_*)
   const envMap = probes.readEnv();
   if (!envMap) {
-    bad("no .env found", "run: npm run setup");
+    bad("no .env found", "run: pnpm setup");
   } else {
     const token = envMap.get("TELEGRAM_BOT_TOKEN") ?? envMap.get("BOT_TOKEN") ?? "";
     const telegram = validateTokenShape(token);
@@ -143,14 +168,14 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
 
     if (telegram) ok("Telegram configured (well-formed TELEGRAM_BOT_TOKEN)");
     else if (token)
-      bad("TELEGRAM_BOT_TOKEN is set but looks invalid", "run: npm run setup:reconfigure");
+      bad("TELEGRAM_BOT_TOKEN is set but looks invalid", "run: pnpm setup:reconfigure");
     else info("Telegram not configured (no TELEGRAM_BOT_TOKEN)");
 
     if (lark) ok("Feishu/Lark configured", `app ${envMap.get("LARK_APP_ID")}`);
-    else info("Feishu/Lark not configured (run: npm run setup:lark)");
+    else info("Feishu/Lark not configured (run: pnpm setup:lark)");
 
     if (!telegram && !lark) {
-      bad("no chat adapter configured", "run: npm run setup  (choose Telegram, Feishu, or both)");
+      bad("no chat adapter configured", "run: pnpm setup  (choose Telegram, Feishu, or both)");
     }
   }
 
@@ -160,13 +185,89 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   if (await probes.onPath("node")) ok("node is on PATH");
   else bad("node not found", "install Node via nvm: https://github.com/nvm-sh/nvm");
 
+  // 2b. Default AI tool surface installation. Managed installs should keep the
+  // Home Operator skill and MCP descriptors in the operator workspace only. The
+  // file list comes from the central role-surface contract so new role profiles
+  // must be added to health checks in the same slice.
+  const operatorHome = envMap?.get("HOME_OPERATOR_DIR") || appStateFile("home");
+  const installedOperatorSkillFiles = homeOperatorSkillFiles(operatorHome).filter((file) =>
+    probes.fileExists(file.path),
+  );
+  if (installedOperatorSkillFiles.length === homeOperatorSkillFiles(operatorHome).length) {
+    ok("Home Operator skill installed in operator workspace");
+  } else if (installedOperatorSkillFiles.length === 0) {
+    bad(
+      "Home Operator skill missing from operator workspace",
+      "run: tcb skill install --scope operator-home",
+    );
+  } else {
+    bad(
+      `Home Operator skill partially installed (${installedOperatorSkillFiles
+        .map((file) => file.client)
+        .join(", ")})`,
+      "run: tcb skill install --scope operator-home",
+    );
+  }
+
+  const installedMcpProfiles = MCP_PROFILES.filter((profile) =>
+    probes.fileExists(mcpProfilePath(operatorHome, profile)),
+  );
+  if (installedMcpProfiles.length === MCP_PROFILES.length) {
+    ok(`MCP profiles installed (${installedMcpProfiles.join(", ")})`);
+  } else if (installedMcpProfiles.length === 0) {
+    info("MCP profiles not installed (run: tcb mcp install)");
+  } else {
+    bad(
+      `MCP profiles partially installed (${installedMcpProfiles.join(", ")})`,
+      "run: tcb mcp install",
+    );
+  }
+  const expectedDefaultAiToolFiles = defaultOperatorHomeAiToolFiles(operatorHome);
+  const installedDefaultAiToolFiles = expectedDefaultAiToolFiles.filter((file) =>
+    probes.fileExists(file.path),
+  );
+  if (installedDefaultAiToolFiles.length === expectedDefaultAiToolFiles.length) {
+    ok(
+      `AI tool role surfaces complete (${installedDefaultAiToolFiles
+        .map((file) =>
+          file.surface === "mcp" ? `mcp:${file.profile ?? "unknown"}` : `skill:${file.client}`,
+        )
+        .join(", ")})`,
+    );
+  }
+
+  const installedAgentSkills = probes.agentSkills?.() ?? listAgentSkills();
+  const capabilityStatuses = LOOP_WORK_ORDER_TASK_KINDS.flatMap((kind) =>
+    capabilityStatusForTaskFamily(kind, installedAgentSkills).map((status) => ({ kind, status })),
+  );
+  const missingRequiredCapabilities = capabilityStatuses.filter(({ status }) => status.blocking);
+  const missingRecommendedCapabilities = capabilityStatuses.filter(
+    ({ status }) => !status.installed && !status.blocking && status.level === "recommended",
+  );
+  if (missingRequiredCapabilities.length > 0) {
+    bad(
+      `required task capabilities missing (${missingRequiredCapabilities
+        .map(({ kind, status }) => `${kind}:${status.capabilityId}`)
+        .join(", ")})`,
+      "run: tcb capabilities install --default, then tcb loop skills sync <file>",
+    );
+  } else if (missingRecommendedCapabilities.length > 0) {
+    info(
+      `recommended task capabilities missing (${missingRecommendedCapabilities
+        .map(({ kind, status }) => `${kind}:${status.capabilityId}`)
+        .join(", ")}) — run: tcb capabilities status --task <kind>`,
+    );
+  } else {
+    ok("task capability dependencies installed or not required");
+  }
+
   // 3. managed service (launchd on macOS, systemd on Linux). Identity + restart
   // hint come from the single-source service-hints module.
   const serviceName = managedServiceName();
   const restartHint = managedRestartCommand();
 
   if (await probes.serviceLoaded()) ok(`${serviceName} is loaded`);
-  else bad(`${serviceName} not loaded`, "run: npm run service:install");
+  else bad(`${serviceName} not loaded`, "run: pnpm service:install");
 
   // 4. single-instance (the 409 trap)
   const n = await probes.botProcessCount();
@@ -184,7 +285,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
   const mlxBin = envMap?.get("MLX_WHISPER_BIN") ?? "";
   const langPref = envMap?.get("WHISPER_LANGUAGE") || "zh";
   if (!mlxBin) {
-    info("voice transcription disabled (MLX_WHISPER_BIN empty; npm run whisper:install)");
+    info("voice transcription disabled (MLX_WHISPER_BIN empty; pnpm whisper:install)");
   } else {
     const voice = voiceTranscriptionReadiness({
       env: envObj,
@@ -197,7 +298,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     } else {
       bad(
         `voice: MLX_WHISPER_BIN set but binary is ${voice.status === "not-executable" ? "not executable" : "missing"}`,
-        "run: npm run whisper:install",
+        "run: pnpm whisper:install",
       );
     }
   }
@@ -227,7 +328,7 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
             `prompt translation: ${channel} argos ${cfg.from}->${cfg.to} python is ${
               argos.status === "not-executable" ? "not executable" : "missing"
             }`,
-            "run: npm run translate:install",
+            "run: pnpm translate:install",
           );
         }
       }
@@ -236,12 +337,22 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
     info("prompt translation disabled (PROMPT_TRANSLATE_MODE off)");
   }
 
-  // 7. keep-awake (macOS only). Opt-in flag + a live probe of the bot's caffeinate
-  // assertion, so this reports whether it's ACTUALLY asserting now, not just
-  // whether the flag is set.
+  // 7. Host power policy (macOS only). Scheduled mode has time-dependent
+  // assertion and wake verification, so its detailed diagnosis belongs to
+  // `tcb power status`; Doctor only validates the configured mode here.
   if (process.platform === "darwin") {
-    const keepAwake = envMap?.get("TCB_KEEP_AWAKE");
-    if (keepAwake === "1" || keepAwake === "true") {
+    const explicitMode = envMap?.get("TCB_KEEP_AWAKE_MODE");
+    const legacyKeepAwake = envMap?.get("TCB_KEEP_AWAKE");
+    const hostPowerMode =
+      explicitMode ?? (legacyKeepAwake === "1" || legacyKeepAwake === "true" ? "always" : "off");
+    if (hostPowerMode !== "off" && hostPowerMode !== "always" && hostPowerMode !== "scheduled") {
+      bad(
+        `host power mode is invalid (${hostPowerMode})`,
+        "run: tcb config set TCB_KEEP_AWAKE_MODE off|always|scheduled",
+      );
+    } else if (hostPowerMode === "scheduled") {
+      info("scheduled host power policy configured — run: tcb power status");
+    } else if (hostPowerMode === "always") {
       if (await probes.caffeinateActive()) {
         ok("keep-awake on and active (caffeinate -s asserting on AC power)");
       } else {
@@ -250,10 +361,8 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
         );
       }
 
-      // caffeinate -s does NOT cover a closed lid; only `pmset disablesleep`
-      // does. Surface the real lid + disablesleep state so closing the lid
-      // without disablesleep — which WILL sleep the Mac and drop the bot — is a
-      // hard fail rather than a silent surprise.
+      // Surface the real lid state without prescribing a permanent clamshell
+      // override; the supported lower-energy policy is scheduled natural sleep.
       const closed = await probes.clamshellClosed();
       if (closed !== null) {
         if (await probes.sleepDisabled()) {
@@ -261,12 +370,10 @@ export async function runDoctorChecks(probes: DoctorProbes): Promise<DoctorRepor
         } else if (closed) {
           bad(
             "lid is CLOSED and clamshell sleep is not disabled — the Mac will sleep and drop the bot",
-            "run: sudo pmset -a disablesleep 1   (or open the lid)",
+            "open the lid, or use: tcb config set TCB_KEEP_AWAKE_MODE scheduled",
           );
         } else {
-          info(
-            "lid open, but clamshell sleep is not disabled — closing the lid will sleep the Mac (sudo pmset -a disablesleep 1)",
-          );
+          info("lid open; closing the lid will let macOS sleep normally");
         }
       }
     } else {

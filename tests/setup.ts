@@ -12,9 +12,10 @@ import { envSchema } from "../src/shared/config.js";
 // card tests send. CI has none of these set, so the suite is green there and red
 // locally — a non-hermetic-test bug, not a product bug. Strip the whole config
 // surface here so every run matches CI; a test that needs a value sets it itself.
-// Preserve only the dirs the harness owns (TCB_STATE_DIR is pinned below; log
-// tests pin their own TCB_LOG_DIR).
-const PRESERVE = new Set(["TCB_STATE_DIR", "TCB_LOG_DIR", "TCB_ENV_FILE"]);
+// Never inherit production destinations. TCB_STATE_DIR is replaced with the
+// per-worker temp directory below; tests that exercise explicit log/env-file
+// overrides set their own values after this setup runs.
+const PRESERVE = new Set<string>();
 const CLEAR = new Set<string>([
   ...Object.keys(envSchema.shape),
   // Read directly from process.env (not via envSchema):
@@ -49,6 +50,9 @@ const CLEAR = new Set<string>([
   "LARK_VOICE_TRANSLATE_FROM",
   "LARK_VOICE_TRANSLATE_TO",
   "ARGOS_TRANSLATE_PYTHON",
+  "TCB_STATE_DIR",
+  "TCB_LOG_DIR",
+  "TCB_ENV_FILE",
 ]);
 // The LARK_/TELEGRAM_ namespaces belong to this app's config — sweep any others.
 for (const k of Object.keys(process.env)) {
@@ -63,10 +67,8 @@ for (const k of CLEAR) if (!PRESERVE.has(k)) delete process.env[k];
 // state files, and a dev bot then shows that test garbage. See shared/state-dir.ts.
 const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-test-state-"));
 process.env.TCB_STATE_DIR = STATE_DIR;
-// NOTE: logs are isolated via TCB_STATE_DIR (the logger resolves
-// `appStateFile("logs")`). We deliberately do NOT pin TCB_LOG_DIR here: several
-// log tests (logs.test.ts, logger.test.ts, agentKindMap-log.test.ts) set their
-// OWN TCB_LOG_DIR at module load and a global one collides with that timing.
+// Logs are isolated through TCB_STATE_DIR because the logger resolves
+// `appStateFile("logs")`. Individual logger tests may still set TCB_LOG_DIR.
 
 // Safety net: several tests set their own TCB_STATE_DIR and then `delete` it in
 // afterEach instead of restoring this value. That left a window (the next

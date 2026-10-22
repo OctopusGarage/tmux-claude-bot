@@ -27,8 +27,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm ci
-      # `prepublishOnly` builds the dist bundle; `files` ships dist + scripts +
+      - run: corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      # `prepublishOnly` builds the dist bundle through pnpm; `files` ships dist + scripts +
       # installer only. `access`/scope come from package.json publishConfig.
       - run: npm publish --provenance
         env:

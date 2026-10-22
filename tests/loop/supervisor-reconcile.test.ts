@@ -1,9 +1,36 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentCapacityStore } from "../../src/core/automation/capacity-store.js";
+import { autonomousCapacityLeaseId } from "../../src/core/automation/coordinator.js";
+import {
+  claimDelegationAttempt,
+  prepareDelegationAttempt,
+  readDelegationAttempt,
+  settleDelegationAttempt,
+} from "../../src/core/loop/delegation-attempt.js";
+import {
+  buildIterationCheckpointTemplate,
+  iterationCheckpointPath,
+} from "../../src/core/loop/iteration-checkpoint.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
-import { reconcileLoopSupervisorWorkOrders } from "../../src/core/loop/service.js";
+import {
+  reconcileAutonomousCapacityLeases,
+  reconcileLoopSupervisorWorkOrders,
+} from "../../src/core/loop/service.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
+import {
+  readLoopSupervisorWorkOrderRegistry,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
+import {
+  loopSupervisorControlRestore,
+  restoredLoopSupervisorMessage,
+} from "../../src/core/loop/supervisor-work-restore.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
@@ -33,7 +60,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     execution:
       agent: true
 ${projectExtra}
@@ -60,13 +87,39 @@ function workOrder(stateDir: string, projectPath: string): LoopWorkOrder {
     blockedActions: [],
     skills: { approved: [] },
     preflight: { commands: [], repair: { agent: false } },
-    assessment: { command: "npm run assess" },
+    assessment: { command: "pnpm assess" },
     execution: { agent: true },
     recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
     commitPolicy: { enabled: false, perRound: true },
-    pullRequestPolicy: { enabled: false, base: "main", switchBack: "main", autoMerge: false },
+    pullRequestPolicy: {
+      enabled: false,
+      base: "main",
+      switchBack: "main",
+      autoMerge: false,
+      mergeMethod: "squash",
+    },
     requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
     finalSummaryPath: join(stateDir, "loop-runs", "hub", runId, "supervisor-final-summary.json"),
+  };
+}
+
+function activeDelegatedWorkOrder(stateDir: string, projectPath: string): LoopWorkOrder {
+  const runId = "1784196600000-hub-active-delegate";
+  return {
+    ...workOrder(stateDir, projectPath),
+    id: runId,
+    requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+    finalSummaryPath: join(stateDir, "loop-runs", "hub", runId, "supervisor-final-summary.json"),
+    task: {
+      kind: "active-delegated-task",
+      sourceSession: "tmux_proj_hub",
+      requirement:
+        "Run an operator-equivalent investigation: check whether every tmux-claude-bot automation task from the last 24 hours is healthy.",
+      requireReview: true,
+      requireTests: true,
+      requireCoverageReview: true,
+      allowAiEval: true,
+    },
   };
 }
 
@@ -126,7 +179,470 @@ function writeRecoverableFailedRun(stateDir: string, order: LoopWorkOrder): stri
 }
 
 describe("loop supervisor work order reconciliation", () => {
-  it("completes an in-flight work order from the final summary file after a bot restart", () => {
+  function journalFixture() {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-journal-reconcile-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectPath = mkdtempSync(join(tmpdir(), "tcb-journal-project-"));
+    const order = activeDelegatedWorkOrder(stateDir, projectPath);
+    const runDir = writeUnfinishedRun(stateDir, order);
+    rmSync(order.finalSummaryPath ?? "", { force: true });
+    const prepared = prepareDelegationAttempt({
+      workOrder: order,
+      attemptId: "attempt-1",
+      supervisorSession: "tmux_proj_loop-supervisor",
+      prompt: "Finish",
+      now: 1000,
+    });
+    if (prepared === undefined) throw new Error("expected attempt");
+    const summary = {
+      status: "completed",
+      projectId: "hub",
+      actionsTaken: ["current attempt"],
+      delegatedTasks: [],
+      finalVerification: "passed",
+      commits: [],
+      followUps: [],
+    };
+    const output = `${order.requiredFinalMarker}\n${JSON.stringify(summary)}`;
+    const reconcile = () =>
+      reconcileLoopSupervisorWorkOrders({
+        configFile: writeConfig(projectPath),
+        now: 3000,
+        runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      });
+    return { order, runDir, prepared, summary, output, reconcile };
+  }
+
+  it("does not reconcile a summary while its journaled attempt still owns execution", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 4_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toMatchObject({ recovered: 0 });
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId).phase,
+    ).toBe("started");
+    expect(listLoopReports()).toEqual([]);
+    expect(readLoopSupervisorWorkOrderRegistry(3000).unfinished).toHaveLength(1);
+  });
+
+  it("expires a restarted started attempt at its durable deadline even while the supervisor is busy", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+        {
+          workerSession: "tmux_proj_other-supervisor",
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_250,
+          updatedAt: 1_750,
+        },
+      ],
+    });
+    const cancelled: string[] = [];
+
+    const first = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: async ({ supervisorSession }) => {
+        cancelled.push(supervisorSession);
+      },
+    });
+
+    expect(first).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(cancelled).toEqual(["tmux_proj_loop-supervisor"]);
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId),
+    ).toMatchObject({ phase: "settled", settled: { resultStatus: "dispatch-timeout" } });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+    expect(JSON.parse(readFileSync(join(f.runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      resultStatus: "dispatch-timeout",
+    });
+    expect(
+      new DailyTaskLedger()
+        .listAll()
+        .find((record) => record.taskId.endsWith(f.order.scheduledAt.toString())),
+    ).toMatchObject({ status: "failed", repairStatus: "pending", error: "dispatch-timeout" });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: "tmux_proj_loop-supervisor",
+        workOrderId: f.order.id,
+        status: "retained",
+      }),
+      expect.objectContaining({
+        workerSession: "tmux_proj_other-supervisor",
+        workOrderId: f.order.id,
+        status: "active",
+      }),
+    ]);
+
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+  });
+
+  it("terminalizes an expired attempt when interrupting its exact supervisor fails", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: f.prepared.supervisorSession,
+          workOrderId: f.order.id,
+          projectId: f.order.projectId,
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: ({ supervisorSession }) => {
+        expect(supervisorSession).toBe(f.prepared.supervisorSession);
+        throw new Error("interrupt failed");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(
+      readDelegationAttempt(f.order, f.prepared.supervisorSession, f.prepared.attemptId),
+    ).toMatchObject({ phase: "settled", settled: { resultStatus: "dispatch-timeout" } });
+    expect(JSON.parse(readFileSync(join(f.runDir, "work-order-state.json"), "utf8"))).toMatchObject(
+      { status: "failed", resultStatus: "dispatch-timeout" },
+    );
+  });
+
+  it("does not interrupt a supervisor without the matching active lease", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1_500);
+    writeFileSync(
+      join(f.runDir, "delegation-budget.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        contractHash: buildIterationCheckpointTemplate(f.order).contractHash,
+        deadlineAt: 2_000,
+        revisionsUsed: 0,
+        continuationsUsed: 0,
+        lastContinuationSequence: 0,
+        revisionLimit: null,
+      }),
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: f.prepared.supervisorSession,
+          workOrderId: "another-work-order",
+          projectId: "another-project",
+          projectPath: f.order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_500,
+        },
+      ],
+    });
+    const interrupted: string[] = [];
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile: writeConfig(f.order.projectPath),
+      now: 3_000,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      supervisorSessionBusy: () => true,
+      cancelExpiredSupervisorWork: ({ supervisorSession }) => {
+        interrupted.push(supervisorSession);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(interrupted).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workerSession: f.prepared.supervisorSession,
+        workOrderId: "another-work-order",
+        status: "active",
+      }),
+    ]);
+  });
+
+  it("routes restored completion through checkpoint acceptance before publishing a report", async () => {
+    const f = journalFixture();
+    const message = restoredLoopSupervisorMessage({
+      id: f.prepared.attemptId,
+      text: "Finish",
+      chatId: "loop-engineering",
+      channel: "control",
+      sessionName: "tmux_proj_loop-supervisor",
+      action: "text",
+      controlRestore: loopSupervisorControlRestore(
+        f.order,
+        "tmux_proj_loop-supervisor",
+        1000,
+        f.prepared.attemptId,
+      ),
+    });
+    expect(message?.started?.()).toBe(true);
+    writeFileSync(
+      iterationCheckpointPath(f.order) ?? "",
+      JSON.stringify(buildIterationCheckpointTemplate(f.order)),
+    );
+    message?.resolve(f.output);
+    expect(listLoopReports()).toEqual([]);
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "failed" })]);
+    expect(
+      JSON.parse(readFileSync(join(f.runDir, "system-gate.json"), "utf8")).failures.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("recovers a frozen stdout summary after settlement without a final-summary file or callback", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    expect(existsSync(f.order.finalSummaryPath ?? "")).toBe(false);
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 0 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "passed" })]);
+    expect(existsSync(join(f.runDir, "system-gate.json"))).toBe(true);
+    expect(await f.reconcile()).toMatchObject({ recovered: 0 });
+  });
+
+  it("ignores a later mutable summary when the settled attempt has frozen evidence", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    writeFileSync(
+      f.order.finalSummaryPath ?? "",
+      JSON.stringify({ ...f.summary, status: "failed", finalVerification: "failed" }),
+    );
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 0 });
+    expect(listLoopReports()).toEqual([expect.objectContaining({ status: "passed" })]);
+  });
+
+  it.each([false, true])(
+    "does not recover a successful file over failed transport (cancelled: %s)",
+    async (cancelled) => {
+      const f = journalFixture();
+      claimDelegationAttempt(f.order, f.prepared, 1500);
+      writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+      settleDelegationAttempt(
+        f.order,
+        f.prepared,
+        { status: 1, stdout: f.output, stderr: "interrupted" },
+        cancelled,
+        2000,
+        true,
+      );
+      expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+      expect(readLoopSupervisorWorkOrderRegistry(3000).terminal[0]?.state.status).toBe(
+        cancelled ? "cancelled" : "failed",
+      );
+    },
+  );
+
+  it("rejects a corrupt frozen summary instead of falling back to a mutable file", async () => {
+    const f = journalFixture();
+    claimDelegationAttempt(f.order, f.prepared, 1500);
+    settleDelegationAttempt(
+      f.order,
+      f.prepared,
+      { status: 0, stdout: f.output, stderr: "" },
+      false,
+      2000,
+      true,
+    );
+    const path = join(f.runDir, "iteration-attempts", f.prepared.attemptId, "settled.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...record, finalSummary: "{" }));
+    writeFileSync(f.order.finalSummaryPath ?? "", JSON.stringify(f.summary));
+    expect(await f.reconcile()).toMatchObject({ recovered: 1, failed: 1 });
+  });
+
+  it("clears stale terminal artifacts when an active delegated work order is relaunched", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectPath = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const order = activeDelegatedWorkOrder(stateDir, projectPath);
+    const runDir = join(stateDir, "loop-runs", order.projectId, order.id);
+    mkdirSync(runDir, { recursive: true });
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      writeFileSync(join(runDir, file), "stale", "utf8");
+    }
+
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: 2_000,
+    });
+
+    for (const file of [
+      "supervisor.md",
+      "supervisor-summary.json",
+      "supervisor-final-summary.json",
+      "system-gate.json",
+    ]) {
+      expect(existsSync(join(runDir, file))).toBe(false);
+    }
+  });
+
+  it("releases stale autonomous capacity leases for terminal work orders", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const activeOrder = workOrder(stateDir, projectDir);
+    const terminalOrder: LoopWorkOrder = {
+      ...workOrder(stateDir, projectDir),
+      id: "1784196900000-hub",
+      scheduledAt: 1_784_196_900_000,
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196900000-hub",
+        "supervisor-final-summary.json",
+      ),
+    };
+    writeUnfinishedRun(stateDir, activeOrder);
+    rmSync(activeOrder.finalSummaryPath ?? "", { force: true });
+    writeUnfinishedRun(stateDir, terminalOrder);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: terminalOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 2_000,
+      resultStatus: "completed",
+    });
+
+    const capacity = new AgentCapacityStore();
+    capacity.recordObservation({
+      agent: "codex",
+      authentication: "subscription",
+      state: "unknown",
+      fiveHourPct: null,
+      weeklyPct: null,
+      resetAt: null,
+      observedAt: 1_000,
+      nextProbeAt: 10_000,
+      latestReason: "usage-telemetry-unavailable",
+    });
+    const activeLeaseId = autonomousCapacityLeaseId({
+      source: "loop-engineering",
+      id: `${activeOrder.projectId}:${activeOrder.scheduledAt}`,
+    });
+    const terminalLeaseId = autonomousCapacityLeaseId({
+      source: "loop-engineering",
+      id: `${terminalOrder.projectId}:${terminalOrder.scheduledAt}`,
+    });
+    const runtimeGuardianLeaseId = autonomousCapacityLeaseId({
+      source: "runtime-guardian",
+      id: "live-runtime-repair",
+    });
+    expect(capacity.acquireLease("codex", activeLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", terminalLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", runtimeGuardianLeaseId, 1_000, 10_000)).toBe(true);
+    expect(capacity.acquireLease("codex", "expired", 1_000, 100)).toBe(true);
+
+    expect(reconcileAutonomousCapacityLeases(capacity, 2_000)).toBe(2);
+
+    expect(capacity.hasLease("codex", activeLeaseId, 2_000)).toBe(true);
+    expect(capacity.hasLease("codex", terminalLeaseId, 2_000)).toBe(false);
+    expect(capacity.hasLease("codex", runtimeGuardianLeaseId, 2_000)).toBe(true);
+    expect(capacity.read("codex", 2_000).activeAutonomousLeases).toBe(2);
+  });
+
+  it("does not classify a recoverable final summary as abandoned", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const order = workOrder(stateDir, projectDir);
+    writeUnfinishedRun(stateDir, order);
+
+    const registry = readLoopSupervisorWorkOrderRegistry(Date.now() + 24 * 60 * 60_000);
+
+    expect(registry.recoverableFinalSummary.map((record) => record.workOrder.id)).toContain(
+      order.id,
+    );
+    expect(registry.abandoned.map((record) => record.workOrder.id)).not.toContain(order.id);
+  });
+
+  it("completes an in-flight work order from the final summary file after a bot restart", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -134,7 +650,11 @@ describe("loop supervisor work order reconciliation", () => {
     const order = workOrder(stateDir, projectDir);
     const runDir = writeUnfinishedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    expect(readLoopSupervisorWorkOrderRegistry(2_000).recoverableFinalSummary).toEqual([
+      expect.objectContaining({ workOrder: expect.objectContaining({ id: order.id }) }),
+    ]);
+
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -157,7 +677,44 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("recovers a dispatch-failed work order when the supervisor final summary arrives late", () => {
+  it("does not recover final-summary evidence while its supervisor prompt is still active", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = workOrder(stateDir, projectDir);
+    const runDir = writeUnfinishedRun(stateDir, order);
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("active supervisor work must remain authoritative");
+      },
+      supervisorSessionBusy: () => true,
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "in-flight"',
+    );
+    expect(listLoopReports()).toEqual([]);
+  });
+
+  it("recovers a dispatch-failed work order when the supervisor final summary arrives late", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -165,7 +722,7 @@ describe("loop supervisor work order reconciliation", () => {
     const order = workOrder(stateDir, projectDir);
     const runDir = writeRecoverableFailedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -179,7 +736,308 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("runs the supervised PR gate when reconciling a completed work order", () => {
+  it("accepts recovered completed work after its prepared isolated worktree was cleaned up", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-source-"));
+    const cleanedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+    const configFile = writeConfig(
+      cleanedWorktree,
+      [
+        "    commit:",
+        "      enabled: false",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+      ].join("\n"),
+    );
+    const order = {
+      ...workOrder(stateDir, cleanedWorktree),
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "OctopusGarage/hub",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: cleanedWorktree,
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: sourceDir,
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: false, perRound: false },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash" as const,
+      },
+    } satisfies LoopWorkOrder;
+    const runDir = writeUnfinishedRun(stateDir, order);
+    writeFileSync(
+      order.finalSummaryPath ?? "",
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["reviewed and merged open repository PR"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["Confirmed the repository PR was in scope."],
+          postMutationReview: ["Merged PR passed local and remote checks."],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local-verification",
+              result: "passed",
+              command: "pnpm verify:local",
+              evidence: "verify-local ok",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        pullRequestDecisions: [
+          {
+            number: 1,
+            repository: "OctopusGarage/hub",
+            outcome: "merged",
+            evidence: ["checks passed and PR merged"],
+            nextStep: "none",
+          },
+        ],
+        followUps: [],
+      })}\n`,
+    );
+    rmSync(cleanedWorktree, { recursive: true, force: true });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 2_000,
+      runCommand: () => {
+        throw new Error("PR commands should not run when supervisor reported no commits");
+      },
+      runGit: (invocation) => {
+        if (invocation.cwd === cleanedWorktree) {
+          return { status: 1, stdout: "", stderr: "spawnSync /usr/bin/git ENOENT" };
+        }
+        if (invocation.cwd === sourceDir && invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === sourceDir &&
+          invocation.args.join(" ") === "rev-parse --show-toplevel"
+        ) {
+          return { status: 0, stdout: `${sourceDir}\n`, stderr: "" };
+        }
+        if (
+          invocation.cwd === sourceDir &&
+          invocation.args.join(" ") === "worktree list --porcelain"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git call: ${invocation.cwd} ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "completed",
+      evidence: expect.arrayContaining([
+        "prepared isolated worktree already cleaned after supervisor completion",
+      ]),
+    });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "completed"',
+    );
+  });
+
+  it("does not reprocess a terminal failed work order after system-gate evidence is durable", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const order = workOrder(stateDir, projectDir);
+    const runDir = writeRecoverableFailedRun(stateDir, order);
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({ accepted: false, resultStatus: "supervisor-failed" })}\n`,
+    );
+
+    expect(readLoopSupervisorWorkOrderRegistry(2_000).recoverableFailed).toEqual([]);
+  });
+
+  it("fails and records a stale dispatching work order even when its lease is already gone", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "test-coverage" },
+      finalSummaryPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub",
+        "supervisor-final-summary.json",
+      ),
+    } as unknown as LoopWorkOrder;
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor",
+          scheduledAt: order.scheduledAt,
+          updatedAt: 1_000,
+        },
+        null,
+      )}\n`,
+    );
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 1_000 + 12 * 60 * 60 * 1000 + 1,
+      runCommand: () => {
+        throw new Error("stale dispatching work orders must not run project commands");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 0, failed: 1 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "failed"',
+    );
+    expect(new DailyTaskLedger().listAll()).toEqual([
+      expect.objectContaining({
+        taskId: "loop:hub:test-coverage:1784196600000",
+        status: "failed",
+        repairStatus: "pending",
+      }),
+    ]);
+  });
+
+  it("fails a dispatching work order after the short dispatch grace period", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "security-maintenance" },
+    } as unknown as LoopWorkOrder;
+    const now = Date.now();
+    const dispatchStartedAt = now - 5 * 60 * 1000 - 1;
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          scheduledAt: order.scheduledAt,
+          updatedAt: dispatchStartedAt,
+        },
+        null,
+      )}\n`,
+    );
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now,
+      runCommand: () => {
+        throw new Error("stale dispatching work orders must not run project commands");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
+      '"status": "failed"',
+    );
+  });
+
+  it("recovers a stale dispatching work order even when its supervisor lease leaked", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
+    const configFile = writeConfig(projectDir);
+    const order = {
+      ...workOrder(stateDir, projectDir),
+      task: { kind: "security-maintenance" },
+    } as unknown as LoopWorkOrder;
+    const now = Date.now();
+    const runDir = join(stateDir, "loop-runs", "hub", order.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "work-order.json"), `${JSON.stringify(order, null, 2)}\n`);
+    writeFileSync(
+      join(runDir, "work-order-state.json"),
+      `${JSON.stringify(
+        {
+          status: "dispatching",
+          projectId: "hub",
+          runId: order.id,
+          supervisorSession: "tmux_proj_loop-supervisor-1",
+          scheduledAt: order.scheduledAt,
+          updatedAt: now - 5 * 60 * 1000 - 1,
+        },
+        null,
+      )}\n`,
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor-1",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: now - 5 * 60 * 1000,
+          updatedAt: now - 5 * 60 * 1000,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now,
+      runCommand: () => {
+        throw new Error("stale dispatching work orders must not run project commands");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 1 });
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toEqual(
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({ workOrderId: order.id, status: "retained" }),
+    ]);
+  });
+
+  it("runs the supervised PR gate when reconciling a completed work order", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -207,12 +1065,13 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: false,
+        mergeMethod: "squash" as const,
       },
     } satisfies LoopWorkOrder;
     const runDir = writeUnfinishedRun(stateDir, order);
     const prCommands: string[] = [];
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: (invocation) => {
@@ -253,7 +1112,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("reconciles opportunity discovery work orders without PR gates", () => {
+  it("reconciles opportunity discovery work orders without PR gates", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -294,6 +1153,7 @@ describe("loop supervisor work order reconciliation", () => {
         base: "dev",
         switchBack: "dev",
         autoMerge: true,
+        mergeMethod: "squash" as const,
       },
       requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub-opportunity-discovery]",
       finalSummaryPath: join(
@@ -303,8 +1163,27 @@ describe("loop supervisor work order reconciliation", () => {
         "1784196600000-hub-opportunity-discovery",
         "supervisor-final-summary.json",
       ),
+      opportunityReportPath: join(
+        stateDir,
+        "loop-runs",
+        "hub",
+        "1784196600000-hub-opportunity-discovery",
+        "opportunities.json",
+      ),
     } satisfies LoopWorkOrder;
     const runDir = writeUnfinishedRun(stateDir, order);
+    writeFileSync(
+      order.opportunityReportPath ?? "",
+      JSON.stringify({
+        projectId: "hub",
+        projectName: "Hub",
+        generatedAt: new Date(1_000).toISOString(),
+        coverage: "complete",
+        checkedSignals: ["repository"],
+        skippedSignals: [],
+        suggestions: [],
+      }),
+    );
     writeFileSync(
       order.finalSummaryPath ?? "",
       `${JSON.stringify({
@@ -323,7 +1202,7 @@ describe("loop supervisor work order reconciliation", () => {
       })}\n`,
     );
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -340,7 +1219,7 @@ describe("loop supervisor work order reconciliation", () => {
     );
   });
 
-  it("reconciles bug-fix work orders with the bug-fix scheduler key", () => {
+  it("reconciles bug-fix work orders with the bug-fix scheduler key", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -374,7 +1253,7 @@ describe("loop supervisor work order reconciliation", () => {
     } satisfies LoopWorkOrder;
     writeUnfinishedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {
@@ -392,7 +1271,7 @@ describe("loop supervisor work order reconciliation", () => {
     ]);
   });
 
-  it("reconciles harness-auto work orders with the harness-auto scheduler key", () => {
+  it("reconciles harness-auto work orders with the harness-auto scheduler key", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-state-"));
     process.env.TCB_STATE_DIR = stateDir;
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-reconcile-project-"));
@@ -430,7 +1309,7 @@ describe("loop supervisor work order reconciliation", () => {
     } satisfies LoopWorkOrder;
     writeUnfinishedRun(stateDir, order);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: 2_000,
       runCommand: () => {

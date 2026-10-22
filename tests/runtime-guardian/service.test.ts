@@ -1,0 +1,3775 @@
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
+import { runGitCommand, runShellCommand } from "../../src/core/loop/service.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
+import {
+  listRecoverableFailedLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
+import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
+import type { RuntimeGuardianFinding } from "../../src/core/runtime-guardian/findings.js";
+import { discoverRuntimeGuardianFindings as discoverRuntimeGuardianArtifacts } from "../../src/core/runtime-guardian/inspector.js";
+import {
+  dueRuntimeGuardianFindings,
+  reconcileRuntimeGuardianQueue,
+} from "../../src/core/runtime-guardian/queue-reconciliation.js";
+import {
+  buildRuntimeGuardianRepairPrompt,
+  checkRuntimeGuardianRepairReadiness,
+  discoverRuntimeGuardianFindings,
+  dispatchRuntimeGuardianRepair,
+  RuntimeGuardianStore,
+  reconcileRuntimeGuardianBeforeDiscovery,
+  runRuntimeGuardianTick,
+  startRuntimeGuardian,
+} from "../../src/core/runtime-guardian/service.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
+import { loadConfig } from "../../src/shared/config.js";
+import type { AppConfig } from "../../src/shared/types.js";
+import { fakeDeps } from "../adapters/lark/_fakes.js";
+
+vi.mock("../../src/core/autopilot/delegated-task.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/autopilot/delegated-task.js")>()),
+  startActiveDelegatedTask: vi.fn(async () => ({
+    status: "queued",
+    runId: "runtime-repair-run-1",
+    projectId: "tmux-claude-bot",
+    supervisorSession: "tmux_proj_loop-supervisor",
+    reportDir: "/tmp/runtime-repair-report",
+  })),
+}));
+
+const originalStateDir = process.env.TCB_STATE_DIR;
+
+function runtimeConfig(
+  overrides: Partial<AppConfig["runtimeGuardian"]> = {},
+): AppConfig["runtimeGuardian"] {
+  return {
+    enabled: true,
+    mode: "fast-heal",
+    worktreeIsolation: "auto",
+    tickMs: 120000,
+    lookbackMs: 86_400_000,
+    cooldownMs: 1_800_000,
+    repoPath: "",
+    repairBranch: "dev",
+    maxFindingsPerTick: 3,
+    ...overrides,
+  };
+}
+
+function finding(overrides: Partial<RuntimeGuardianFinding> = {}): RuntimeGuardianFinding {
+  return {
+    kind: "missing-system-gate",
+    severity: "high",
+    runId: "run-1",
+    projectId: "tmux-claude-bot",
+    projectPath: "/repo/tmux-claude-bot",
+    evidence: ["completed work-order has no system-gate.json"],
+    ...overrides,
+  };
+}
+
+function workOrder(id: string, projectPath: string, finalSummaryPath?: string): LoopWorkOrder {
+  return {
+    id,
+    projectId: "tmux-claude-bot",
+    projectName: "tmux-claude-bot",
+    projectPath,
+    scheduledAt: 1,
+    requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${id}]`,
+    finalSummaryPath,
+  } as unknown as LoopWorkOrder;
+}
+
+function readLogEntries(): Array<{ level: string; component?: string; msg: string }> {
+  const dir = join(process.env.TCB_STATE_DIR ?? "", "logs");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((entry) => entry.startsWith("tcb-") && entry.endsWith(".jsonl"))
+    .flatMap((entry) =>
+      readFileSync(join(dir, entry), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { level: string; component?: string; msg: string }),
+    );
+}
+
+describe("runtime guardian", () => {
+  beforeEach(() => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-"));
+  });
+
+  afterEach(() => {
+    const stateDir = process.env.TCB_STATE_DIR;
+    if (stateDir !== undefined) rmSync(stateDir, { recursive: true, force: true });
+    if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
+    else process.env.TCB_STATE_DIR = originalStateDir;
+  });
+
+  it("keeps Runtime Guardian artifact discovery owned by the inspector module", () => {
+    expect(discoverRuntimeGuardianFindings).toBe(discoverRuntimeGuardianArtifacts);
+  });
+
+  it("reconciles Loop WorkOrders before Runtime Guardian discovers stale invalid-output artifacts", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-missing-system-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-missing-system-gate", projectDir, summaryPath),
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_tcb",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["wrote final summary before terminal marker was captured"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-run",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: ${projectDir}
+    agent: codex
+    goal: Keep runtime orchestration healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile,
+      now: 3,
+      runCommand: runShellCommand,
+      runGit: runGitCommand,
+      reconcileAutopilot: async () => ({ checked: 0, finished: 0, failed: 0, cleaned: 0 }),
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("defers a valid final summary while the live supervisor still owns its queue turn", async () => {
+    const stateDir = realpathSync(process.env.TCB_STATE_DIR ?? "");
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = join(stateDir, "source");
+    mkdirSync(sourceDir);
+    execFileSync("git", ["init", "-b", "dev"], { cwd: sourceDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: sourceDir });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: sourceDir });
+    writeFileSync(join(sourceDir, "README.md"), "# Runtime Guardian fixture\n");
+    execFileSync("git", ["add", "README.md"], { cwd: sourceDir });
+    execFileSync("git", ["commit", "-m", "test: initialize fixture"], {
+      cwd: sourceDir,
+      stdio: "ignore",
+    });
+    const executionWorktree = join(
+      stateDir,
+      "loop-worktrees",
+      "tmux-claude-bot",
+      "run-live-supervisor",
+    );
+    const executionBranch = "loop/tmux-claude-bot/active-delegate/run-live-supervisor";
+    mkdirSync(join(executionWorktree, ".."), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-b", executionBranch, executionWorktree, "dev"], {
+      cwd: sourceDir,
+      stdio: "ignore",
+    });
+    const runDir = join(stateDir, "loop-runs", "tmux-claude-bot", "run-live-supervisor");
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-live-supervisor", executionWorktree, summaryPath),
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_tcb",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      workerSession: "tmux_proj_loop-worker-tmux-claude-bot-run-live-supervisor",
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false, branch: executionBranch },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: executionWorktree,
+        sourceWorktree: sourceDir,
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: 2,
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: order.id,
+          projectId: order.projectId,
+          projectPath: order.projectPath,
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["finished while the queue owner was still resolving"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-run",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const configFile = join(sourceDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: tmux-claude-bot
+    name: tmux-claude-bot
+    path: ${executionWorktree}
+    agent: codex
+    goal: Keep runtime orchestration healthy.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+    const cleanupWorkerSession = vi.fn(async () => undefined);
+    let supervisorBusy = true;
+
+    const reconcile = () =>
+      reconcileRuntimeGuardianBeforeDiscovery({
+        configFile,
+        now: 3,
+        runCommand: runShellCommand,
+        runGit: runGitCommand,
+        cleanupCompletedWorkerSession: cleanupWorkerSession,
+        workerSessionExists: async () => true,
+        supervisorSessionBusy: () => supervisorBusy,
+        reconcileAutopilot: async () => ({ checked: 0, finished: 0, failed: 0, cleaned: 0 }),
+      });
+
+    await reconcile();
+
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toMatchObject({
+      status: "in-flight",
+    });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({ workOrderId: order.id, status: "active" }),
+    ]);
+    expect(cleanupWorkerSession).not.toHaveBeenCalled();
+    expect(existsSync(executionWorktree)).toBe(true);
+    expect(existsSync(join(runDir, "system-gate.json"))).toBe(false);
+
+    supervisorBusy = false;
+    await reconcile();
+
+    expect(JSON.parse(readFileSync(join(runDir, "work-order-state.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      resultStatus: "completed",
+    });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(cleanupWorkerSession).toHaveBeenCalledTimes(1);
+    expect(cleanupWorkerSession).toHaveBeenCalledWith(order.workerSession);
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "completed",
+    });
+    expect(existsSync(executionWorktree)).toBe(false);
+  });
+
+  it("reconciles Autopilot before Loop WorkOrders with the same cleanup boundary", async () => {
+    const calls: string[] = [];
+    const cleanupWorkerSession = vi.fn(async () => undefined);
+    const workerSessionExists = vi.fn(async () => true);
+    const runCommand = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const runGit = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const reconcileAutopilot = vi.fn(async (input) => {
+      calls.push("autopilot");
+      expect(input.cleanupWorkerSession).toBe(cleanupWorkerSession);
+      return { checked: 0, finished: 0, failed: 0, cleaned: 0 };
+    });
+    const reconcileLoop = vi.fn(async (input) => {
+      calls.push("loop");
+      expect(input).toMatchObject({
+        configFile: "/tmp/loop.yml",
+        now: 42,
+        runCommand,
+        runGit,
+        cleanupCompletedWorkerSession: cleanupWorkerSession,
+        workerSessionExists,
+      });
+      return { checked: 0, recovered: 0, failed: 0 };
+    });
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile: "/tmp/loop.yml",
+      now: 42,
+      runCommand,
+      runGit,
+      cleanupCompletedWorkerSession: cleanupWorkerSession,
+      workerSessionExists,
+      reconcileAutopilot,
+      reconcileLoop,
+    });
+
+    expect(calls).toEqual(["autopilot", "loop"]);
+  });
+
+  it("uses a no-op cleanup and omits absent optional probes", async () => {
+    const reconcileAutopilot = vi.fn(async ({ cleanupWorkerSession }) => {
+      await cleanupWorkerSession?.("already-absent");
+      return { checked: 0, finished: 0, failed: 0, cleaned: 0 };
+    });
+    const reconcileLoop = vi.fn(async (input) => {
+      expect(input).not.toHaveProperty("runGit");
+      expect(input).not.toHaveProperty("workerSessionExists");
+      return { checked: 0, recovered: 0, failed: 0 };
+    });
+
+    await reconcileRuntimeGuardianBeforeDiscovery({
+      configFile: "/tmp/loop.yml",
+      now: 42,
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      reconcileAutopilot,
+      reconcileLoop,
+    });
+
+    expect(reconcileAutopilot).toHaveBeenCalledOnce();
+    expect(reconcileLoop).toHaveBeenCalledOnce();
+  });
+
+  it("runs an immediate production tick and clears the scheduled timer", async () => {
+    const runTick = vi.fn(async (input) => {
+      await input.reconcile();
+      return { fired: false as const, reason: "no-findings" as const };
+    });
+    const reconcileBeforeDiscovery = vi.fn(async (input) => {
+      expect(input).toMatchObject({ configFile: "/tmp/loop.yml", now: 42 });
+      expect(input.supervisorSessionBusy?.("busy-supervisor")).toBe(true);
+      expect(input.supervisorSessionBusy?.("idle-supervisor")).toBe(false);
+      await input.cleanupCompletedWorkerSession?.("terminal-worker");
+      expect(await input.workerSessionExists?.("terminal-worker")).toBe(false);
+    });
+    const timer = { unref: vi.fn() } as unknown as ReturnType<typeof setInterval>;
+    const setIntervalFn = vi.fn(() => timer);
+    const clearIntervalFn = vi.fn();
+    const deps = fakeDeps({
+      config: {
+        runtimeGuardian: runtimeConfig({ tickMs: 5000 }),
+        loopEngineering: {
+          configFile: "/tmp/loop.yml",
+          tickMs: 0,
+          supervisor: {
+            enabled: true,
+            dir: "/tmp",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+      queue: {
+        isSessionProcessing: vi.fn((session) => session === "busy-supervisor"),
+      },
+    });
+
+    const stop = startRuntimeGuardian(deps, {
+      now: () => 42,
+      setInterval: setIntervalFn as unknown as typeof setInterval,
+      clearInterval: clearIntervalFn as typeof clearInterval,
+      runTick,
+      reconcileBeforeDiscovery,
+    });
+    await vi.waitFor(() => expect(reconcileBeforeDiscovery).toHaveBeenCalledOnce());
+
+    expect(setIntervalFn).toHaveBeenCalledWith(expect.any(Function), 5000);
+    expect(timer.unref).toHaveBeenCalledOnce();
+    expect(deps.bridge.killSession).toHaveBeenCalledWith("terminal-worker");
+    stop();
+    expect(clearIntervalFn).toHaveBeenCalledWith(timer);
+  });
+
+  it("terminalizes explicitly classified target and external blockers instead of retrying bot repair forever", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const target = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "dirty-worktree",
+      taskId: "run-dirty",
+      now: 1_000,
+    });
+    const external = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "tls-timeout",
+      taskId: "run-tls",
+      now: 1_001,
+    });
+    coordinator.claimIds([target.id, external.id], { now: 1_002, leaseId: "old", limit: 2 });
+    coordinator.releaseForRetry(target.id, 1_003);
+    coordinator.releaseForRetry(external.id, 1_003);
+
+    const reconciled = reconcileRuntimeGuardianQueue({
+      coordinator,
+      now: 2_000,
+      findings: [
+        finding({
+          runId: "run-dirty",
+          repairDisposition: "target-or-external-blocker",
+          evidence: ["the source checkout cannot be changed by this repair"],
+        }),
+        finding({
+          runId: "run-tls",
+          repairDisposition: "target-or-external-blocker",
+          evidence: ["the remote service is unavailable"],
+        }),
+      ],
+    });
+
+    expect(reconciled).toBe(2);
+    expect(coordinator.list().map((record) => record.status)).toEqual(["blocked", "blocked"]);
+  });
+
+  it("recovers queue links when a Runtime Guardian WorkOrder was dispatched before attachment", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const now = 10_000;
+    const running = coordinator.enqueue({
+      ...finding({ runId: "run-fluent", projectId: "fluent-frame" }),
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now,
+    });
+    coordinator.claimIds([running.id], { now, leaseId: "lost-attachment", limit: 1 });
+    coordinator.markRunning(running.id, "lost-attachment", now);
+    const pending = coordinator.enqueue({
+      ...finding({ runId: "run-english", projectId: "english-pilot" }),
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "english failure",
+      taskId: "run-english",
+      now,
+    });
+    const repairRunId = "runtime-repair-after-crash";
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        ...workOrder(repairRunId, "/repo/tmux-claude-bot"),
+        scheduledAt: now + 100,
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "tmux_proj_bot",
+          requirement:
+            'Repair findings [{"runId":"run-fluent"},{"runId":"run-english"}]\nsource=runtime-guardian',
+        },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: now + 100,
+    });
+
+    reconcileRuntimeGuardianQueue({ coordinator, now: now + 200, findings: [] });
+
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        id: running.id,
+        status: "running",
+        workOrderId: repairRunId,
+        linkedTaskIds: ["run-fluent", `autopilot:${repairRunId}`],
+      }),
+      expect.objectContaining({
+        id: pending.id,
+        status: "running",
+        workOrderId: repairRunId,
+        linkedTaskIds: ["run-english", `autopilot:${repairRunId}`],
+      }),
+    ]);
+  });
+
+  it("retries failed repair WorkOrders and closes completed repair WorkOrders", () => {
+    const now = 20_000;
+    const failedRunId = "runtime-repair-failed";
+    const completedRunId = "runtime-repair-completed";
+    for (const [runId, status] of [
+      [failedRunId, "failed"],
+      [completedRunId, "completed"],
+    ] as const) {
+      writeLoopSupervisorWorkOrderState({
+        workOrder: workOrder(runId, "/repo/tmux-claude-bot"),
+        supervisorSession: "tmux_proj_loop-supervisor",
+        status,
+        now: now - 100,
+        ...(status === "failed" ? { resultStatus: "invalid-output" as const } : {}),
+      });
+    }
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const failed = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "alcove-failure",
+      taskId: "run-alcove",
+      now: now - 200,
+    });
+    const completed = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "english-failure",
+      taskId: "run-english",
+      now: now - 199,
+    });
+    coordinator.claimIds([failed.id, completed.id], {
+      now: now - 150,
+      leaseId: "repair-lease",
+      limit: 2,
+    });
+    coordinator.markRunning(failed.id, "repair-lease", now - 150);
+    coordinator.markRunning(completed.id, "repair-lease", now - 150);
+    coordinator.attachWorkOrder(failed.id, failedRunId, now - 140);
+    coordinator.attachWorkOrder(completed.id, completedRunId, now - 140);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({
+        id: failed.id,
+        status: "retry-wait",
+        attempt: 1,
+        nextAttemptAt: now + 30_000,
+      }),
+      expect.objectContaining({ id: completed.id, status: "fixed" }),
+    ]);
+    expect(coordinator.list()[0]?.workOrderId).toBeUndefined();
+  });
+
+  it("settles aggregate siblings that were historically superseded by their shared WorkOrder ID", () => {
+    const now = 30_000;
+    const repairRunId = "runtime-repair-aggregate";
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder(repairRunId, "/repo/tmux-claude-bot"),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: now - 100,
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const records = [
+      coordinator.enqueue({
+        projectId: "fluent-frame",
+        projectPath: "/repo/fluent-frame",
+        source: "runtime-guardian",
+        taskFamily: "terminal-system-gate-failure",
+        fingerprint: "fluent failure",
+        taskId: "run-fluent",
+        now: now - 300,
+      }),
+      coordinator.enqueue({
+        projectId: "english-pilot",
+        projectPath: "/repo/english-pilot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: "english failure",
+        taskId: "run-english",
+        now: now - 299,
+      }),
+    ];
+    coordinator.claimIds(
+      records.map((record) => record.id),
+      { now: now - 250, leaseId: "aggregate", limit: 2 },
+    );
+    for (const record of records) {
+      coordinator.markRunning(record.id, "aggregate", now - 240);
+      coordinator.attachWorkOrder(record.id, repairRunId, now - 230);
+      coordinator.linkTaskIds(record.id, [`autopilot:${repairRunId}`], now - 220);
+    }
+    coordinator.markTerminal(records[1]?.id ?? "missing", "superseded", now - 200);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: records[0]?.id, status: "fixed" }),
+      expect.objectContaining({ id: records[1]?.id, status: "fixed" }),
+    ]);
+  });
+
+  it("restores due aggregate retries that an older dedupe pass superseded after detachment", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const records = [
+      coordinator.enqueue({
+        projectId: "fluent-frame",
+        projectPath: "/repo/fluent-frame",
+        source: "runtime-guardian",
+        taskFamily: "terminal-system-gate-failure",
+        fingerprint: "fluent failure",
+        taskId: "run-fluent",
+        now: 1_000,
+      }),
+      coordinator.enqueue({
+        projectId: "english-pilot",
+        projectPath: "/repo/english-pilot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: "english failure",
+        taskId: "run-english",
+        now: 1_001,
+      }),
+    ];
+    coordinator.claimIds(
+      records.map((record) => record.id),
+      { now: 2_000, leaseId: "aggregate", limit: 2 },
+    );
+    for (const record of records) {
+      coordinator.markRunning(record.id, "aggregate", 2_001);
+      coordinator.attachWorkOrder(record.id, "failed-aggregate", 2_002);
+      coordinator.linkTaskIds(record.id, ["autopilot:failed-aggregate"], 2_003);
+      coordinator.releaseForRetry(record.id, 2_004, { detachWorkOrder: true });
+      coordinator.markTerminal(record.id, "superseded", 2_005);
+    }
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 40_000, findings: [] })).toBe(2);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: records[0]?.id, status: "pending", attempt: 1 }),
+      expect.objectContaining({ id: records[1]?.id, status: "pending", attempt: 1 }),
+    ]);
+  });
+
+  it("preserves the original finding identity after aggregate execution evidence is linked", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "fluent failure",
+      taskId: "run-fluent",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(record.id, ["autopilot:failed-aggregate"], 2_000);
+
+    expect(dueRuntimeGuardianFindings({ coordinator, now: 2_000, limit: 1 })).toEqual([
+      expect.objectContaining({ runId: "run-fluent" }),
+    ]);
+  });
+
+  it("closes stale Runtime Guardian queues from autopilot ledger closures for the original run", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "missing final marker",
+      taskId: "run-original",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(record.id, ["autopilot:runtime-repair"], 1_001);
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "autopilot:run-original",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("autopilot:run-original", {
+      endedAt: 1_100,
+      error: "invalid-output",
+      reportPath: "/state/loop-runs/tmux-claude-bot/run-original/supervisor.md",
+    });
+    ledger.markRepairStatus("autopilot:run-original", {
+      repairStatus: "superseded",
+      updatedAt: 1_200,
+      summary: "Superseded by later successful task autopilot:run-success.",
+    });
+    ledger.expect({
+      taskId: "autopilot:runtime-repair",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_300,
+    });
+    ledger.fail("autopilot:runtime-repair", {
+      endedAt: 1_400,
+      error: "cancelled",
+      reportPath: "/state/loop-runs/tmux-claude-bot/runtime-repair/supervisor.md",
+    });
+    ledger.markRepairStatus("autopilot:runtime-repair", {
+      repairStatus: "superseded",
+      updatedAt: 1_500,
+      summary: "Superseded by later successful task autopilot:run-success.",
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: record.id, status: "superseded" }),
+    ]);
+  });
+
+  it("maps terminal ledger closures onto stale Runtime Guardian queues", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const ledger = new DailyTaskLedger();
+    const cases = [
+      ["run-fixed", "fixed", "fixed"],
+      ["run-not-needed", "not-needed", "fixed"],
+      ["run-blocked", "blocked", "blocked"],
+      ["run-not-reproducible", "not-reproducible", "not-reproducible"],
+    ] as const;
+
+    for (const [runId, ledgerStatus, queueStatus] of cases) {
+      coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/repo/tmux-claude-bot",
+        source: "runtime-guardian",
+        taskFamily: "terminal-invalid-output",
+        fingerprint: `${runId} failure`,
+        taskId: runId,
+        now: 1_000,
+      });
+      ledger.expect({
+        taskId: `autopilot:${runId}`,
+        source: "autopilot-delegate",
+        name: "tmux-claude-bot active delegated task",
+        scheduledAt: 1_000,
+      });
+      if (ledgerStatus === "not-needed") {
+        ledger.finish(`autopilot:${runId}`, { endedAt: 1_100 });
+      } else {
+        ledger.fail(`autopilot:${runId}`, { endedAt: 1_100, error: ledgerStatus });
+        ledger.markRepairStatus(`autopilot:${runId}`, {
+          repairStatus: ledgerStatus,
+          updatedAt: 1_200,
+        });
+      }
+      expect(queueStatus).toBeDefined();
+    }
+
+    const partial = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "partial historical failure",
+      taskId: "run-partial",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(partial.id, ["run-missing"], 1_001);
+    ledger.expect({
+      taskId: "autopilot:run-partial",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("autopilot:run-partial", { endedAt: 1_100, error: "blocked" });
+    ledger.markRepairStatus("autopilot:run-partial", {
+      repairStatus: "blocked",
+      updatedAt: 1_200,
+    });
+
+    const stillSettling = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "settling failure",
+      taskId: "run-settling",
+      now: 1_000,
+    });
+    ledger.expect({
+      taskId: "autopilot:run-settling",
+      source: "autopilot-delegate",
+      name: "tmux-claude-bot active delegated task",
+      scheduledAt: 1_000,
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(5);
+    expect(coordinator.list()).toEqual([
+      ...cases.map(([, , queueStatus]) => expect.objectContaining({ status: queueStatus })),
+      expect.objectContaining({ id: partial.id, status: "blocked" }),
+      expect.objectContaining({ id: stillSettling.id, status: "pending" }),
+    ]);
+  });
+
+  it("maps repository review ledger closures from raw WorkOrder ids", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    coordinator.enqueue({
+      projectId: "telegram-bridge-all-prs",
+      projectPath:
+        "/state/loop-worktrees/telegram-bridge-all-prs/1788238200000-telegram-bridge-all-prs-repo-pr-review",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "terminal failed work-order has resultStatus=invalid-output",
+      taskId: "1788238200000-telegram-bridge-all-prs-repo-pr-review",
+      now: 1_000,
+    });
+
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:pr-review:telegram-bridge-all-prs:1788238200000",
+      source: "loop-engineering",
+      name: "telegram-bridge-all-prs repository-pull-request-review",
+      scheduledAt: 1_788_238_200_000,
+    });
+    ledger.fail("loop:pr-review:telegram-bridge-all-prs:1788238200000", {
+      endedAt: 1_100,
+      error: "invalid-output",
+      reportPath:
+        "/state/loop-runs/telegram-bridge-all-prs/1788238200000-telegram-bridge-all-prs-repo-pr-review/supervisor.md",
+    });
+    ledger.markRepairStatus("loop:pr-review:telegram-bridge-all-prs:1788238200000", {
+      repairStatus: "fixed",
+      updatedAt: 1_200,
+      summary: "Closed from the authoritative successful project recovery delegation.",
+    });
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([expect.objectContaining({ status: "fixed" })]);
+  });
+
+  it("supersedes duplicate terminal Runtime Guardian records for the same durable finding", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const older = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint:
+        "system gate rejected terminal work-order: run-1; resultStatus: supervisor-failed",
+      taskId: "run-1",
+      now: 1_000,
+    });
+    coordinator.markTerminal(older.id, "blocked", 1_100);
+    const newer = coordinator.enqueue({
+      projectId: "alcove",
+      projectPath: "/repo/alcove",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint:
+        "system gate rejected terminal work-order: run-1 / resultStatus: supervisor-failed",
+      taskId: "run-1",
+      now: 2_000,
+    });
+    coordinator.markTerminal(newer.id, "blocked", 2_100);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 3_000, findings: [] })).toBe(1);
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ id: older.id, status: "superseded" }),
+      expect.objectContaining({ id: newer.id, status: "blocked" }),
+    ]);
+  });
+
+  it("does not infer a terminal blocker from legacy failure wording", async () => {
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [
+        finding({
+          kind: "terminal-system-gate-failure",
+          evidence: ["source worktree is dirty after supervisor completion"],
+        }),
+      ],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ repairDispatch: "queued" });
+  });
+
+  it("does not dispatch target-project or external findings as bot self-repair", async () => {
+    const dispatchRepair = vi.fn();
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [
+        finding({
+          repairDisposition: "target-or-external-blocker",
+          evidence: [
+            "isolated worktree is on dev, expected WorkOrder branch loop/alcove/architecture",
+          ],
+        }),
+      ],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    if (!result.fired) throw new Error("expected runtime guardian to fire");
+    expect(result.detail).toContain("target or external blocker");
+    expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("keeps quiet-hours repair admission deferrals out of warning logs", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "automation admission deferred: quiet-hours",
+    }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [finding()],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
+  it("keeps resource-pressure repair admission deferrals out of warning logs", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail:
+        "automation admission deferred: emergency resource pressure; background-closed admission protection is active",
+    }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [finding()],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
+  it("keeps no-due-finding coordinator responses out of warning logs and cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "no due findings",
+    }));
+    const pendingFinding = finding({ runId: "run-not-due" });
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [pendingFinding],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+    expect(
+      store.lastHandledAt("terminal-system-gate-failure:tmux-claude-bot:run-not-due"),
+    ).toBeUndefined();
+    expect(readLogEntries()).not.toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
+  it("does not suppress non-contract variants of the no-due-finding response", async () => {
+    const store = new RuntimeGuardianStore();
+
+    await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding({ runId: "run-non-contract-response" })],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair: async () => ({ status: "blocked", detail: "No due findings" }),
+    });
+
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBe(10_000);
+    expect(readLogEntries()).toContainEqual(
+      expect.objectContaining({
+        level: "WARN",
+        component: "runtime-guardian",
+        msg: "runtime guardian repair delegation blocked",
+      }),
+    );
+  });
+
+  it("does not mark readiness admission deferrals handled or start repair cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "Codex did not become ready in time",
+    }));
+    const transientFinding = finding({
+      kind: "terminal-agent-transient-failure",
+      runId: "run-agent-readiness",
+      evidence: [
+        "terminal failed work-order has retryable agent transient failure: run-agent-readiness",
+        "transient-kind: agent-readiness",
+        "Codex did not become ready in time",
+      ],
+    });
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [transientFinding],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+    expect(
+      store.lastHandledAt("terminal-agent-transient-failure:tmux-claude-bot:run-agent-readiness"),
+    ).toBeUndefined();
+  });
+
+  it("closes a stale invalid-output repair when later authoritative artifacts pass", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "geo", "run-later-passed");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-later-passed", "/repo/geo", join(runDir, "supervisor-final-summary.json")),
+      projectId: "geo",
+      projectName: "Geo",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "geo",
+        actionsTaken: ["recovered"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-later-passed",
+      now: 1_000,
+    });
+    coordinator.claimIds([queued.id], { now: 1_001, leaseId: "old", limit: 1 });
+    coordinator.releaseForRetry(queued.id, 1_002);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
+  it("closes stale invalid-output repairs from linked autopilot repair artifacts", () => {
+    const originalRunDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-original-invalid",
+    );
+    const repairRunDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-repair-passed",
+    );
+    mkdirSync(originalRunDir, { recursive: true });
+    mkdirSync(repairRunDir, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-original-invalid", "/repo/tmux-claude-bot"),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const repairOrder = workOrder(
+      "run-repair-passed",
+      "/repo/tmux-claude-bot",
+      join(repairRunDir, "supervisor-final-summary.json"),
+    );
+    writeFileSync(
+      join(repairRunDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["repaired original invalid-output runtime finding"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: repairOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 3,
+      resultStatus: "completed",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-original-invalid",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queued.id, ["autopilot:run-repair-passed"], 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+  });
+
+  it("does not rediscover legacy isolated-branch gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-branch-gate");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-branch-gate",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/alcove-isolated",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: "/repo/alcove",
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/alcove/run-branch-gate" },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified no code change was needed"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          'isolated worktree is on "dev", expected WorkOrder branch "loop/alcove/run-branch-gate"',
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover mixed legacy git ENOENT system-gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-git-enoent");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-git-enoent",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/alcove-isolated",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        sourceWorktree: "/repo/alcove",
+        preparedBy: "system-git-worktree",
+      },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/alcove/run-git-enoent" },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified the repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "eval outcome is failed: deterministic-gate-failed",
+          "git status failed: spawnSync git ENOENT",
+          "isolated worktree branch check failed: spawnSync git ENOENT",
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover absolute-path legacy executable ENOENT system-gate failures after successful final summary evidence", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "alcove", "run-abs-enoent");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-abs-enoent",
+        "/repo/alcove-isolated",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["verified the repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        repairDisposition: "bot-repairable",
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+          "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+        ],
+        findings: [
+          {
+            code: "system-gate-bot-repairable",
+            repairDisposition: "bot-repairable",
+            retry: "automatic",
+            evidence: [
+              "git status failed: spawnSync /usr/bin/git ENOENT",
+              "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+              "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+            ],
+          },
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover terminal system-gate failures after the daily ledger marks the run fixed", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "english-pilot", "run-fixed");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-fixed",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        repairDisposition: "target-or-external-blocker",
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "GitHub account Kingson4Wu permission check failed: spawnSync sh ENOENT",
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:english-pilot:bug-fix:1",
+      source: "loop-engineering",
+      name: "english-pilot bug-fix",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:english-pilot:bug-fix:1", {
+      endedAt: 2,
+      error: "supervisor-failed",
+      reportPath: join(runDir, "supervisor.md"),
+    });
+    ledger.markRepairStatus("loop:english-pilot:bug-fix:1", {
+      repairStatus: "fixed",
+      updatedAt: 3,
+      summary: "Closed from the authoritative supervisor final summary; recovery completed.",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover invalid-output artifacts after the daily ledger marks them superseded", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-superseded",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-superseded", "/repo/fluent-frame"),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:fluent-frame:active-delegated-task:1",
+      source: "loop-engineering",
+      name: "fluent-frame active-delegated-task",
+      scheduledAt: 1,
+    });
+    ledger.fail("loop:fluent-frame:active-delegated-task:1", {
+      endedAt: 2,
+      error: "invalid-output",
+      reportPath: runDir,
+    });
+    ledger.markRepairStatus("loop:fluent-frame:active-delegated-task:1", {
+      repairStatus: "superseded",
+      updatedAt: 3,
+      summary: "Superseded by later successful task.",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover transient artifacts after the repair queue marks them fixed", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-transient-fixed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-transient-fixed", "/repo/fluent-frame"),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        status: "dispatch-failed",
+        result: {
+          status: "dispatch-failed",
+          reason: "no live loop supervisor session",
+          output: "Not running; resume or start a new session.",
+        },
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+    });
+    const coordinator = new RepairCoordinator();
+    const record = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "no live supervisor session",
+      taskId: "run-transient-fixed",
+      now: 3,
+    });
+    coordinator.markTerminal(record.id, "fixed", 4);
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 5, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover invalid-output artifacts with an authoritative blocked final summary", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "knowledge-engine",
+      "run-blocked-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-blocked-summary",
+        "/repo/knowledge-engine",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "knowledge-engine",
+      projectName: "Knowledge Engine",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "knowledge-engine",
+        actionsTaken: [
+          {
+            delegationBrief: {
+              objective: "Recover historical scheduled task completion evidence.",
+              currentAssessment: "The target project remained blocked.",
+            },
+          },
+        ],
+        delegatedTasks: [],
+        finalVerification: "not-run",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target verification",
+              result: "failed",
+              evidence: "target project command failed",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: ["retry as a bounded target-project WorkOrder"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 4, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover non-blocking read-only opportunity-discovery preflight eval failures after successful final summary evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-opportunity-preflight",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-opportunity-preflight",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 3,
+        minConfidence: "medium",
+        categories: ["maintenance"],
+        cooldownDays: 7,
+        requireEvidence: true,
+      },
+      preflight: {
+        commands: ["tcb opportunity smoke --read-only"],
+        repair: { agent: false },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["wrote read-only opportunity suggestions"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["target dependency preflight failed before discovery"],
+          postMutationReview: [
+            "Opportunity discovery was read-only; the failed preflight was recorded as a non-blocking discovery signal.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "target dependency preflight",
+              command: "tcb opportunity smoke --read-only",
+              result: "failed",
+              evidence:
+                "preflight command exited 1; explicitly non-blocking read-only opportunity-discovery signal only.",
+            },
+            {
+              name: "opportunity summary parse",
+              result: "passed",
+              evidence: "completed/passed/pass",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover read-only preflight-executables eval failures after authoritative pass evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-opportunity-executables",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-opportunity-executables",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 3,
+        minConfidence: "medium",
+        categories: ["maintenance"],
+        cooldownDays: 7,
+        requireEvidence: true,
+      },
+      preflight: {
+        commands: ["test -x node_modules/.bin/tsx"],
+        repair: { agent: false },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["completed read-only discovery and wrote the opportunity report"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["preflight-executables failed before read-only discovery"],
+          postMutationReview: [
+            "The failed preflight-executables gate was explicitly non-blocking for read-only discovery; report and clean-worktree gates passed.",
+          ],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight-executables",
+              command: "test -x node_modules/.bin/tsx",
+              result: "failed",
+              evidence:
+                "Local executable preflight failed; non-blocking for read-only opportunity discovery.",
+            },
+            "report gate passed: supervisor-final-summary and opportunity report parsed successfully",
+            "clean-worktree gate passed: no tracked changes",
+          ],
+          decision: "pass",
+          notes: [
+            "preflight-executables remained a non-blocking setup observation for this read-only task.",
+          ],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover restart-recovered active delegation lease invalid-output as a bot repair", () => {
+    writeLoopSupervisorWorkOrderState({
+      workOrder: {
+        ...workOrder("run-orphaned-lease", "/repo/english"),
+        projectId: "english-pilot",
+        projectName: "English Pilot",
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "tmux_proj_english",
+          requirement: "repair the target project issue",
+        },
+      } as never,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+      revisionReasons: ["supervisor worker lease has no live worker session after restart"],
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover stale invalid-output when raw final summary evidence passed", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "prs", "run-raw-success");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-raw-success", "/repo/prs", join(runDir, "supervisor-final-summary.json")),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["closed PR #12 as obsolete after no-net-diff evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["closed with allowlisted reason obsolete"],
+            nextStep: "No further action; PR is obsolete and closed.",
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: false, resultStatus: "invalid-output" }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover stale invalid-output when derived supervisor report evidence passed", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "english-pilot",
+      "run-derived-success",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-derived-success",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        workOrderId: order.id,
+        runId: order.id,
+        project: {
+          id: "english-pilot",
+          name: "English Pilot",
+          path: "/repo/english-pilot",
+          agent: "codex",
+        },
+        status: "completed",
+        result: {
+          status: "completed",
+          output: "recovered supervisor final summary from strict final-summary path",
+          summary: {
+            status: "completed",
+            projectId: "english-pilot",
+            actionsTaken: ["verified and merged the delegated fix"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: ["confirmed runtime artifact issue"],
+              postMutationReview: ["verified PR and CI"],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: ["abc123"],
+            followUps: [],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      JSON.stringify({
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("does not rediscover parser-invalid stale invalid-output when raw final summary evidence passed without gate evidence", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "prs",
+      "run-raw-success-no-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-raw-success-no-gate",
+        "/repo/prs",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["verified existing PR evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["closed with allowlisted reason obsolete"],
+            nextStep: "No further action; PR is obsolete and closed.",
+          },
+        ],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+
+    expect(discoverRuntimeGuardianArtifacts({ now: 3, lookbackMs: 10_000 })).toEqual([]);
+  });
+
+  it("treats supervisor-failed terminal summaries as recoverable for system-gate reconciliation", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "alcove",
+      "run-supervisor-failed-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-supervisor-failed-summary",
+        "/repo/alcove",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "alcove",
+      projectName: "Alcove",
+      task: {
+        kind: "opportunity-discovery",
+        maxRounds: 1,
+        maxSuggestions: 2,
+        minConfidence: "medium",
+        categories: ["developer-experience"],
+        cooldownDays: 14,
+        requireEvidence: true,
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "alcove",
+        actionsTaken: ["recorded read-only opportunities"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "not-applicable",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(listRecoverableFailedLoopSupervisorWorkOrders()).toEqual([
+      expect.objectContaining({ workOrder: expect.objectContaining({ id: order.id }) }),
+    ]);
+  });
+
+  it("marks stale invalid-output with parser-invalid raw successful final summary as not reproducible", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "prs", "run-legacy-raw");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-legacy-raw", "/repo/prs", join(runDir, "supervisor-final-summary.json")),
+      projectId: "prs",
+      projectName: "PRs",
+      task: {
+        kind: "repository-pull-request-review",
+        repo: "Owner/repo",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: true,
+        mergeMethod: "squash",
+        repair: { enabled: true, maxAttempts: 1 },
+      },
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        projectId: "prs",
+        actionsTaken: ["reviewed PRs and found no remaining action"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 12,
+            repository: "Owner/repo",
+            outcome: "closed",
+            evidence: ["legacy summary omitted the strict close reason"],
+            nextStep: "No further action.",
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ accepted: true, resultStatus: "completed" }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "prs",
+      projectPath: "/repo/prs",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-legacy-raw",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "not-reproducible" });
+  });
+
+  it("marks stale invalid-output with parser-invalid raw blocked final summary as blocked", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "knowledge-engine",
+      "run-raw-blocked-queue",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-raw-blocked-queue",
+        "/repo/knowledge-engine",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "knowledge-engine",
+      projectName: "Knowledge Engine",
+    } satisfies LoopWorkOrder;
+    writeFileSync(
+      join(runDir, "supervisor-final-summary.json"),
+      JSON.stringify({
+        status: "blocked",
+        projectId: "knowledge-engine",
+        actionsTaken: [{ delegationBrief: { objective: "Recover a historical task." } }],
+        delegatedTasks: [],
+        finalVerification: "not-run",
+        commits: [],
+        followUps: ["retry as a bounded target-project WorkOrder"],
+      }),
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "knowledge-engine",
+      projectPath: "/repo/knowledge-engine",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-summary",
+      taskId: "run-raw-blocked-queue",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "blocked" });
+  });
+
+  it("marks stale invalid-output with derived supervisor report evidence as not reproducible", () => {
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "english-pilot",
+      "run-derived-success-queue",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder(
+        "run-derived-success-queue",
+        "/repo/english-pilot",
+        join(runDir, "supervisor-final-summary.json"),
+      ),
+      projectId: "english-pilot",
+      projectName: "English Pilot",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      JSON.stringify({
+        status: "completed",
+        result: {
+          status: "completed",
+          summary: {
+            status: "completed",
+            projectId: "english-pilot",
+            actionsTaken: ["verified and merged the delegated fix"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: ["confirmed runtime artifact issue"],
+              postMutationReview: ["verified PR and CI"],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: ["abc123"],
+            followUps: [],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      JSON.stringify({
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+      }),
+    );
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "english-pilot",
+      projectPath: "/repo/english-pilot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "derived-success",
+      taskId: "run-derived-success-queue",
+      now: 1_000,
+    });
+    coordinator.releaseForRetry(queued.id, 1_001);
+
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list()[0]).toMatchObject({ status: "not-reproducible" });
+  });
+
+  it("does not invoke the supervisor for direct external-blocker dispatch", async () => {
+    const result = await dispatchRuntimeGuardianRepair(
+      {
+        config: {
+          loopEngineering: { supervisor: { enabled: true } },
+          projectSessionPrefix: "tmux_proj_",
+          runtimeGuardian: runtimeConfig(),
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+        findings: [
+          finding({
+            repairDisposition: "target-or-external-blocker",
+            evidence: ["GitHub account permission check failed: TLS handshake timeout"],
+          }),
+        ],
+      },
+    );
+    expect(result).toEqual({
+      status: "blocked",
+      detail: "terminal blocked findings recorded; no bot self-repair dispatched",
+    });
+  });
+
+  it("reports disabled supervisor without creating a repair", async () => {
+    const result = await dispatchRuntimeGuardianRepair(
+      {
+        config: {
+          loopEngineering: { supervisor: { enabled: false } },
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+        findings: [finding()],
+      },
+    );
+    expect(result).toEqual({ status: "blocked", detail: "loop supervisor is disabled" });
+  });
+
+  it("marks Runtime Guardian repairs as background delegation", async () => {
+    const result = await dispatchRuntimeGuardianRepair(
+      {
+        config: {
+          loopEngineering: { supervisor: { enabled: true } },
+          projectSessionPrefix: "tmux_proj_",
+          runtimeGuardian: runtimeConfig(),
+        },
+      } as never,
+      {
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+        findings: [finding()],
+      },
+    );
+
+    expect(result).toEqual({ status: "queued", detail: expect.any(String) });
+    expect(startActiveDelegatedTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resourceTrigger: "background" }),
+    );
+    expect(new RepairCoordinator().list()).toEqual([
+      expect.objectContaining({
+        source: "runtime-guardian",
+        status: "running",
+        workOrderId: "runtime-repair-run-1",
+        linkedTaskIds: ["run-1", "autopilot:runtime-repair-run-1"],
+      }),
+    ]);
+  });
+
+  it("keeps explicitly isolated guardian repairs isolated", async () => {
+    const dispatchRepair = vi.fn(async () => ({
+      status: "queued" as const,
+      detail: "runId=isolated",
+    }));
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ worktreeIsolation: "isolated" }),
+      discover: () => [finding({ runId: "isolated-run" })],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    expect(result).toMatchObject({ fired: true, repairDispatch: "queued" });
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+  });
+
+  it("terminalizes an invalid final summary as not-reproducible when the gate accepted", () => {
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "geo", "run-invalid-later");
+    mkdirSync(runDir, { recursive: true });
+    const order = {
+      ...workOrder("run-invalid-later", "/repo/geo", join(runDir, "supervisor-final-summary.json")),
+      projectId: "geo",
+      projectName: "Geo",
+    } satisfies LoopWorkOrder;
+    writeFileSync(join(runDir, "supervisor-final-summary.json"), "{}\n");
+    writeFileSync(join(runDir, "system-gate.json"), JSON.stringify({ accepted: true }));
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "runtime-guardian",
+      taskFamily: "terminal-invalid-output",
+      fingerprint: "invalid-later",
+      taskId: "run-invalid-later",
+      now: 1_000,
+    });
+    expect(reconcileRuntimeGuardianQueue({ coordinator, now: 2_000, findings: [] })).toBe(1);
+    expect(coordinator.list().find((record) => record.id === queued.id)).toMatchObject({
+      status: "not-reproducible",
+    });
+  });
+
+  it("ignores already terminal guardian queue records during reconciliation", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "geo",
+      projectPath: "/repo/geo",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "already-closed",
+      taskId: "run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(queued.id, "blocked", 1_001);
+    expect(
+      reconcileRuntimeGuardianQueue({
+        coordinator,
+        now: 2_000,
+        findings: [finding({ runId: "run-closed", evidence: ["source worktree is dirty"] })],
+      }),
+    ).toBe(0);
+  });
+
+  it("defaults runtime-guardian mode to fast-heal while remaining opt-in", () => {
+    const config = loadConfig({ TELEGRAM_BOT_TOKEN: "t" });
+
+    expect(config.runtimeGuardian).toMatchObject({
+      enabled: false,
+      mode: "fast-heal",
+      worktreeIsolation: "auto",
+      tickMs: 120000,
+      lookbackMs: 86_400_000,
+      cooldownMs: 1_800_000,
+      repairBranch: "dev",
+      maxFindingsPerTick: 3,
+    });
+  });
+
+  it("returns no-findings without dispatching when the runtime is clean", async () => {
+    const dispatchRepair = vi.fn();
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      discover: () => [],
+      dispatchRepair,
+    });
+    expect(result).toEqual({ fired: false, reason: "no-findings" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a due persisted repair after its finding ages out of discovery", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const store = new RuntimeGuardianStore();
+    const queued = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "runtime-guardian",
+      taskFamily: "terminal-system-gate-failure",
+      fingerprint: "system gate rejected the terminal run",
+      taskId: "run-aged-out",
+      summary: "system gate rejected the terminal run",
+      priority: 100,
+      now: 1_000,
+    });
+    coordinator.claimIds([queued.id], { now: 1_001, leaseId: "previous", limit: 1 });
+    coordinator.releaseForRetry(queued.id, 1_002);
+    store.markRepairAttempt("/repo/tmux-claude-bot", 39_000);
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 40_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      coordinator,
+      store,
+      discover: () => [],
+      checkRepairReadiness: () => ({ ok: true }),
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({ fired: true, repairDispatch: "queued" });
+    expect(dispatchRepair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        findings: [
+          expect.objectContaining({
+            runId: "run-aged-out",
+            kind: "terminal-system-gate-failure",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not requeue a guardian finding after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000_000,
+      config: runtimeConfig({ cooldownMs: 60_000 }),
+      coordinator,
+      discover: () => [
+        finding({
+          kind: "terminal-agent-transient-failure",
+          severity: "medium",
+          runId: "run-closed",
+          projectId: "fluent-frame",
+          projectPath: "/repo/fluent-frame",
+          evidence: [
+            "terminal failed work-order has retryable agent transient failure: run-closed",
+          ],
+        }),
+      ],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "cooldown" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]).toMatchObject({ id: prior.id, status: "fixed" });
+  });
+
+  it("does not dispatch an already-pending guardian duplicate after a prior repair fixed it", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const prior = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 1_000,
+    });
+    coordinator.markTerminal(prior.id, "fixed", 2_000);
+    const duplicate = coordinator.enqueue({
+      projectId: "fluent-frame",
+      projectPath: "/repo/fluent-frame",
+      source: "runtime-guardian",
+      taskFamily: "terminal-agent-transient-failure",
+      fingerprint: "terminal failed work-order has retryable agent transient failure: run-closed",
+      taskId: "run-closed",
+      summary: "terminal failed work-order has retryable agent transient failure: run-closed",
+      now: 3_000,
+    });
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 4_000,
+      config: runtimeConfig({ cooldownMs: 0 }),
+      coordinator,
+      discover: () => [],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "no-findings" });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(coordinator.list().find((record) => record.id === duplicate.id)).toMatchObject({
+      status: "superseded",
+    });
+  });
+
+  it("does not reconcile or discover findings when runtime guardian is disabled", async () => {
+    const discover = vi.fn(() => [finding()]);
+    const reconcile = vi.fn();
+
+    const disabled = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ enabled: false }),
+      discover,
+      reconcile,
+    });
+    const tickZero = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ tickMs: 0 }),
+      discover,
+      reconcile,
+    });
+
+    expect(disabled).toEqual({ fired: false, reason: "disabled" });
+    expect(tickZero).toEqual({ fired: false, reason: "disabled" });
+    expect(discover).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable repair dispatch without marking the repository attempt cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding({ runId: "needs-dispatch" })],
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toMatchObject({
+      fired: true,
+      repairDispatch: "unavailable",
+      detail: "repair dispatch is unavailable",
+    });
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+  });
+
+  it("surfaces blocked, default-detail, and thrown repair delegation outcomes", async () => {
+    const blocked = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      discover: () => [finding({ runId: "blocked-dispatch" })],
+      dispatchRepair: async () => ({ status: "blocked", detail: "queue paused" }),
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    const defaultDetail = await runRuntimeGuardianTick({
+      now: 20_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot-default" }),
+      discover: () => [finding({ runId: "default-detail" })],
+      dispatchRepair: async () => undefined,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    const failed = await runRuntimeGuardianTick({
+      now: 30_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot-failed" }),
+      discover: () => [finding({ runId: "failed-dispatch" })],
+      dispatchRepair: async () => {
+        throw new Error("transport down");
+      },
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(blocked).toMatchObject({
+      fired: true,
+      repairDispatch: "blocked",
+      detail: "queue paused",
+    });
+    expect(defaultDetail).toMatchObject({
+      fired: true,
+      repairDispatch: "queued",
+      detail: "queued",
+    });
+    expect(failed).toMatchObject({
+      fired: true,
+      repairDispatch: "failed",
+      detail: "transport down",
+    });
+  });
+
+  it("discovers a stale bot-owned dispatching work order without a supervisor lease", () => {
+    const projectPath = "/repo/tmux-claude-bot";
+    const order = workOrder("stale-dispatch", projectPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "dispatching",
+      now: 1,
+    });
+
+    expect(
+      discoverRuntimeGuardianFindings({
+        now: 5 * 60 * 1000 + 2,
+        lookbackMs: 86_400_000,
+        repoPath: projectPath,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "stale-dispatching-work-order",
+        runId: order.id,
+        projectId: order.projectId,
+      }),
+    ]);
+  });
+
+  it("records findings without dispatching in observe mode", async () => {
+    const dispatchRepair = vi.fn();
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ mode: "observe" }),
+      discover: () => [finding()],
+      dispatchRepair,
+    });
+
+    expect(result).toMatchObject({
+      fired: true,
+      mode: "observe",
+      repairDispatch: "observe-only",
+    });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+  });
+
+  it("delegates confirmed runtime findings in fast-heal mode with a bounded prompt", async () => {
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "runId=abc" }));
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toMatchObject({
+      fired: true,
+      mode: "fast-heal",
+      repairDispatch: "queued",
+      detail: "runId=abc",
+    });
+    expect(dispatchRepair).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoPath: "/repo/tmux-claude-bot",
+        repairBranch: "dev",
+        mode: "fast-heal",
+      }),
+    );
+  });
+
+  it("does not dispatch the same finding repeatedly during cooldown", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "runId=abc" }));
+
+    await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig(),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+    const second = await runRuntimeGuardianTick({
+      now: 11_000,
+      config: runtimeConfig(),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(second).toEqual({ fired: false, reason: "cooldown" });
+    expect(dispatchRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies a repo-level repair cooldown after dispatching a fast-heal", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "runId=abc" }));
+    await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot", maxFindingsPerTick: 1 }),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    const result = await runRuntimeGuardianTick({
+      now: 11_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot", maxFindingsPerTick: 1 }),
+      store,
+      discover: () => [
+        finding(),
+        finding({ runId: "run-2", evidence: ["second unhandled finding"] }),
+      ],
+      dispatchRepair,
+      checkRepairReadiness: () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ fired: false, reason: "cooldown" });
+    expect(dispatchRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks fast-heal dispatch when the bot repository is not ready for self-repair", async () => {
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn();
+    const readiness = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false,
+        reason: "runtime guardian repo has uncommitted changes",
+      })
+      .mockReturnValue({ ok: true });
+
+    const result = await runRuntimeGuardianTick({
+      now: 10_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: readiness,
+    });
+
+    expect(result).toMatchObject({
+      fired: true,
+      repairDispatch: "blocked",
+      detail: "runtime guardian repo has uncommitted changes",
+    });
+    expect(dispatchRepair).not.toHaveBeenCalled();
+    expect(store.lastRepairAttemptAt("/repo/tmux-claude-bot")).toBeUndefined();
+
+    const retry = await runRuntimeGuardianTick({
+      now: 11_000,
+      config: runtimeConfig({ repoPath: "/repo/tmux-claude-bot" }),
+      store,
+      discover: () => [finding()],
+      dispatchRepair,
+      checkRepairReadiness: readiness,
+    });
+
+    expect(retry).toMatchObject({ fired: true, repairDispatch: "queued" });
+    expect(dispatchRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks source-worktree repair when runtime guardian is not on the repair branch", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-branch-"));
+    execFileSync("git", ["init", "-b", "feature"], { cwd: repo, stdio: "ignore" });
+
+    const result = checkRuntimeGuardianRepairReadiness(repo, {
+      repairBranch: "dev",
+      worktreeIsolation: "source",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "runtime guardian source repair requires branch dev; current branch is feature",
+    });
+  });
+
+  it("discovers completed supervisor work orders that are missing system gate evidence", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-missing-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(summaryPath, "{}\n");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-missing-gate", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 2,
+      resultStatus: "completed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(existsSync(join(runDir, "system-gate.json"))).toBe(false);
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: "missing-system-gate",
+        severity: "high",
+        runId: "run-missing-gate",
+      }),
+    ]);
+  });
+
+  it("discovers completed supervisor work orders with failed eval outcome evidence", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-failed-eval-outcome",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(summaryPath, "{}\n");
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+        evalReport: {
+          outcome: {
+            status: "failed",
+            reason: "deterministic-gate-failed",
+          },
+        },
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-failed-eval-outcome", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 2,
+      resultStatus: "completed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: "failed-eval-outcome",
+        severity: "high",
+        runId: "run-failed-eval-outcome",
+        evidence: expect.arrayContaining([
+          "system gate eval outcome is failed: deterministic-gate-failed",
+          expect.stringContaining("system gate evidence exists:"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("ignores legacy git ENOENT system-gate failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-git-enoent",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified current code resolves git at system-gate time"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: [
+          "git status failed: spawnSync git ENOENT",
+          "isolated worktree branch check failed: spawnSync git ENOENT",
+        ],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-git-enoent", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("ignores legacy dependency preflight eval failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-preflight-eval",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["restored local dependencies"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["preflight failed because node_modules was absent"],
+          postMutationReview: ["dependency restore completed and tests passed"],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "preflight before repair",
+              result: "failed",
+              evidence: "Command exited 1 because required local Node tool binaries were absent.",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-preflight-eval", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("ignores legacy repaired initial preflight eval failures after a successful final summary", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-initial-preflight-eval",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["restored local dependencies"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["initial tool preflight failed"],
+          postMutationReview: ["dependency restore completed and tests passed"],
+          aiReview: "not-applicable",
+          deterministicGates: [
+            {
+              name: "initial-preflight",
+              command: "test -x .venv/bin/ruff",
+              result: "failed",
+              evidence: "ruff executable was missing",
+            },
+            {
+              name: "environment-repair",
+              command: "uv sync",
+              result: "passed",
+              evidence: "created .venv and installed dependencies",
+            },
+            {
+              name: "post-repair-preflight",
+              command: "test -x .venv/bin/ruff",
+              result: "passed",
+              evidence: "preflight passed after repair",
+            },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-initial-preflight-eval", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    const findings = discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("ignores historical completed runs outside the runtime lookback", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-old-missing-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(summaryPath, "{}\n");
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-old-missing-gate", projectDir, summaryPath),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: 1,
+      resultStatus: "completed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 10_000, lookbackMs: 1000 })).toEqual([]);
+  });
+
+  it("discovers active worker leases retained for terminal work orders", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-terminal-lease", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "run-terminal-lease",
+          projectId: "tmux-claude-bot",
+          projectPath: projectDir,
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-work-order-active-lease",
+        severity: "high",
+        runId: "run-terminal-lease",
+      }),
+    ]);
+  });
+
+  it("discovers terminal supervisor dispatch failures caused by transient agent capacity", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-agent-capacity",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-agent-capacity", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "dispatch-failed",
+      revisionReasons: ["Selected model is at capacity. Please try a different model."],
+    });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      `${JSON.stringify({
+        result: {
+          status: "dispatch-failed",
+          reason: "Selected model is at capacity. Please try a different model.",
+          output: "Selected model is at capacity. Please try a different model.",
+        },
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-agent-transient-failure",
+        severity: "medium",
+        runId: "run-agent-capacity",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("model-capacity"),
+          expect.stringContaining("Selected model is at capacity"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("discovers read-only smoke tasks blocked by mixed dependency and non-dependency preflight", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "geo-frontend",
+      "run-read-only-smoke",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-read-only-smoke", projectDir, summaryPath),
+      projectId: "geo-frontend",
+      projectName: "geo-frontend",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_geo-frontend",
+        requirement:
+          "Read-only smoke validation of the active delegation contract. Do not modify files.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      preflight: {
+        commands: [
+          "test -d node_modules",
+          "test -x node_modules/.bin/vitest",
+          "test -f .env.guard",
+        ],
+        repair: { agent: true },
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "blocked",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "geo-frontend",
+        actionsTaken: ["inspected isolated worktree"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "local dependency preflight",
+              result: "failed",
+              evidence:
+                "node_modules was absent and vite/vitest/eslint/prettier were missing while .env.guard was also checked",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "read-only-smoke-preflight-blocked",
+        severity: "medium",
+        runId: "run-read-only-smoke",
+        projectId: "geo-frontend",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("verification-profile/worktree-policy"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("ignores historical read-only smoke tasks whose dependency-only preflight is already neutralized by current policy", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "geo-backend",
+      "run-read-only-smoke-dependency-only",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-read-only-smoke-dependency-only", projectDir, summaryPath),
+      projectId: "geo-backend",
+      projectName: "geo-backend",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "tmux_proj_geo-backend",
+        requirement:
+          "Read-only smoke validation of the active delegation contract. Do not modify files, do not commit, do not open a PR.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      preflight: {
+        commands: [
+          "test -x .venv/bin/ruff",
+          "test -x .venv/bin/pyright",
+          "test -x .venv/bin/pytest",
+        ],
+        repair: { agent: true },
+      },
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "blocked",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "geo-backend",
+        actionsTaken: ["checked preflight"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [
+            {
+              name: "preflight ruff executable",
+              result: "failed",
+              evidence: "exit code 1",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("ignores terminal invalid-output states when a valid final summary can be recovered", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-invalid-output-recoverable",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-invalid-output-recoverable", projectDir, summaryPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["wrote final summary before terminal marker was captured"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(join(runDir, "system-gate.json"), "{}\n");
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("rediscovers a recovered invalid-output run when its system gate is still missing", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-invalid-output-missing-gate",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-invalid-output-missing-gate", projectDir, summaryPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-invalid-output",
+        runId: order.id,
+      }),
+    ]);
+  });
+
+  it("does not rediscover terminal invalid-output findings when the durable summary is blocked", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-invalid-output-blocked-summary",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-invalid-output-blocked-summary", projectDir, summaryPath);
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["blocked before completion"],
+        delegatedTasks: [],
+        finalVerification: "failed",
+        commits: [],
+        followUps: ["retry after resolving the blocker"],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("does not rediscover terminal invalid-output when the durable summary is explicitly blocked", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "fluent-frame",
+      "run-invalid-output-explicitly-blocked",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = {
+      ...workOrder("run-invalid-output-explicitly-blocked", projectDir, summaryPath),
+      projectId: "fluent-frame",
+      projectName: "Fluent Frame",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "invalid-output",
+    });
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "fluent-frame",
+        actionsTaken: ["confirmed no bounded target-project bug was proven"],
+        delegatedTasks: [{ projectId: "fluent-frame", status: "blocked" }],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: ["checked the original invalid-output evidence"],
+          postMutationReview: ["no source diff was produced"],
+          aiReview: "not-run",
+          deterministicGates: [
+            {
+              name: "worker compact/send execution",
+              result: "failed",
+              evidence: "the worker did not consume queued work",
+            },
+          ],
+          decision: "block",
+          notes: [],
+        },
+        commits: [],
+        followUps: ["retry after resolving the delivery blocker"],
+      })}\n`,
+    );
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("builds a repair prompt that prevents target-repo edits and PR handling", () => {
+    const prompt = buildRuntimeGuardianRepairPrompt({
+      repoPath: "/repo/tmux-claude-bot",
+      repairBranch: "dev",
+      mode: "fast-heal",
+      findings: [finding({ projectPath: "/repo/geo-backend" })],
+    });
+
+    expect(prompt).toContain("Runtime Guardian (fast-heal)");
+    expect(prompt).toContain("Do not edit target project repositories");
+    expect(prompt).toContain("fix the bot WorkOrder verification profile or worktree policy");
+    expect(prompt).toContain("Do not open a PR");
+    expect(prompt).toContain("Use CodeGraph before grep/find");
+    expect(prompt).toContain("pre-mutation review");
+    expect(prompt).toContain("post-mutation review");
+    expect(prompt).toContain(
+      "AI review/eval may be used only through the existing Claude Code / Codex control surface",
+    );
+    expect(prompt).toContain("deterministic gates and system acceptance remain authoritative");
+    expect(prompt).toContain("source=runtime-guardian");
+  });
+
+  it("discovers terminal supervisor work orders rejected by the system gate", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-system-gate-failed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "source worktree is dirty after supervisor completion",
+          "GitHub account permission check timed out",
+        ],
+        findings: [
+          {
+            code: "worktree-dirty",
+            repairDisposition: "target-or-external-blocker",
+            retry: "manual",
+            evidence: ["source checkout contains uncommitted changes"],
+            display: "source worktree requires owner cleanup",
+          },
+        ],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-system-gate-failed", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-system-gate-failure",
+        severity: "high",
+        runId: "run-system-gate-failed",
+        repairDisposition: "target-or-external-blocker",
+        evidence: expect.arrayContaining([
+          "system gate rejected terminal work-order: run-system-gate-failed",
+          expect.stringContaining("source worktree is dirty"),
+          expect.stringContaining("GitHub account permission check timed out"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("ignores legacy auto-merge stale-head failures that current finalization retries", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-auto-merge-stale-head",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    const order = workOrder("run-legacy-auto-merge-stale-head", projectDir, summaryPath);
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified and published PR branch"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["confirmed bounded runtime issue"],
+          postMutationReview: ["diff reviewed"],
+          aiReview: "not-run",
+          deterministicGates: [
+            { name: "verify-local", result: "passed" },
+            { name: "clean-worktree", result: "passed" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: ["abc123"],
+        followUps: [],
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "PR auto-merge failed: X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
+        ],
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=not-run"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("classifies legacy PR and CI gate failures as target or external blockers", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-legacy-pr-gate-failed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures: [
+          "PR is missing supervisor commit 788270747454e3d6d5ba5c0af557044946104267",
+          "PR contains commit outside supervisor summary: 7882707ab9308f08d2b23b86a428acd52d5e2e71",
+          'CI check "build (3.12)" is IN_PROGRESS after waiting for completion',
+        ],
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-legacy-pr-gate-failed", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-system-gate-failure",
+        severity: "high",
+        runId: "run-legacy-pr-gate-failed",
+        repairDisposition: "target-or-external-blocker",
+        evidence: expect.arrayContaining([
+          expect.stringContaining("PR is missing supervisor commit"),
+          expect.stringContaining("PR contains commit outside supervisor summary"),
+          expect.stringContaining('CI check "build (3.12)" is IN_PROGRESS'),
+        ]),
+      }),
+    ]);
+  });
+
+  it("ignores legacy system-gate failures that are marked supervisor-revisionable", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-recoverable-system-gate-failed",
+    );
+    mkdirSync(runDir, { recursive: true });
+    const failures = [
+      "git status failed: spawnSync git ENOENT",
+      "isolated worktree branch check failed: spawnSync git ENOENT",
+    ];
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({
+        accepted: false,
+        resultStatus: "supervisor-failed",
+        failures,
+        recoverableFailures: failures,
+        findings: [],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-recoverable-system-gate-failed", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "supervisor-failed",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+
+  it("does not treat intentionally blocked work orders as system-layer failures", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
+    const runDir = join(
+      process.env.TCB_STATE_DIR ?? "",
+      "loop-runs",
+      "tmux-claude-bot",
+      "run-system-gate-blocked",
+    );
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      `${JSON.stringify({ accepted: false, resultStatus: "blocked", failures: ["needs approval"] })}\n`,
+    );
+    writeLoopSupervisorWorkOrderState({
+      workOrder: workOrder("run-system-gate-blocked", projectDir),
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: 2,
+      resultStatus: "blocked",
+    });
+
+    expect(discoverRuntimeGuardianFindings({ now: 2, lookbackMs: 86_400_000 })).toEqual([]);
+  });
+});

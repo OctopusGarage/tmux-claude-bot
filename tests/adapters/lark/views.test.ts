@@ -30,6 +30,7 @@ import {
   startOrPickAfterCreate,
 } from "../../../src/adapters/lark/views.js";
 import { projectPathToHistoryDir } from "../../../src/core/agents/claude/claude-history.js";
+import * as takeoverService from "../../../src/core/agents/takeover-service.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import { bindGroup, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { setPathForSession } from "../../../src/core/projects/sessionPathMap.js";
@@ -166,7 +167,7 @@ describe("sendQueueStatus", () => {
     await sendQueueStatus(channel, deps, "chat-1");
 
     const text = channel.texts().join("\n");
-    // The in-flight message is rendered under ▶, not counted in 排队中.
+    // The in-flight message is rendered under the active marker, not counted as queued.
     expect(text).toContain("排队中： 2");
     expect(text).toContain("▶ in-flight");
     expect(text).not.toContain("排队中： 3");
@@ -222,6 +223,50 @@ describe("sendAliveList / sendRecentList", () => {
     await sendAliveList(channel, deps, "chat-1");
 
     expect(channel.cards()).toHaveLength(1);
+  });
+
+  it("sends every session within Feishu's 200-element card limit", async () => {
+    const sessions = Array.from({ length: 31 }, (_, i) => `tmux_proj_free_${i + 1}`);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { listProjectSessions: vi.fn(async () => sessions) } });
+
+    await sendAliveList(channel, deps, "chat-1");
+
+    const countElements = (value: unknown): number => {
+      if (Array.isArray(value)) return value.reduce((sum, item) => sum + countElements(item), 0);
+      if (!value || typeof value !== "object") return 0;
+      const record = value as Record<string, unknown>;
+      return (
+        (typeof record.tag === "string" ? 1 : 0) +
+        Object.values(record).reduce<number>((sum, item) => sum + countElements(item), 0)
+      );
+    };
+    expect(channel.cards().length).toBeGreaterThan(1);
+    for (const card of channel.cards()) expect(countElements(card)).toBeLessThanOrEqual(200);
+    const summaries = channel
+      .cards()
+      .flatMap((card) =>
+        (card as { body: { elements: { tag: string }[] } }).body.elements.filter(
+          (element) => element.tag === "markdown",
+        ),
+      );
+    expect(summaries).toHaveLength(sessions.length);
+    expect(new Set(summaries.map((summary) => JSON.stringify(summary))).size).toBe(sessions.length);
+    expect(deps.bridge.listProjectSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to readable session summaries when a list card is rejected", async () => {
+    const channel = fakeChannel();
+    vi.mocked(channel.send).mockRejectedValueOnce(
+      Object.assign(new Error("element exceeds the limit"), { code: "format_error" }),
+    );
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_free_1"]) },
+    });
+
+    await sendAliveList(channel, deps, "chat-1");
+
+    expect(channel.texts().join("\n")).toContain("Independent #1");
   });
 
   it("sendAliveList keeps project-group status visible on Lark", async () => {
@@ -819,12 +864,14 @@ describe("sendGroupMenu", () => {
 describe("sendOrphanList", () => {
   it("replies the empty-text hint when no adoptable processes are found", async () => {
     const channel = fakeChannel();
-    // In the test host no unmanaged claude/codex process is expected; assert
-    // the path lands on one of the two valid branches and observably replied.
-    await sendOrphanList(channel, "chat-1");
-    const repliedEmpty = channel.texts().includes("没有发现可接管的进程");
-    const repliedCard = channel.cards().length === 1;
-    expect(repliedEmpty || repliedCard).toBe(true);
+    const discovery = vi.spyOn(takeoverService, "findAdoptableOrphans").mockResolvedValue([]);
+    try {
+      await sendOrphanList(channel, "chat-1");
+      expect(channel.texts()).toContain("没有发现可接管的进程");
+      expect(channel.cards()).toHaveLength(0);
+    } finally {
+      discovery.mockRestore();
+    }
   });
 });
 
@@ -864,7 +911,16 @@ describe("sendRecoverPreview", () => {
 describe("sendDoctor / sendDashboard", () => {
   it("sendDoctor sends the redacted health report as text", async () => {
     const channel = fakeChannel();
-    await sendDoctor(channel, "chat-1");
+    await sendDoctor(channel, "chat-1", {
+      readEnv: () => new Map([["TELEGRAM_BOT_TOKEN", "secret"]]),
+      onPath: async () => true,
+      serviceLoaded: async () => false,
+      botProcessCount: async () => 0,
+      caffeinateActive: async () => false,
+      clamshellClosed: async () => null,
+      sleepDisabled: async () => false,
+      fileExists: () => false,
+    });
     expect(channel.texts()).toHaveLength(1);
     expect(channel.cards()).toHaveLength(0);
   });
@@ -878,6 +934,21 @@ describe("sendDoctor / sendDashboard", () => {
 });
 
 describe("sendLogs", () => {
+  let previousLogDir: string | undefined;
+  let logDir: string;
+
+  beforeEach(() => {
+    previousLogDir = process.env.TCB_LOG_DIR;
+    logDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-lark-logs-"));
+    process.env.TCB_LOG_DIR = logDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    if (previousLogDir === undefined) delete process.env.TCB_LOG_DIR;
+    else process.env.TCB_LOG_DIR = previousLogDir;
+  });
+
   it("replies the no-context hint when there is no session and no arg", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps({ session: null });

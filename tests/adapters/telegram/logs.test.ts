@@ -7,11 +7,13 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const logDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "tcb-logs-tg-"));
 process.env.TCB_LOG_DIR = logDir;
 
+const now = new Date();
+const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 const mkRec = (o: Record<string, unknown>): string =>
-  JSON.stringify({ ts: "2026-06-18T01:00:00Z", level: "INFO", msg: "x", ...o });
+  JSON.stringify({ ts: now.toISOString(), level: "INFO", msg: "x", ...o });
 
 fs.writeFileSync(
-  nodePath.join(logDir, "tcb-20260618.jsonl"),
+  nodePath.join(logDir, `tcb-${stamp}.jsonl`),
   `${[
     mkRec({ level: "WARN", component: "cmp", msg: "careful-now", session: "tmux_proj_x" }),
     mkRec({ level: "ERROR", component: "cmp", msg: "boom-here", session: "tmux_proj_x" }),

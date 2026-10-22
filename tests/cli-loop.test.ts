@@ -14,9 +14,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
     allowedActions: [tests]
 `;
@@ -54,7 +54,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
 
 const configWithCatalogOnlyText = `
@@ -78,7 +78,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
 `;
 
 const runnableConfigText = `
@@ -125,6 +125,33 @@ projects:
     assessment:
       command: "printf assessment-ok"
 `;
+
+const targetsConfigText = `
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    enabled: true
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: pnpm assess
+prReview:
+  repositories:
+    - id: hub-all-prs
+      name: Hub all PRs
+      path: /repo/hub
+      repo: OctopusGarage/hub
+      agent: codex
+      enabled: true
+      schedule: "0 4 * * *"
+`;
+
+const fixedScheduleConfig = (text: string): string =>
+  `scheduler:\n  jitter:\n    enabled: false\n${text}`;
 
 function runCli(
   args: string[],
@@ -194,7 +221,9 @@ describe("CLI loop command", () => {
     const file = join(dir, "loop.yml");
     writeFileSync(
       file,
-      configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      fixedScheduleConfig(
+        configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      ),
     );
 
     const result = runCli(["loop", "tick", file, "--now", "2026-07-16T10:10:00Z"]);
@@ -212,7 +241,9 @@ describe("CLI loop command", () => {
     const file = join(dir, "loop.yml");
     writeFileSync(
       file,
-      configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      fixedScheduleConfig(
+        configText.replace("assessment:", 'schedule: "*/5 * * * *"\n    assessment:'),
+      ),
     );
 
     const result = runCli(["loop", "tick", file, "--now", "2026-07-16T10:10:00Z", "--json"]);
@@ -229,6 +260,43 @@ describe("CLI loop command", () => {
     expect(summary.executed).toBe(0);
     expect(summary.dueProjects[0]).toMatchObject({ projectId: "hub", action: "would-run" });
   });
+
+  it("lists and toggles loop targets through the real CLI entrypoint", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(file, targetsConfigText);
+
+    const list = runCli(["loop", "targets", "list", file, "--json"]);
+    expect(list.status).toBe(0);
+    const targets = JSON.parse(list.stdout) as Array<{
+      kind: string;
+      id: string;
+      enabled: boolean;
+      scheduled: boolean;
+    }>;
+    expect(targets).toEqual([
+      expect.objectContaining({ kind: "project", id: "hub", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "repo", id: "hub-all-prs", enabled: true, scheduled: true }),
+    ]);
+
+    const disable = runCli(["loop", "targets", "disable", file, "project", "hub", "--json"]);
+    expect(disable.status).toBe(0);
+    expect(JSON.parse(disable.stdout)).toMatchObject({
+      kind: "project",
+      id: "hub",
+      enabled: false,
+      changed: true,
+    });
+
+    const enable = runCli(["loop", "targets", "enable", file, "project", "hub", "--json"]);
+    expect(enable.status).toBe(0);
+    expect(JSON.parse(enable.stdout)).toMatchObject({
+      kind: "project",
+      id: "hub",
+      enabled: true,
+      changed: true,
+    });
+  }, 20_000);
 
   it("syncs approved skills and lists recorded skill state through the real CLI entrypoint", () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));
@@ -250,7 +318,7 @@ describe("CLI loop command", () => {
         status: "installed",
       }),
     ]);
-  });
+  }, 60_000);
 
   it("prints JSON skill sync summaries", () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-cli-"));
@@ -364,16 +432,36 @@ describe("CLI loop command", () => {
     writeFileSync(file, runnableConfigWithEvalText.replace("__PROJECT_DIR__", projectDir));
 
     const runResult = runCli(["loop", "run", file, "hub"], stateDir);
-    const reportsResult = runCli(["loop", "reports", "list", "--json"], stateDir);
-    const backlogResult = runCli(["loop", "backlog", "list", "--json"], stateDir);
+    const reportsResult = runCli(
+      [
+        "loop",
+        "reports",
+        "list",
+        "--project",
+        "hub",
+        "--status",
+        "passed",
+        "--limit",
+        "1",
+        "--json",
+      ],
+      stateDir,
+    );
+    const backlogResult = runCli(
+      ["loop", "backlog", "list", "--project", "hub", "--status", "open", "--limit", "1", "--json"],
+      stateDir,
+    );
 
     expect(runResult.status).toBe(0);
-    const reports = JSON.parse(reportsResult.stdout) as Array<{
-      projectId: string;
-      status: string;
-    }>;
-    expect(reports).toEqual([expect.objectContaining({ projectId: "hub", status: "passed" })]);
-    const backlog = JSON.parse(backlogResult.stdout) as Array<{ id: string; text: string }>;
+    const reports = JSON.parse(reportsResult.stdout) as {
+      items: Array<{ projectId: string; status: string }>;
+    };
+    expect(reports.items).toEqual([
+      expect.objectContaining({ projectId: "hub", status: "passed" }),
+    ]);
+    const backlog = (
+      JSON.parse(backlogResult.stdout) as { items: Array<{ id: string; text: string }> }
+    ).items;
     expect(backlog).toEqual([expect.objectContaining({ text: "Improve loop reports." })]);
 
     const closeResult = runCli(
@@ -382,6 +470,6 @@ describe("CLI loop command", () => {
     );
     const afterCloseResult = runCli(["loop", "backlog", "list", "--json"], stateDir);
     expect(closeResult.status).toBe(0);
-    expect(JSON.parse(afterCloseResult.stdout)).toEqual([]);
-  });
+    expect(JSON.parse(afterCloseResult.stdout)).toMatchObject({ items: [], total: 0 });
+  }, 20_000);
 });

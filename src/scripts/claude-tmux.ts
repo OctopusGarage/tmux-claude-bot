@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 
 /**
  * claude-tmux - Unified Claude + tmux session manager
@@ -6,10 +6,10 @@
  * Run this script to attach to or create a tmux session for the current project.
  * The session is named after the absolute path of the current directory.
  *
- * Usage: npx tsx src/scripts/claude-tmux.ts
+ * Usage: pnpm exec tsx src/scripts/claude-tmux.ts
  *
  * Add to ~/.zshrc:
- *   alias claude="npx tsx ~/programming/OctopusGarage/tmux-claude-bot/src/scripts/claude-tmux.ts"
+ *   alias claude="pnpm exec tsx ~/programming/OctopusGarage/tmux-claude-bot/src/scripts/claude-tmux.ts"
  */
 
 import { config as loadEnv } from "dotenv";

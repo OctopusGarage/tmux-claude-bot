@@ -50,9 +50,9 @@ were untested and could only be exercised by releasing and running them in a rea
   injectable `getUpdates`/`now`/`sleep`, so its short-poll, crash-proofing, and
   timeout-fallback are tested without a real bot (`tests/core/onboarding-poll`).
   This is what would have caught the long-poll hang and the crash.
-- **Shellcheck every `*.sh`:** `npm run lint:sh` (also a CI gate). Fix warnings,
+- **Shellcheck every `*.sh`:** `pnpm lint:sh` (also a CI gate). Fix warnings,
   don't suppress them.
-- **Walk the wizard with no side effects:** `npm run setup -- --dry-run` stubs the
+- **Walk the wizard with no side effects:** `pnpm setup -- --dry-run` stubs the
   live token check, id capture, and QR scan and prints (never writes) the resolved
   config. Note: a real terminal is required — Node's readline doesn't accept piped
   stdin cleanly — so dry-run is for *manual* local verification, automation relies
@@ -72,7 +72,7 @@ when you touch the relevant area, keep these green:
 | **Cross-adapter drift** — Telegram's immediate-action set dropped `tab`; dedup handling diverged | each copy was individually tested and passed | `tests/adapters/action-parity.test.ts` (routing pinned to the single registry) + the `adapters-isolated` dependency-cruiser rule (adapters can't import each other) |
 | **Cross-process concurrency** — instance-lock TOCTOU | unit tests are single-threaded | `tests/instance-lock-race.test.ts` (deterministic mocked-fs interleave) + `tests/instance-lock-multiprocess.test.ts` (two real processes) |
 | **Cross-restart persistence** — Lark reply-target lost on restart | no test restarts the process | per-store "survives a restart" tests (a fresh instance reads what the prior wrote) — see `bounded-session-map` / `json-map-store` / reply-target tests |
-| **Executed but unasserted** — the dead queue-retry loop (removing it broke no test) | the line ran; nothing asserted its effect | **mutation testing**: `npm run mutation` (Stryker, core only; weekly CI in `.github/workflows/mutation.yml`) |
+| **Executed but unasserted** — the dead queue-retry loop (removing it broke no test) | the line ran; nothing asserted its effect | **mutation testing**: `pnpm mutation` (Stryker, core only; weekly CI in `.github/workflows/mutation.yml`) |
 
 The throughline: most of these were **logic duplicated across adapters that
 drifted**. The durable fix is structural — keep logic in `core/`, adapters thin —
@@ -81,12 +81,12 @@ which the `adapters-isolated` rule now enforces.
 ## Running
 
 ```bash
-npm test                       # full suite (vitest run)
-npm run lint:sh                # shellcheck the scripts
-npx vitest run path/to.test.ts # a single file
-npx vitest run --coverage      # coverage report (v8)
-npm run lint:deep              # type-aware lint (floating promises, dead conditions) — warns, non-blocking
-npm run mutation               # mutation testing (slow; core only) — see table above
+pnpm test                       # full suite (vitest run)
+pnpm lint:sh                # shellcheck the scripts
+pnpm exec vitest run path/to.test.ts # a single file
+pnpm exec vitest run --coverage      # coverage report (v8)
+pnpm lint:deep              # type-aware lint (floating promises, dead conditions) — warns, non-blocking
+pnpm mutation               # mutation testing (slow; core only) — see table above
 ```
 
 `lint:deep` is type-aware ESLint with three behavioural rules biome and tsc

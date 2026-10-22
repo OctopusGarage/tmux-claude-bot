@@ -11,6 +11,10 @@ vi.mock("../src/shared/utils/error.js", () => ({
   normalizeError: (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
 }));
 
+vi.mock("../src/shared/utils/sleep.js", () => ({
+  sleep: vi.fn(async () => {}),
+}));
+
 import type { Bot, Context } from "grammy";
 import { reply, send, type Tone } from "../src/adapters/telegram/replies.js";
 import { UI_ICONS } from "../src/shared/ui/icons.js";
@@ -145,7 +149,10 @@ describe("reply", () => {
     await reply(ctx, "ok", "test");
     expect(ctx.reply).toHaveBeenCalledTimes(3);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("network error on attempt 1/3"),
+      "Telegram send attempt failed; retry scheduled",
+      expect.objectContaining({
+        data: expect.objectContaining({ attempt: 1, maxAttempts: 3, retryDelayMs: 1000 }),
+      }),
     );
   });
 
@@ -198,7 +205,10 @@ describe("reply", () => {
 
     await reply(ctx, "info", "", { body: "test", code: true });
     expect(ctx.reply).toHaveBeenCalledTimes(2);
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("fallback reply failed"));
+    expect(logger.error).toHaveBeenCalledWith(
+      "Telegram plain-text fallback failed",
+      expect.objectContaining({ err: expect.any(Error), chatId: 12345 }),
+    );
   });
 
   it("gives up after 3 retry attempts on network errors", async () => {
@@ -210,7 +220,10 @@ describe("reply", () => {
 
     await reply(ctx, "ok", "test");
     expect(ctx.reply).toHaveBeenCalledTimes(3);
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("reply failed"));
+    expect(logger.error).toHaveBeenCalledWith(
+      "Telegram reply failed",
+      expect.objectContaining({ chatId: 12345 }),
+    );
   });
 });
 

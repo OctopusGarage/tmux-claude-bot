@@ -11,7 +11,7 @@ Examples:
 ```bash
 rtk git status
 rtk cargo test
-rtk npm run build
+rtk pnpm build
 rtk pytest -q
 ```
 

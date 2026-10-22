@@ -37,7 +37,6 @@ export type ViewName =
   | "restore"
   | "autopilot"
   | "goals"
-  | "batch"
   | "opportunity"
   | "prompts";
 
@@ -74,7 +73,6 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
   restore: "restore",
   autopilot: "autopilot",
   goals: "goals",
-  batch: "batch",
   opportunity: "opportunity",
   prompts: "prompts",
 };
@@ -82,7 +80,7 @@ const VIEW_COMMANDS: Record<string, ViewName> = {
 export type ParsedInput =
   | { kind: "text"; text: string }
   | { kind: "help" }
-  | { kind: "command"; action: MessageAction; immediate: boolean }
+  | { kind: "command"; action: MessageAction; immediate: boolean; arg?: string }
   | { kind: "view"; name: ViewName; arg?: string | undefined };
 
 export function parseLarkInput(raw: string): ParsedInput {
@@ -105,7 +103,12 @@ export function parseLarkInput(raw: string): ParsedInput {
   }
 
   if (IMMEDIATE.has(name as MessageAction)) {
-    return { kind: "command", action: name as MessageAction, immediate: true };
+    return {
+      kind: "command",
+      action: name as MessageAction,
+      immediate: true,
+      ...(name === "key" ? { arg: arg ?? "" } : {}),
+    };
   }
 
   if (QUEUED.has(name as MessageAction)) {

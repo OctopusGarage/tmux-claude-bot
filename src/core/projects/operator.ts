@@ -13,6 +13,16 @@ export function loopSupervisorSessionName(prefix: string): string {
   return `${prefix}loop-supervisor`;
 }
 
+/** Reserved loop worker session name for supervised target-project work. */
+export function loopWorkerSessionName(prefix: string, projectId: string): string {
+  return `${prefix}loop-worker-${sanitizeInfraSegment(projectId)}`;
+}
+
+/** Reserved loop worker session name scoped to one WorkOrder run. */
+export function loopWorkerRunSessionName(prefix: string, projectId: string, runId: string): string {
+  return `${loopWorkerSessionName(prefix, projectId)}-${sanitizeInfraSegment(runId)}`;
+}
+
 /** Reserved loop supervisor pool names. Pool size 1 keeps the legacy name. */
 export function loopSupervisorSessionNames(prefix: string, poolSize: number): string[] {
   const size = Number.isFinite(poolSize) ? Math.max(1, Math.floor(poolSize)) : 1;
@@ -27,6 +37,11 @@ export function isLoopSupervisorSessionName(session: string, prefix: string): bo
   return session === base || new RegExp(`^${escapeRegExp(base)}-[1-9]\\d*$`).test(session);
 }
 
+/** True iff `session` is a reserved loop worker. */
+export function isLoopWorkerSessionName(session: string, prefix: string): boolean {
+  return new RegExp(`^${escapeRegExp(`${prefix}loop-worker-`)}[^:]+$`).test(session);
+}
+
 /** True iff `session` is the reserved operator session for this prefix. */
 export function isOperator(session: string, prefix: string): boolean {
   return session === operatorSessionName(prefix);
@@ -34,11 +49,19 @@ export function isOperator(session: string, prefix: string): boolean {
 
 /** True iff `session` is reserved bot infrastructure, not a user project. */
 export function isReservedInfrastructureSession(session: string, prefix: string): boolean {
-  return session === operatorSessionName(prefix) || isLoopSupervisorSessionName(session, prefix);
+  return (
+    session === operatorSessionName(prefix) ||
+    isLoopSupervisorSessionName(session, prefix) ||
+    isLoopWorkerSessionName(session, prefix)
+  );
 }
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sanitizeInfraSegment(text: string): string {
+  return text.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 /** Resolve the target session for a channel: an explicit current project wins;

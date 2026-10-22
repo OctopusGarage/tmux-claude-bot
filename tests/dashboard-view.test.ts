@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardSnapshot } from "../src/core/dashboard/dashboard.js";
 import {
+  dashboardLabelsForMessages,
   formatDashboardForChat,
   formatDashboardText,
-  formatHeader,
 } from "../src/core/dashboard/dashboard-view.js";
+import { zh } from "../src/core/i18n/catalog/zh.js";
 
 const snap: DashboardSnapshot = {
   sessions: [
@@ -69,9 +70,95 @@ const snap: DashboardSnapshot = {
     busyCount: 1,
     queueDepth: 1,
     adapters: { telegram: true, lark: false },
-    autopilotCount: 0,
   },
   generatedAt: 0,
+  overview: {
+    health: { status: "attention", attentionCount: 2, degradedDomainCount: 0 },
+    attention: {
+      items: [
+        {
+          id: "loop:failed",
+          domain: "loop",
+          severity: "error",
+          observedAt: 10,
+          summary: "Loop failed",
+          nextAction: "tcb loop reports list --limit 20",
+        },
+        {
+          id: "power:policy",
+          domain: "power",
+          severity: "warning",
+          observedAt: 9,
+          summary: "Wake schedule missing",
+          nextAction: "tcb power status",
+        },
+      ],
+      total: 2,
+      limit: 10,
+      truncated: false,
+    },
+    activeWork: {
+      items: [
+        {
+          id: "work-order:one",
+          kind: "work-order",
+          label: "proj-a architecture",
+          status: "running",
+          startedAt: 8,
+          projectId: "proj-a",
+        },
+      ],
+      total: 1,
+      limit: 10,
+      truncated: false,
+    },
+    automation: [
+      {
+        id: "loop",
+        label: "Loop Engineering",
+        enabled: true,
+        configured: true,
+        activeCount: 1,
+        tickMs: 300_000,
+      },
+    ],
+    runtimeDomains: [
+      {
+        id: "power",
+        label: "Service and Power",
+        status: "attention",
+        summary: "scheduled",
+        errorKind: null,
+      },
+    ],
+    operator: {
+      session: { state: "ready" },
+      skills: { installed: 2, expected: 2, state: "ready" },
+      mcpProfiles: {
+        installed: 2,
+        expected: 2,
+        state: "ready",
+        profiles: [
+          {
+            profile: "observer",
+            role: "observer",
+            exposure: "read-only",
+            toolCount: 8,
+            descriptorState: "ready",
+          },
+        ],
+      },
+      promptLibrary: { state: "disabled" },
+      optionalProjectMcpCount: 1,
+    },
+    recentOutcomes: {
+      items: [],
+      total: 0,
+      limit: 10,
+      truncated: false,
+    },
+    degradedDomains: [],
+  },
 };
 
 describe("dashboard-view", () => {
@@ -91,11 +178,78 @@ describe("dashboard-view", () => {
     expect(out).toMatch(/3 sessions/); // session count in header
   });
 
+  it("renders health and attention before active work and sessions", () => {
+    const out = formatDashboardText(snap);
+
+    expect(out.startsWith("Overall Health: attention")).toBe(true);
+    expect(out.indexOf("Attention (2)")).toBeLessThan(out.indexOf("Active Work (1)"));
+    expect(out.indexOf("Active Work (1)")).toBeLessThan(out.indexOf("Project Sessions"));
+    expect(out).toContain("Operator and AI Interfaces");
+    expect(out).toContain("observer · observer/read-only · 8 tools · ready");
+  });
+
   it("can hide Lark-only project-group details for Telegram", () => {
     const out = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
     expect(out).toContain("proj-a");
     expect(out).not.toContain("Proj A Group");
     expect(out).not.toContain("🗂 Proj A Group");
+  });
+
+  it("summarizes healthy automation and idle sessions in chat", () => {
+    const out = formatDashboardForChat(snap, { maxChars: 3500, showGroups: false });
+
+    expect(out).toContain("Automation: 1/1 enabled");
+    expect(out).toContain("Project Sessions: 2 shown · 1 idle");
+    expect(out).not.toContain("🟡 proj-b");
+    expect(out).toContain("🟢 proj-a");
+    expect(out).toContain("⚫ proj-c");
+  });
+
+  it("renders structured attention evidence through the chat locale", () => {
+    const overview = snap.overview;
+    if (overview === undefined) throw new Error("fixture overview is required");
+    const first = overview.attention.items[0];
+    if (first === undefined) throw new Error("fixture attention is required");
+    const localized: DashboardSnapshot = {
+      ...snap,
+      overview: {
+        ...overview,
+        attention: {
+          ...overview.attention,
+          items: [
+            {
+              ...first,
+              presentation: {
+                kind: "work-order-failed",
+                project: "项目甲",
+                taskKind: "架构检查",
+              },
+            },
+          ],
+          total: 1,
+        },
+      },
+    };
+
+    const out = formatDashboardForChat(localized, {
+      maxChars: 3500,
+      labels: dashboardLabelsForMessages(zh),
+    });
+    expect(out).toContain("总体健康: 需处理");
+    expect(out).toContain("项目甲 的工作单失败");
+    expect(out).toContain("3 会话");
+    expect(out).toContain("服务与电源");
+    expect(out).not.toContain("Service and Power");
+    expect(out).not.toContain("Loop failed");
+  });
+
+  it("renders only health and attention blocks in problems mode", () => {
+    const out = formatDashboardText(snap, { problemsOnly: true });
+
+    expect(out).toContain("Attention (2)");
+    expect(out).not.toContain("\n\nActive Work");
+    expect(out).not.toContain("\nAutomation");
+    expect(out).not.toContain("\nProject Sessions");
   });
 
   it("distinguishes the three states: busy 🟢, idle-running 🟡, stopped ⏹/⚫", () => {
@@ -129,52 +283,6 @@ describe("dashboard-view", () => {
     expect(formatDashboardText(empty)).toMatch(/0 sessions/);
   });
 
-  it("renders the ✈️ auto·N tag when a session has autopilot enabled", () => {
-    const withAuto: DashboardSnapshot = {
-      ...snap,
-      sessions: [
-        {
-          session: "tmux_proj_a",
-          label: "proj-a",
-          sessionKind: "regular",
-          workspacePath: "/work/proj-a",
-          independentSlot: null,
-          group: null,
-          kind: "claude" as const,
-          running: true,
-          busy: true,
-          taskMs: 72_000,
-          cumulativeBusyMs: 3_600_000,
-          uptimeMs: 10_800_000,
-          usage: snap.sessions[0]?.usage ?? null,
-          apiMode: "subscription" as const,
-          autopilot: { enabled: true, pureKeepAlive: true, iterations: 7 },
-        },
-        ...snap.sessions.slice(1),
-      ],
-      global: { ...snap.global, autopilotCount: 1 },
-    };
-    const out = formatDashboardText(withAuto);
-    expect(out).toContain("✈️ auto·7");
-  });
-
-  it("omits the autopilot tag when autopilot is not set on a session", () => {
-    const out = formatDashboardText(snap); // snap has no autopilot fields
-    expect(out).not.toContain("✈️ auto");
-  });
-
-  it("formatHeader appends ✈️ N auto when autopilotCount > 0", () => {
-    const withAuto: DashboardSnapshot = {
-      ...snap,
-      global: { ...snap.global, autopilotCount: 2 },
-    };
-    expect(formatHeader(withAuto)).toContain("✈️ 2 auto");
-  });
-
-  it("formatHeader omits the autopilot suffix when autopilotCount is 0", () => {
-    expect(formatHeader(snap)).not.toContain("auto");
-  });
-
   it("prefixes the operator row label with 🏠", () => {
     const opSnap: DashboardSnapshot = {
       sessions: [
@@ -202,7 +310,6 @@ describe("dashboard-view", () => {
         busyCount: 0,
         queueDepth: 0,
         adapters: { telegram: false, lark: false },
-        autopilotCount: 0,
       },
       generatedAt: 0,
     };

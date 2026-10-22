@@ -53,6 +53,34 @@ describe("final summary recovery", () => {
     });
   });
 
+  it("prefers a valid final summary over an earlier dispatch failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["completed after the queue transport failed"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    expect(
+      recoverInvalidOutputFromFinalSummary(workOrder(summaryPath), {
+        status: "dispatch-failed",
+        reason: "queued task could not acquire its supervisor lease",
+        output: "transport failed before the recovered supervisor completed",
+      }),
+    ).toMatchObject({
+      status: "completed",
+      summary: { actionsTaken: ["completed after the queue transport failed"] },
+    });
+  });
+
   it("leaves invalid output unchanged when the final summary file is missing", () => {
     const original: LoopSupervisedRunResult = {
       status: "invalid-output",
@@ -63,5 +91,133 @@ describe("final summary recovery", () => {
     expect(
       recoverInvalidOutputFromFinalSummary(workOrder("/tmp/missing-summary.json"), original),
     ).toBe(original);
+  });
+
+  it("recovers a completed summary with an itemized plan checklist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["completed the bounded recovery"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        commits: [],
+        followUps: [],
+        planReview: {
+          checklistCompleted: ["validated isolation", "ran deterministic gates"],
+          targetScoreMet: true,
+          stopConditionReached: false,
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+          remainingRisks: [],
+        },
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "summary was written but terminal output was invalid",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "completed",
+      summary: { planReview: { checklistCompleted: true } },
+    });
+  });
+
+  it("recovers a blocked legacy summary with explanatory review fields", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "blocked",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["confirmed the historical PR is already merged"],
+        delegatedTasks: [{ projectId: "tmux-claude-bot", status: "blocked" }],
+        finalVerification: "failed",
+        reviewGate: {
+          preMutationReview: ["reviewed the persisted evidence"],
+          postMutationReview: [],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "block",
+          notes: "the required PR is already merged",
+        },
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: "not-applicable: recovery is evidence bounded",
+          stopConditionReached: true,
+          overOptimizationAvoided: true,
+          verificationCompleted: "historical verification was skipped",
+          remainingRisks: ["owner authorization is required"],
+        },
+        commits: [],
+        followUps: ["do not manufacture a replacement report"],
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "legacy supervisor summary was persisted",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "blocked",
+      summary: {
+        reviewGate: { notes: ["the required PR is already merged"] },
+        planReview: { verificationCompleted: false },
+      },
+    });
+  });
+
+  it("recovers a completed legacy summary with an explanatory stop condition", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-final-summary-recovery-"));
+    const summaryPath = join(dir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["verified the existing repair is sufficient"],
+        delegatedTasks: [{ projectId: "tmux-claude-bot", status: "completed" }],
+        finalVerification: "passed",
+        planReview: {
+          checklistCompleted: true,
+          targetScoreMet: true,
+          stopConditionReached: "existing repair is sufficient; a duplicate change is unnecessary",
+          overOptimizationAvoided: true,
+          verificationCompleted: true,
+          remainingRisks: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    const recovered = recoverInvalidOutputFromFinalSummary(
+      { ...workOrder(summaryPath), planning: { required: true } } as LoopWorkOrder,
+      {
+        status: "invalid-output",
+        reason: "invalid-summary",
+        output: "legacy supervisor summary was persisted",
+      },
+    );
+
+    expect(recovered).toMatchObject({
+      status: "completed",
+      summary: { planReview: { stopConditionReached: true } },
+    });
   });
 });

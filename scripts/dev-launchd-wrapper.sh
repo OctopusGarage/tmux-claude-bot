@@ -7,6 +7,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
+# shellcheck source=scripts/sanitize-service-environment.sh
+. "$SCRIPT_DIR/sanitize-service-environment.sh"
+tcb_sanitize_inherited_environment
+
 # shellcheck source=scripts/resolve-node.sh
 . "$SCRIPT_DIR/resolve-node.sh"
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -26,4 +30,4 @@ export TCB_LOG_DIR="$PROD_DIR/logs"
 cd "$REPO_DIR"
 
 # Run the supervisor (it spawns/reloads `tsx src/index.ts`). No bundling.
-exec "$NODE_BIN" "$REPO_DIR/node_modules/.bin/tsx" "$REPO_DIR/src/scripts/dev-supervisor.ts"
+exec "$REPO_DIR/node_modules/.bin/tsx" "$REPO_DIR/src/scripts/dev-supervisor.ts"

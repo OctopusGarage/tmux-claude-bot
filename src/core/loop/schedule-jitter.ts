@@ -1,15 +1,8 @@
+import { AutomationOccurrenceStore } from "../automation/occurrence-window.js";
 import type { LoopConfig } from "./config.js";
+import type { LoopTaskSchedulerJobKind } from "./task-family.js";
 
-export type LoopJitterJobKind =
-  | "architecture"
-  | "workspace-architecture"
-  | "bug-fix"
-  | "test-coverage"
-  | "security-maintenance"
-  | "harness-auto"
-  | "opportunity-discovery"
-  | "pull-request-review"
-  | "repository-pull-request-review";
+export type LoopJitterJobKind = LoopTaskSchedulerJobKind;
 
 export function loopScheduleJitterMs(input: {
   config: LoopConfig;
@@ -22,9 +15,14 @@ export function loopScheduleJitterMs(input: {
   if (!jitter.enabled) return 0;
   const maxMs = loopScheduleJitterMaxMs(input);
   if (maxMs <= 0) return 0;
-  return (
-    stableHash(`${jitter.seed}:${input.jobKey}:${input.jobKind}:${input.scheduledAt}`) % (maxMs + 1)
-  );
+  const occurrence = new AutomationOccurrenceStore().plan({
+    key: `${input.jobKey}:${input.jobKind}`,
+    scheduledAt: input.scheduledAt,
+    windowMs: maxMs,
+    now: input.scheduledAt,
+    source: "loop-engineering",
+  });
+  return occurrence.notBefore - input.scheduledAt;
 }
 
 export function loopScheduleJitterMaxMs(input: {
@@ -47,16 +45,9 @@ function defaultJitterMinutes(jobKind: LoopJitterJobKind, config: LoopConfig): n
   if (jobKind === "security-maintenance") return jitter.securityMaintenanceMaxDelayMinutes;
   if (jobKind === "harness-auto") return jitter.harnessAutoMaxDelayMinutes;
   if (jobKind === "opportunity-discovery") return jitter.opportunityDiscoveryMaxDelayMinutes;
+  if (jobKind === "automation-governance-review")
+    return jitter.automationGovernanceReviewMaxDelayMinutes;
   if (jobKind === "bug-fix") return jitter.bugFixMaxDelayMinutes;
   if (jobKind === "pull-request-review") return jitter.pullRequestReviewMaxDelayMinutes;
   return jitter.repositoryPullRequestReviewMaxDelayMinutes;
-}
-
-function stableHash(value: string): number {
-  let hash = 2_166_136_261;
-  for (let idx = 0; idx < value.length; idx++) {
-    hash ^= value.charCodeAt(idx);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return hash >>> 0;
 }

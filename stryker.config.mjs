@@ -2,9 +2,9 @@
 // RAN; mutation testing tells you a test would NOTICE if that line were wrong —
 // it catches the "executed but unasserted" class (e.g. a dead retry loop whose
 // removal breaks no test). Slow, so it's a periodic / CI-nightly gate, NOT part
-// of `npm test`. Run with `npm run mutation` (optionally `-- --mutate <glob>`).
+// of `pnpm test`. Run with `pnpm mutation` (optionally `-- --mutate <glob>`).
 export default {
-  packageManager: "npm",
+  packageManager: "pnpm",
   testRunner: "vitest",
   reporters: ["html", "clear-text", "progress"],
   ignorePatterns: [".codegraph/**", ".stryker-tmp/**", "coverage/**", "reports/**"],

@@ -8,8 +8,9 @@ const log = createLogger("lark.keepalive");
  * network flaps that leave the WS half-open).
  *
  *  1. 15s timer — independent of the SDK's server-pushed ping cadence.
- *  2. Sleep detection — a tick gap > SLEEP_DETECT_MS means the machine likely
- *     just woke; reset counters and skip this tick (pre-sleep state is stale).
+ *  2. Long-gap detection — a tick gap > SLEEP_DETECT_MS means the machine may
+ *     have slept or the host was busy. Reset counters, but do not tear down a
+ *     socket the SDK still reports as connected; host load can delay timers too.
  *  3. Timer-storm guard — on wake, queued intervals can fire back-to-back;
  *     skip ticks closer than TIMER_STORM_GUARD_MS.
  *  4. HTTP probe — before force-reconnecting, check the Lark domain over
@@ -25,10 +26,13 @@ const TIMER_STORM_GUARD_MS = 5_000;
 const HTTP_PROBE_TIMEOUT_MS = 5_000;
 const DEAD_THRESHOLD = 3;
 const NETWORK_DOWN_LOG_EVERY = 20; // ~every 5min while the network is down
+const WAKE_RECONNECT_DEBOUNCE_MS = 5 * 60_000;
 
 export interface KeepaliveDeps {
   /** Snapshot of the WS state; undefined before the channel first connects. */
   getStatus: () => { state: string; reconnectAttempts: number } | undefined;
+  /** True only after an initial connect attempt failed without exposing status. */
+  shouldRecoverUninitialized?: (() => boolean) | undefined;
   /** HTTP probe target, e.g. https://open.feishu.cn or https://open.larksuite.com. */
   probeUrl: string;
   forceReconnect: () => Promise<void>;
@@ -48,6 +52,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
   let lastTick = 0;
   let consecutiveDown = 0;
   let networkDownTicks = 0;
+  let lastWakeReconnectAt = 0;
   let stopped = false;
 
   const tick = async (): Promise<void> => {
@@ -59,17 +64,47 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     if (sinceLast > 0 && sinceLast < TIMER_STORM_GUARD_MS) {
       return;
     }
-    // (2) Sleep detection — machine likely just woke from sleep.
+    // (2) Long-gap detection — machine likely woke from sleep or was busy.
     if (sinceLast > SLEEP_DETECT_MS) {
-      log.info(`wake-up detected (slept ~${Math.round(sinceLast / 1000)}s)`);
+      log.info(`keepalive long tick gap detected (~${Math.round(sinceLast / 1000)}s)`);
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
+      const status = deps.getStatus();
+      if (!status) return;
+      if (status.state === "connected") return;
+      const reachable = await probe(deps.probeUrl);
+      if (!reachable) {
+        networkDownTicks = 1;
+        lastTick = Date.now();
+        log.warn("network unreachable after wake-up; delaying ws refresh");
+        return;
+      }
+      if (lastWakeReconnectAt > 0 && now - lastWakeReconnectAt < WAKE_RECONNECT_DEBOUNCE_MS) {
+        log.info(
+          `wake-up reconnect skipped; last refresh ${Math.round((now - lastWakeReconnectAt) / 1000)}s ago`,
+        );
+        lastTick = now;
+        return;
+      }
+      log.warn(`force-reconnect after wake-up (state=${status.state})`);
+      try {
+        await deps.forceReconnect();
+        lastWakeReconnectAt = Date.now();
+      } catch (err) {
+        log.error("force-reconnect failed", { err });
+      } finally {
+        lastTick = Date.now();
+      }
       return;
     }
     lastTick = now;
 
-    const status = deps.getStatus();
+    const status =
+      deps.getStatus() ??
+      (deps.shouldRecoverUninitialized?.()
+        ? { state: "uninitialized", reconnectAttempts: 0 }
+        : undefined);
     if (!status) {
       // Channel not initialized yet (pre-connect). Skip.
       return;

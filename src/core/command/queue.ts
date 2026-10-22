@@ -92,8 +92,9 @@ export class MessageQueue {
 
   private writePersistedNow(): void {
     const messages: PersistedMessage[] = [];
-    const collect = (msg: QueuedMessage): void => {
+    const collect = (msg: QueuedMessage, dispatched = false): void => {
       if (msg.ephemeral) return; // local-control messages are never restored
+      if (msg.channel !== "control") return; // user chat prompts are never replayed after restart
       messages.push({
         id: msg.id,
         text: msg.text,
@@ -108,15 +109,18 @@ export class MessageQueue {
         traceId: msg.traceId,
         controlRestore: msg.controlRestore,
         ackMsgId: msg.ackMsgId,
+        ...(dispatched ? { dispatched: true } : {}),
       });
     };
     for (const msg of this.globalQueue.toArray()) collect(msg);
     for (const queue of this.sessionQueues.values()) {
       for (const msg of queue.toArray()) collect(msg);
     }
+    if (this.currentGlobalMessage !== undefined) collect(this.currentGlobalMessage, true);
+    for (const msg of this.currentSessionMessage.values()) collect(msg, true);
     const liveIds = new Set(messages.map((msg) => msg.id));
     for (const msg of this.persistedCarryover.values()) {
-      if (!liveIds.has(msg.id)) messages.push(msg);
+      if (msg.channel === "control" && !liveIds.has(msg.id)) messages.push(msg);
     }
     try {
       fs.writeFileSync(this.persistPath, JSON.stringify(messages, null, 2), "utf-8");
@@ -188,9 +192,9 @@ export class MessageQueue {
    * (e.g. a blocked debounce scope) must release them on "duplicate". */
   enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
     if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
-      log.info(
-        `dedup: skipping identical text from chatId=${msg.chatId} session=${msg.sessionName ?? "global"}`,
-      );
+      log.info("duplicate message skipped", {
+        data: { chatId: msg.chatId, session: msg.sessionName ?? "global", action: msg.action },
+      });
       return "duplicate";
     }
 
@@ -201,18 +205,26 @@ export class MessageQueue {
         this.sessionQueues.set(msg.sessionName, queue);
       }
       if (!queue.enqueue(msg)) {
-        log.warn(`enqueue rejected: session=${msg.sessionName} queue full`);
+        log.warn("message enqueue rejected: session queue full", {
+          data: { session: msg.sessionName, action: msg.action, messageId: msg.id },
+        });
         return false;
       }
-      log.info(`enqueued session=${msg.sessionName} action=${msg.action} msgId=${msg.id}`);
+      log.info("message enqueued", {
+        data: { session: msg.sessionName, action: msg.action, messageId: msg.id },
+      });
       this.persist();
       void this.processSession(msg.sessionName);
     } else {
       if (!this.globalQueue.enqueue(msg)) {
-        log.warn(`enqueue rejected: global queue full`);
+        log.warn("message enqueue rejected: global queue full", {
+          data: { action: msg.action, messageId: msg.id },
+        });
         return false;
       }
-      log.info(`enqueued global action=${msg.action} msgId=${msg.id}`);
+      log.info("global message enqueued", {
+        data: { action: msg.action, messageId: msg.id },
+      });
       this.persist();
       void this.processGlobal();
     }
@@ -225,6 +237,12 @@ export class MessageQueue {
       if (!queue.isEmpty()) return false;
     }
     return true;
+  }
+
+  /** One lifecycle predicate for host-power drain decisions. Unlike `isEmpty`,
+   * this remains true after a message is dequeued and while its handler runs. */
+  hasPendingOrRunning(): boolean {
+    return !this.isEmpty() || this.processingGlobal || this.processingSessions.size > 0;
   }
 
   size(sessionName?: string): number {
@@ -280,7 +298,7 @@ export class MessageQueue {
     const removed = this.sessionQueues.get(sessionName)?.remove((m) => m.id === msgId);
     if (!removed) return false;
     // The reject closure IS the user-facing confirmation (the adapter passes its
-    // localized "已取消" text as the reason) — typed so the closure confirms it
+    // localized cancellation text as the reason — typed so the closure confirms it
     // plainly instead of showing an error/recovery surface.
     removed.reject(new QueueCancelledError(reason));
     this.persist();
@@ -392,10 +410,17 @@ export class MessageQueue {
         },
         () => this.handler?.(msg) ?? Promise.resolve(),
       );
-      log.info(`handler completed session=${label} msgId=${msg.id}`);
+      log.info("queue handler completed", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { queue: label, messageId: msg.id, action: msg.action },
+      });
     } catch (err) {
       const e = normalizeError(err);
-      log.error(`handler threw session=${label} msgId=${msg.id}: ${e.message}`);
+      log.error("queue handler threw", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        err: e,
+        data: { queue: label, messageId: msg.id, action: msg.action },
+      });
       msg.reject(e); // one-shot: a no-op if the handler already settled
     } finally {
       if (sessionName !== undefined) this.observer.finished(sessionName, msg);
@@ -410,14 +435,18 @@ export class MessageQueue {
    */
   private async processSession(sessionName: string, gated = true): Promise<void> {
     if (this.processingSessions.has(sessionName)) {
-      log.info(`processSession already processing session=${sessionName}`);
+      log.debug("session queue already processing", { session: sessionName });
       return;
     }
 
     if (this.processingSessions.size >= this.maxConcurrentSessions) {
-      log.info(
-        `concurrent limit reached (${this.processingSessions.size}/${this.maxConcurrentSessions}), deferring session=${sessionName}`,
-      );
+      log.debug("session queue deferred by concurrency limit", {
+        session: sessionName,
+        data: {
+          active: this.processingSessions.size,
+          limit: this.maxConcurrentSessions,
+        },
+      });
       // Two deferred timers for the same session can both fire when a slot frees,
       // but this is NOT a double-processing bug: the guard above and the
       // `processingSessions.add` below are synchronously contiguous (no `await`
@@ -442,7 +471,7 @@ export class MessageQueue {
 
     // Idle-gate: don't type into a pane busy with work this queue didn't start
     // (the user driving the agent on the desktop). Hold the message — leave it
-    // QUEUED, so it still counts in size()/"排队中" — and recheck shortly.
+    // QUEUED, so it still counts in size()/queued status — and recheck shortly.
     //
     // ONLY a `text` prompt is gated — it's the one action that types into the
     // agent's input. Control verbs (restart/exit/start/esc/…) must NEVER be held
@@ -460,6 +489,16 @@ export class MessageQueue {
       return;
     }
 
+    if (head?.started?.() === false) {
+      log.debug("session queue deferred by start hook", {
+        session: sessionName,
+        data: { action: head.action, messageId: head.id },
+      });
+      this.processingSessions.delete(sessionName);
+      setTimeout(() => void this.processSession(sessionName), this.readyRecheckMs);
+      return;
+    }
+
     const msg = queue.dequeue();
     if (!msg) {
       this.processingSessions.delete(sessionName);
@@ -467,11 +506,13 @@ export class MessageQueue {
       return;
     }
     this.currentSessionMessage.set(sessionName, msg);
-    log.info(`processing session=${sessionName} action=${msg.action} msgId=${msg.id}`);
-    msg.started?.();
+    log.info("message processing started", {
+      data: { session: sessionName, action: msg.action, messageId: msg.id },
+    });
+    this.writePersistedNow();
 
     if (!this.handler) {
-      log.error(`handler not set session=${sessionName}`);
+      log.error("queue handler is not configured", { data: { session: sessionName } });
       this.processingSessions.delete(sessionName);
       this.currentSessionMessage.delete(sessionName);
       msg.reject(new Error("Queue handler not set"));
@@ -494,21 +535,24 @@ export class MessageQueue {
 
   private async processGlobal(): Promise<void> {
     if (this.processingGlobal) {
-      log.info("processGlobal already running");
+      log.debug("global queue processor already running");
       return;
     }
     this.processingGlobal = true;
-    log.info("processGlobal started");
+    log.debug("global queue processor started");
 
     try {
       while (!this.globalQueue.isEmpty()) {
         const msg = this.globalQueue.dequeue();
         if (!msg) break;
         this.currentGlobalMessage = msg;
-        log.info(`processing global action=${msg.action} msgId=${msg.id}`);
+        log.info("global message processing started", {
+          data: { action: msg.action, messageId: msg.id },
+        });
+        this.writePersistedNow();
 
         if (!this.handler) {
-          log.error("handler not set for global message");
+          log.error("global queue handler is not configured");
           this.currentGlobalMessage = undefined;
           msg.reject(new Error("Queue handler not set"));
           continue;
@@ -520,7 +564,7 @@ export class MessageQueue {
     } finally {
       this.processingGlobal = false;
       this.persist();
-      log.info("processGlobal finished");
+      log.debug("global queue processor finished");
     }
   }
 

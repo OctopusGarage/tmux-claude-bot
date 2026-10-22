@@ -42,6 +42,7 @@ describe("Queue", () => {
   it("peeks at first item without removing", () => {
     const queue = new Queue<number>();
     expect(queue.peek()).toBeUndefined();
+    expect(queue.dequeue()).toBeUndefined();
     queue.enqueue(1);
     queue.enqueue(2);
     expect(queue.peek()).toBe(1);

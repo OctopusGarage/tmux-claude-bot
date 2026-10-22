@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   ACTION_META,
   actionButtonRows,
+  actionButtonSpec,
+  actionConfirmationText,
+  actionConfirmButtonText,
+  actionLabel,
   BOT_COMMANDS,
   buildHelpBody,
   CONTROL_INTERRUPTS,
@@ -14,6 +18,10 @@ import {
   HELP_SESSION_ROWS,
   requiresActionConfirmation,
 } from "../../src/core/command/action-registry.js";
+import {
+  buildHelpBody as buildHelpCatalogBody,
+  BOT_COMMANDS as HELP_BOT_COMMANDS,
+} from "../../src/core/command/help-catalog.js";
 
 describe("ACTION_META", () => {
   it("tab is immediate and registered on Telegram", () => {
@@ -100,9 +108,21 @@ describe("getTelegramActions", () => {
 });
 
 describe("BOT_COMMANDS", () => {
+  it("keeps menu/help taxonomy owned by the help catalog module", () => {
+    expect(BOT_COMMANDS).toBe(HELP_BOT_COMMANDS);
+    expect(buildHelpBody).toBe(buildHelpCatalogBody);
+  });
+
   it("contains unique commands", () => {
     const commands = BOT_COMMANDS.map((c) => c.command);
     expect(new Set(commands).size).toBe(commands.length);
+  });
+
+  it("advertises Resource Guardian through the existing sysload command", () => {
+    expect(BOT_COMMANDS.find((item) => item.command === "sysload")?.description).toContain(
+      "Resource Guardian",
+    );
+    expect(buildHelpBody("telegram", "telegram")).toContain("资源守护");
   });
 });
 
@@ -140,6 +160,17 @@ describe("actionButtonRows", () => {
         { action: "interrupt", text: "🛑 中断", style: "danger" },
         { action: "start", text: "🚀 启动", style: "primary" },
       ],
+    ]);
+  });
+
+  it("covers label, confirmation, and unknown action fallbacks", () => {
+    expect(actionLabel("status", "lark")).toContain("状态");
+    expect(actionConfirmationText("exit", "telegram", "proj")).toContain("proj");
+    expect(actionConfirmButtonText("clear", "telegram")).toContain("确认");
+    expect(actionConfirmationText("status", "telegram", "proj")).toBeNull();
+    expect(actionButtonSpec("text", "telegram")).toBeNull();
+    expect(actionButtonRows([["text", "status"]], "telegram")).toEqual([
+      [{ action: "status", text: "📊 状态" }],
     ]);
   });
 });

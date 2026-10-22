@@ -39,7 +39,7 @@ describe("sendQueueStatus", () => {
     const text = ctx.texts().join("\n");
     expect(text).toContain("排队中： 2");
     expect(text).toContain("▶ in-flight");
-    // the in-flight message is rendered under ▶, never counted into 排队中.
+    // The in-flight message is rendered under the active marker, never counted as queued.
     expect(text).not.toContain("排队中： 3");
   });
 

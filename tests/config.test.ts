@@ -116,6 +116,95 @@ describe("loadScriptConfig without args", () => {
 });
 
 describe("loadConfig (real schema)", () => {
+  it("defaults host power to off with the Singapore quiet window", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).hostPower).toEqual({
+      mode: "off",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    });
+  });
+
+  it("maps legacy keep-awake values when the new mode is absent", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE: "1" }).hostPower.mode).toBe(
+      "always",
+    );
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE: "0" }).hostPower.mode).toBe("off");
+  });
+
+  it("parses strict scheduled host-power configuration", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        TCB_KEEP_AWAKE_MODE: "scheduled",
+        TCB_QUIET_HOURS_TIMEZONE: "Asia/Singapore",
+        TCB_QUIET_HOURS_START: "02:00",
+        TCB_QUIET_HOURS_END: "09:30",
+      }).hostPower,
+    ).toEqual({
+      mode: "scheduled",
+      timezone: "Asia/Singapore",
+      quietStart: "02:00",
+      quietEnd: "09:30",
+    });
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_KEEP_AWAKE_MODE: "sometimes" }),
+    ).toThrow();
+    expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_QUIET_HOURS_START: "2am" })).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", TCB_QUIET_HOURS_TIMEZONE: "Mars/Olympus" }),
+    ).toThrow();
+  });
+
+  it("keeps resource guardian disabled in observe mode by default", () => {
+    expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).resourceGuardian).toEqual({
+      enabled: false,
+      mode: "observe",
+      profile: "balanced",
+      tickMs: 15_000,
+    });
+  });
+
+  it("parses strict resource guardian configuration", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        RESOURCE_GUARDIAN_ENABLED: "true",
+        RESOURCE_GUARDIAN_MODE: "protect",
+        RESOURCE_GUARDIAN_PROFILE: "conservative",
+        RESOURCE_GUARDIAN_TICK_MS: "0",
+      }).resourceGuardian,
+    ).toEqual({ enabled: true, mode: "protect", profile: "conservative", tickMs: 0 });
+    expect(
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_ENABLED: "false" }).resourceGuardian
+        .enabled,
+    ).toBe(false);
+
+    for (const invalid of ["bogus", "1", "0", "yes", "TRUE"]) {
+      expect(
+        () =>
+          loadConfig({
+            TELEGRAM_BOT_TOKEN: "t",
+            RESOURCE_GUARDIAN_ENABLED: invalid,
+          }),
+        `RESOURCE_GUARDIAN_ENABLED=${invalid} must be rejected`,
+      ).toThrow();
+    }
+
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_MODE: "unsafe" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_PROFILE: "aggressive" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_TICK_MS: "Infinity" }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({ TELEGRAM_BOT_TOKEN: "t", RESOURCE_GUARDIAN_TICK_MS: "-1" }),
+    ).toThrow();
+  });
+
   it("a blank/invalid LARK_DOMAIN falls back to feishu instead of crashing", () => {
     // A stray `LARK_DOMAIN=` line must not take down a Telegram-only install.
     expect(() =>
@@ -145,21 +234,24 @@ describe("loadConfig (real schema)", () => {
     expect(loadConfig({ TELEGRAM_BOT_TOKEN: "t" }).sessionIdleReaper).toEqual({
       tickMs: 3_600_000,
       maxIdleMs: 259_200_000,
+      loopWorkerMaxIdleMs: 21_600_000,
     });
     expect(
       loadConfig({
         TELEGRAM_BOT_TOKEN: "t",
         SESSION_IDLE_REAPER_TICK_MS: "",
         SESSION_IDLE_REAPER_MAX_IDLE_MS: "",
+        SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: "",
       }).sessionIdleReaper,
-    ).toEqual({ tickMs: 3_600_000, maxIdleMs: 259_200_000 });
+    ).toEqual({ tickMs: 3_600_000, maxIdleMs: 259_200_000, loopWorkerMaxIdleMs: 21_600_000 });
     expect(
       loadConfig({
         TELEGRAM_BOT_TOKEN: "t",
         SESSION_IDLE_REAPER_TICK_MS: "0",
         SESSION_IDLE_REAPER_MAX_IDLE_MS: "0",
+        SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: "0",
       }).sessionIdleReaper,
-    ).toEqual({ tickMs: 0, maxIdleMs: 0 });
+    ).toEqual({ tickMs: 0, maxIdleMs: 0, loopWorkerMaxIdleMs: 0 });
   });
 
   it("a non-empty but non-numeric env var still throws (a real typo)", () => {

@@ -1,1 +1,5 @@
-npm run verify:local
+#!/usr/bin/env sh
+. "$(dirname "$0")/../scripts/git-worktree-config-guard.sh"
+install_git_worktree_config_guard
+
+pnpm verify:local

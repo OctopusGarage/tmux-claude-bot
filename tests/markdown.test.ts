@@ -41,7 +41,7 @@ describe("tablesToCodeBlocks", () => {
   it("aligns columns by display width (CJK counts as 2)", () => {
     const md = "| k | v |\n|---|---|\n| 推送 | x |\n| a | y |\n";
     const out = tablesToCodeBlocks(md);
-    // First column width = "推送" (4 display cols). "a" (1) is padded to 4, i.e.
+    // First column width is 4 display columns. "a" (1) is padded to 4, i.e.
     // "a" + 3 spaces; the CJK cell needs no extra padding before the column gap.
     expect(out).toContain("a   "); // a padded to width 4
     expect(out).toContain("推送  x"); // 推送 (width 4) + 2-space gap + x
@@ -112,7 +112,7 @@ describe("tablesToCodeBlocks", () => {
   });
 
   it("aligns Hangul, fullwidth, and CJK-ExtB (all width 2) like other CJK", () => {
-    // 한 (Hangul U+D55C), Ａ (fullwidth U+FF21), 𠀀 (CJK Ext B U+20000) are width 2.
+    // Hangul, fullwidth Latin, and CJK extension characters are width 2.
     const md = "| k | v |\n| --- | --- |\n| 한Ａ | x |\n| abcd | y |\n";
     const out = tablesToCodeBlocks(md);
     // "한Ａ" = 4 display cols, equal to "abcd"; both get the same trailing gap.

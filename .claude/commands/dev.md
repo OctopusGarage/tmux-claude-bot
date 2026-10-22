@@ -14,19 +14,20 @@ For deploying a release use `/deploy`; to cut one use `/release`.
 Argument: `$ARGUMENTS` — `start` (default), `stop`, or `status`.
 
 Constants: launchd label `com.octopusgarage.tmux-claude-bot` · deploy dir
-`~/.tmux-claude-bot` (its `.env` is the single source of config) · clone code.
+`~/.tmux-claude-bot` · deployed config `<state-dir>/.env` · clone code.
 
 ## status
 
-- `npm run service:status` — managed service + bot process.
+- `pnpm service:status` — managed service + bot process.
 - `pgrep -fl "tmux-claude-bot.*(src/index.ts|dist/cli.js)"` — instance count (>1 ⇒ 409 risk). Managed runs `dist/cli.js`; a `./dev.sh` clone runs `src/index.ts`.
 - Whether `./dev.sh` is currently running (paused prod + clone in hot-reload).
 
 ## start
 
 1. Launch `./dev.sh` in the background. It will, in order: **pause** the managed
-   service (if loaded), then run `tsx watch` with `TCB_ENV_FILE=~/.tmux-claude-bot/.env`
-   (clone code + prod config, hot-reload).
+   service (if loaded), then run `tsx watch` with the deployed
+   `TCB_ENV_FILE=<state-dir>/.env` selected by `dev.sh` (clone code + prod config,
+   hot-reload). Pre-state-split installs retain the bounded legacy fallback.
 2. Tail the dev output until `Connected to Telegram` (and `[lark] connected` if
    Feishu is configured); surface any error.
 3. Tell the user: edits save -> reload instantly; **stop with `/dev stop`** (so
@@ -39,20 +40,20 @@ is paused for the duration.
 
 1. `kill` the `dev.sh` process (SIGTERM, NOT `-9`) — its `trap` resumes the
    managed service automatically. If you only killed the watcher, or used `-9`,
-   run `npm run service:resume` yourself.
-2. Confirm with `npm run service:status` — exactly one healthy managed instance.
+   run `pnpm service:resume` yourself.
+2. Confirm with `pnpm service:status` — exactly one healthy managed instance.
 
 ## Debugging recipes
 
-- Health check: `cd ~/.tmux-claude-bot && npm run doctor` (or in the clone).
-- Logs: `npm run service:logs` (managed), or watch the `./dev.sh` output.
+- Health check: `cd ~/.tmux-claude-bot && pnpm doctor` (or in the clone).
+- Logs: `pnpm service:logs` (managed), or watch the `./dev.sh` output.
 - Inspect a project's pane: the bot's `/peek`, or `tmux attach -t <session>`.
 - **NEVER `curl .../getUpdates` (or otherwise poll) the bot's token** to debug —
   it competes with the running bot's long-poll and stalls it (409). Read the
   bot's own logs / `doctor` instead.
 - "Only `已接收`, no result" usually means the current project points at this bot's
   OWN repo session (a nesting loop) — switch to a real project, never the bot repo.
-- Gates before a PR: `npm test`, `npm run lint`, `npm run lint:types`, `npm run knip`.
+- Gate before a PR or CI-readiness claim: `pnpm verify:local`.
 
 ## Report
 

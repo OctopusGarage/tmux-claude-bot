@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,12 +78,61 @@ projects:
       command: "printf assessment-ok"
 `;
 
+const configWithTargetsText = `
+projects:
+  - id: hub
+    name: Hub
+    path: __PROJECT_DIR__
+    agent: codex
+    enabled: true
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "printf assessment-ok"
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: /repo/geo
+    agent: codex
+    enabled: true
+    repositories:
+      - id: backend
+        name: Backend
+        path: /repo/geo/backend
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: /repo/geo/frontend
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "30 3 * * *"
+      goal: Improve workspace boundaries.
+prReview:
+  repositories:
+    - id: hub-all-prs
+      name: Hub all PRs
+      path: __PROJECT_DIR__
+      repo: OctopusGarage/hub
+      agent: codex
+      enabled: true
+      schedule: "0 4 * * *"
+`;
+
 function tempFile(text: string): { file: string; projectDir: string; stateDir: string } {
   const dir = mkdtempSync(join(tmpdir(), "tcb-loop-command-"));
   const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
   const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-state-"));
   const file = join(dir, "loop.yml");
-  writeFileSync(file, text.replaceAll("__PROJECT_DIR__", projectDir));
+  const resolved = text.replaceAll("__PROJECT_DIR__", projectDir);
+  writeFileSync(
+    file,
+    /^scheduler:/m.test(resolved)
+      ? resolved
+      : `scheduler:\n  jitter:\n    enabled: false\n${resolved}`,
+  );
   process.env.TCB_STATE_DIR = stateDir;
   return { file, projectDir, stateDir };
 }
@@ -154,16 +203,21 @@ describe("runLoopCommand", () => {
     expect(run.stdout).toContain("loop run completed: hub passed, commands 2, committed false");
 
     const reports = runLoopCommand(["reports", "list", "--json"]);
-    expect(JSON.parse(reports.stdout ?? "[]")).toEqual([
-      expect.objectContaining({ projectId: "hub", status: "passed" }),
-    ]);
+    expect(JSON.parse(reports.stdout ?? "{}")).toMatchObject({
+      items: [expect.objectContaining({ projectId: "hub", status: "passed" })],
+      total: 1,
+      truncated: false,
+    });
 
-    const backlog = JSON.parse(
-      runLoopCommand(["backlog", "list", "--json"]).stdout ?? "[]",
-    ) as Array<{
-      id: string;
-      text: string;
-    }>;
+    const backlogResult = JSON.parse(
+      runLoopCommand(["backlog", "list", "--json"]).stdout ?? "{}",
+    ) as {
+      items: Array<{
+        id: string;
+        text: string;
+      }>;
+    };
+    const backlog = backlogResult.items;
     expect(backlog).toEqual([expect.objectContaining({ text: "Improve loop reports." })]);
     expect(runLoopCommand(["backlog", "list", "--all"]).stdout).toContain("loop backlog: 1");
 
@@ -174,6 +228,58 @@ describe("runLoopCommand", () => {
     process.env.TCB_STATE_DIR = stateDir;
     expect(runLoopCommand(["reports", "bad"]).stderr).toContain("Usage: loop reports list");
     expect(runLoopCommand(["backlog", "wat"]).stderr).toContain("Usage: loop backlog list");
+  });
+
+  it("shows eval outcome in loop report listings", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-command-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const runDir = join(stateDir, "loop-runs", "hub", "run-supervisor");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "supervisor-summary.json"),
+      `${JSON.stringify({
+        runId: "run-supervisor",
+        project: { id: "hub", name: "Hub" },
+        status: "completed",
+        timestamps: { startedAt: 1_000, endedAt: 2_000 },
+        evalReportPath: join(runDir, "eval-report.json"),
+      })}\n`,
+    );
+    writeFileSync(
+      join(runDir, "eval-report.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        source: {
+          kind: "work-order-final-summary",
+          workOrderId: "run-supervisor",
+          projectId: "hub",
+        },
+        executionBoundary: "worker-internal",
+        outcome: { status: "passed", finalVerification: "passed" },
+        evidence: [],
+        deterministicGates: [],
+        notes: [],
+        learningCandidates: {
+          regression: [],
+          capability: [],
+          monitorOrTrace: [],
+          documentation: [],
+        },
+      })}\n`,
+    );
+
+    const jsonReports = JSON.parse(runLoopCommand(["reports", "list", "--json"]).stdout ?? "{}");
+    expect(jsonReports).toMatchObject({
+      items: [
+        expect.objectContaining({
+          runId: "run-supervisor",
+          evalOutcome: { status: "passed", finalVerification: "passed" },
+        }),
+      ],
+    });
+    expect(runLoopCommand(["reports", "list"]).stdout).toContain(
+      "- hub: passed run-supervisor eval=passed",
+    );
   });
 
   it("rejects manual agent-supervised runs", () => {
@@ -209,6 +315,12 @@ describe("runLoopCommand", () => {
     const sync = runLoopCommand(["skills", "sync", file, "--json"]);
     expect(JSON.parse(sync.stdout ?? "{}")).toMatchObject({ phase: "skill-sync", applied: 1 });
     expect(runLoopCommand(["skills", "list"]).stdout).toContain("loop skills: 1 recorded");
+    expect(JSON.parse(runLoopCommand(["skills", "list", "--json"]).stdout ?? "[]")).toEqual([
+      expect.objectContaining({
+        skillId: "improve-codebase-architecture",
+        status: "installed",
+      }),
+    ]);
 
     expect(runLoopCommand(["skills", "refresh"]).stderr).toBe(
       "Usage: loop skills refresh <file> [--write] [--json]",
@@ -216,6 +328,11 @@ describe("runLoopCommand", () => {
     expect(runLoopCommand(["skills", "refresh", file, "--bad"]).stderr).toContain(
       "unknown loop skills refresh option",
     );
+    const beforeRefresh = readFileSync(file, "utf8");
+    const dryRunRefresh = runLoopCommand(["skills", "refresh", file]);
+    expect(dryRunRefresh.stdout).toContain("loop skills refresh completed: refreshed 1, changed 1");
+    expect(readFileSync(file, "utf8")).toBe(beforeRefresh);
+
     const refresh = runLoopCommand(["skills", "refresh", file, "--write", "--json"]);
     expect(JSON.parse(refresh.stdout ?? "{}")).toMatchObject({
       phase: "skill-refresh",
@@ -223,6 +340,73 @@ describe("runLoopCommand", () => {
       changed: 1,
     });
     expect(readFileSync(file, "utf8")).toContain(`ref: ${ref}`);
+  });
+
+  it("lists and toggles loop targets without deleting schedules", () => {
+    const { file } = tempFile(configWithTargetsText);
+
+    expect(runLoopCommand(["targets"]).stderr).toContain("Usage: loop targets list");
+    expect(runLoopCommand(["targets", "list"]).stderr).toContain("Usage: loop targets list");
+    expect(runLoopCommand(["targets", "list", file, "--bad"]).stderr).toContain(
+      "unknown loop targets list option",
+    );
+    expect(
+      runLoopCommand(["targets", "disable", file, "repo", "hub-all-prs", "--bad"]).stderr,
+    ).toContain('unknown loop targets disable option "--bad"');
+    expect(
+      runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs", "--bad"]).stderr,
+    ).toContain('unknown loop targets enable option "--bad"');
+    expect(runLoopCommand(["targets", "list", file]).stdout).toContain(
+      "- project:hub: enabled scheduled jobs=architecture",
+    );
+
+    const listed = JSON.parse(
+      runLoopCommand(["targets", "list", file, "--json"]).stdout ?? "[]",
+    ) as Array<{ kind: string; id: string; enabled: boolean; scheduled: boolean }>;
+    expect(listed).toEqual([
+      expect.objectContaining({ kind: "project", id: "hub", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "workspace", id: "geo", enabled: true, scheduled: true }),
+      expect.objectContaining({ kind: "repo", id: "hub-all-prs", enabled: true, scheduled: true }),
+    ]);
+
+    expect(runLoopCommand(["targets", "disable"]).stderr).toBe(
+      "Usage: loop targets <enable|disable> <file> <project|workspace|repo> <id> [--json]",
+    );
+    expect(runLoopCommand(["targets", "disable", file, "unknown", "hub"]).stderr).toContain(
+      'unknown loop target kind "unknown"',
+    );
+    expect(runLoopCommand(["targets", "disable", file, "project", "missing"]).stderr).toContain(
+      'loop target not found: project "missing"',
+    );
+
+    const disabled = runLoopCommand(["targets", "disable", file, "repo", "hub-all-prs", "--json"]);
+    expect(JSON.parse(disabled.stdout ?? "{}")).toMatchObject({
+      kind: "repo",
+      id: "hub-all-prs",
+      enabled: false,
+      changed: true,
+    });
+    expect(readFileSync(file, "utf8")).toContain("enabled: false");
+    expect(readFileSync(file, "utf8")).toContain("schedule: 0 4 * * *");
+
+    const afterDisable = JSON.parse(
+      runLoopCommand(["targets", "list", file, "--json"]).stdout ?? "[]",
+    ) as Array<{ kind: string; id: string; enabled: boolean; scheduled: boolean }>;
+    expect(afterDisable.find((target) => target.id === "hub-all-prs")).toMatchObject({
+      enabled: false,
+      scheduled: false,
+    });
+
+    const enabled = runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs", "--json"]);
+    expect(JSON.parse(enabled.stdout ?? "{}")).toMatchObject({
+      kind: "repo",
+      id: "hub-all-prs",
+      enabled: true,
+      changed: true,
+    });
+    expect(runLoopCommand(["targets", "enable", file, "repo", "hub-all-prs"]).stdout).toBe(
+      "loop target enable: repo:hub-all-prs unchanged",
+    );
   });
 
   it("handles unknown commands and parse errors", () => {

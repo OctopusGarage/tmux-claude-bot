@@ -1,4 +1,4 @@
-/** 窄接口:UI 唯一依赖。工厂可注入 fake caller 供测试。 */
+/** Narrow UI-facing interface. The factory accepts an injectable fake caller for tests. */
 
 import type { AppConfig } from "../../shared/types.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
@@ -25,13 +25,13 @@ export function makePromptLib(config: AppConfig, caller?: PromptCaller): PromptL
   };
 }
 
-/** 反查:short-id → 提示词名(扫全量)。镜像 resolveAliveSessionByShortId。 */
+/** Reverse lookup from short id to prompt name. Mirrors resolveAliveSessionByShortId. */
 export async function resolvePromptByShortId(lib: PromptLib, id: string): Promise<string | null> {
   const all = await lib.search("", "");
   return all.find((p) => sessionShortId(p.name) === id)?.name ?? null;
 }
 
-/** 反查:short-id → 标签。Pass `prefetched` to skip a redundant listTags call. */
+/** Reverse lookup from short id to tag. Pass `prefetched` to skip a redundant listTags call. */
 export async function resolveTagByShortId(
   lib: PromptLib,
   id: string,

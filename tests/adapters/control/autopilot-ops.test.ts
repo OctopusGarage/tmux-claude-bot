@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlClient } from "../../../src/adapters/control/client.js";
 import { startControlServer } from "../../../src/adapters/control/server.js";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 
@@ -45,10 +44,7 @@ vi.mock("../../../src/core/projects/sessionPathMap.js", () => ({
 }));
 
 type EnqueueVerdict = "queued" | "duplicate" | false;
-function fakeDeps(
-  notifier?: NotifierRegistry,
-  enqueue?: (m: QueuedMessage) => EnqueueVerdict,
-): HandlerDeps {
+function fakeDeps(enqueue?: (m: QueuedMessage) => EnqueueVerdict): HandlerDeps {
   return {
     config: {
       autopilot: { maxRounds: 10 },
@@ -58,6 +54,7 @@ function fakeDeps(
           agent: "codex",
           poolSize: 1,
           resetBeforeWorkOrder: "clear",
+          worktreeIsolation: "isolated",
         },
       },
       projectSessionPrefix: "tmux_proj_",
@@ -72,7 +69,6 @@ function fakeDeps(
         }),
     },
     activity: { onActivity: () => () => {} },
-    notifier: notifier ?? new NotifierRegistry(),
   } as unknown as HandlerDeps;
 }
 
@@ -115,14 +111,10 @@ describe("control autopilot ops (real unix socket)", () => {
     expect(result.status).toContain("LOOP_SUPERVISOR_ENABLED");
   });
 
-  it("push: autopilot notice broadcast reaches the client as an 'autopilot' event", async () => {
-    const notifier = new NotifierRegistry();
-    const c = await connected(fakeDeps(notifier));
-    const received = new Promise<{ session: string; kind: string }>((resolve) => {
-      c.once("autopilot", (msg: { session: string; kind: string }) => resolve(msg));
-    });
-    await notifier.broadcast({ kind: "awaitHuman", session: "s1", goalId: "g" });
-    const evt = await received;
-    expect(evt).toMatchObject({ session: "s1", kind: "awaitHuman" });
+  it("autopilot cancel uses the cancellation path instead of starting a new delegate", async () => {
+    const c = await connected();
+    const result = await c.autopilot("s2", "cancel");
+    expect(result.status).toContain("No active delegated task");
+    expect(result.status).not.toContain("Autopilot delegate blocked");
   });
 });

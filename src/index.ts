@@ -2,26 +2,32 @@ import { startControlServer } from "./adapters/control/server.js";
 import { startLark } from "./adapters/lark/start.js";
 import { startTelegram } from "./adapters/telegram/start.js";
 import { bootstrap } from "./bootstrap.js";
+import { reconcileAndResumeActiveDelegatedTasksAfterRestart } from "./core/autopilot/delegated-task.js";
+import { shouldIgnoreUncaughtException } from "./core/infra/fatal-errors.js";
 import {
   acquireInstanceLock,
   InstanceLockHeldError,
   releaseInstanceLock,
 } from "./core/infra/instance-lock.js";
-import { detectUncleanRestart, markCleanShutdown } from "./core/infra/lifecycle.js";
+import { detectUncleanRestartIdentity, markCleanShutdown } from "./core/infra/lifecycle.js";
 import { startLoopEngineering } from "./core/loop/service.js";
 import { startLoopSupervisors } from "./core/loop/supervisor-session.js";
 import { startLongTaskMonitor } from "./core/notifications/long-task-monitor.js";
-import { startKeepAwake, stopKeepAwake } from "./core/platform/keep-awake.js";
+import { notifyCrashRecovery } from "./core/notifications/startup-notification.js";
 import { managedRestartCommand } from "./core/platform/service-hints.js";
+import { startHostPowerManager } from "./core/power/power-manager.js";
 import { startOperator } from "./core/projects/operator-home.js";
 import { getPathBySession } from "./core/projects/sessionPathMap.js";
 import { autoRecoverOnBoot } from "./core/recovery/recover.js";
 import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
-import { startScheduler } from "./core/scheduler/scheduler-loop.js";
+import { startResourceGuardian } from "./core/resource-guardian/service.js";
+import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
+import { startSystemSelfHeal } from "./core/tasks/system-self-heal-service.js";
 import { createLogger } from "./shared/utils/logger.js";
 import { sleep } from "./shared/utils/sleep.js";
+import { appVersion } from "./shared/version.js";
 
 const AUTO_START_DELAY_MS = 1000;
 // Delay auto-recovery a few seconds after boot so init()/adapters settle first.
@@ -30,13 +36,22 @@ const AUTO_RECOVER_DELAY_MS = 5000;
 const log = createLogger("boot");
 const fatalLog = createLogger("index");
 let shuttingDown = false;
+let stopResourceGuardian = (): void => {};
+let stopHostPowerManager = (): void => {};
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
 // ("Process Management") for the launchd KeepAlive trap this guards against.
 try {
   acquireInstanceLock();
-  log.info("instance lock acquired", { data: { pid: process.pid } });
+  log.info("service process started", {
+    data: {
+      pid: process.pid,
+      version: appVersion(),
+      node: process.version,
+      platform: process.platform,
+    },
+  });
 } catch (err) {
   if (err instanceof InstanceLockHeldError) {
     log.error(
@@ -50,11 +65,6 @@ try {
 
 const deps = bootstrap();
 const { config, currentProject, bridge } = deps;
-
-// Keep the Mac awake on AC power (macOS, opt-in) for the bot's lifetime. In the
-// bot process — not the launchd wrapper — so it covers every launch path
-// identically (dev tsx, managed service, manual run).
-startKeepAwake(config.keepAwake);
 
 async function init(): Promise<void> {
   // Restore every channel's current session (Telegram + Feishu may differ).
@@ -94,7 +104,7 @@ async function init(): Promise<void> {
 
 // Did the previous run exit cleanly? If not, launchd auto-recovered a crash —
 // the adapters alert the owner once connected. Clean shutdowns clear the marker.
-const recoveredFromCrash = detectUncleanRestart();
+const recoveredCrashIdentity = detectUncleanRestartIdentity();
 function noteShutdownSignal(signal: "SIGINT" | "SIGTERM"): void {
   shuttingDown = true;
   log.info("shutdown signal received", { data: { signal } });
@@ -106,26 +116,22 @@ process.once("SIGINT", markCleanShutdown);
 process.once("SIGTERM", markCleanShutdown);
 process.once("SIGINT", releaseInstanceLock);
 process.once("SIGTERM", releaseInstanceLock);
-process.once("SIGINT", stopKeepAwake);
-process.once("SIGTERM", stopKeepAwake);
+process.once("SIGINT", () => stopHostPowerManager());
+process.once("SIGTERM", () => stopHostPowerManager());
+process.once("SIGINT", () => stopResourceGuardian());
+process.once("SIGTERM", () => stopResourceGuardian());
 
 process.on("uncaughtException", (err) => {
-  if (shuttingDown && isAbortLikeError(err)) {
-    fatalLog.info(`ignored shutdown abort: ${err.message}`);
+  if (shouldIgnoreUncaughtException(err, shuttingDown)) {
+    fatalLog.warn(`ignored transient abort: ${err.message}`);
     return;
   }
-  fatalLog.error(`uncaughtException: ${err.stack ?? err.message}`);
+  fatalLog.error("uncaught exception", { err });
   process.exit(1); // launchd restarts → startup flags the unclean exit → owner alert
 });
 process.on("unhandledRejection", (reason) => {
-  fatalLog.error(
-    `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : reason}`,
-  );
+  fatalLog.error("unhandled rejection", { err: reason });
 });
-
-function isAbortLikeError(err: unknown): err is Error {
-  return err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
-}
 
 // Each adapter is independently optional: Telegram is on when TELEGRAM_BOT_TOKEN is
 // set, Feishu/Lark when LARK_* is configured. LARK_ONLY forces Feishu-only even with
@@ -135,10 +141,14 @@ const larkEnabled = Boolean(config.lark);
 
 if (!telegramEnabled && !larkEnabled) {
   log.error(
-    "No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `npm run setup:lark` for Feishu/Lark, then restart.",
+    "No chat adapter configured. Set TELEGRAM_BOT_TOKEN for Telegram and/or run `pnpm setup:lark` for Feishu/Lark, then restart.",
   );
   process.exit(1);
 }
+
+// Local control transport for the terminal TUI and diagnostics. Bind this before
+// boot recovery so CLI health checks do not look dead while startup work is slow.
+startControlServer(deps);
 
 await init();
 
@@ -147,10 +157,27 @@ await init();
 startRunningSweep(deps, config.runningSweepMs);
 startSessionIdleReaper(deps, config.sessionIdleReaper);
 
-startScheduler(deps);
-startLoopEngineering(deps, config.loopEngineering);
+let loopStartupReady = true;
+try {
+  await startLoopEngineering(deps, config.loopEngineering);
+} catch (err) {
+  loopStartupReady = false;
+  log.error("loop engineering startup reconciliation failed; automatic recovery remains paused", {
+    err,
+  });
+}
 // Boot the background Loop Supervisor session. No-op unless explicitly enabled.
 void startLoopSupervisors(deps);
+// Active delegation recovery must observe the Loop startup barrier. Otherwise a
+// restart can resume a WorkOrder before its already-written final summary has
+// been reconciled and settled.
+if (loopStartupReady) {
+  try {
+    await reconcileAndResumeActiveDelegatedTasksAfterRestart(deps);
+  } catch (err) {
+    log.error("active delegation startup recovery failed", { err });
+  }
+}
 // Boot the home operator session (provision home dir + create session + start agent).
 // Fire-and-forget — must not block boot. No-op when HOME_OPERATOR_ENABLED=false.
 void startOperator(deps);
@@ -164,26 +191,27 @@ if (config.autoRecover) {
   ).unref?.();
 }
 
-// Local control transport for the terminal TUI — a unix socket that drives this
-// same bot (one queue, no races). Non-blocking; best-effort.
-startControlServer(deps);
+startSystemSelfHeal(deps);
 
 let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  void notifyCrashRecovery(deps.notifications, recoveredCrashIdentity);
+  stopHostPowerManager = startHostPowerManager(deps);
+  stopResourceGuardian = startResourceGuardian(deps);
+  startRuntimeGuardian(deps);
   startDailyTaskAudit(deps);
   startLongTaskMonitor(deps);
 };
 
 // Lark connects over a WebSocket (non-blocking); start it first. No-op unless
 // config.lark is set.
-startLark(deps, { recoveredFromCrash });
+startLark(deps);
 
 if (telegramEnabled) {
   // grammy's long-poll loop blocks until the bot is stopped; this runs last.
   await startTelegram(deps, {
-    recoveredFromCrash,
     onNotificationsReady: startNotificationDrivenServices,
   });
   startNotificationDrivenServices();

@@ -29,10 +29,17 @@ export const en: Messages = {
   promptTranslateInstallOk:
     "🌐 Prompt translation dependencies are ready · you can enable translation mode now",
   promptTranslateInstallFailed: (e) =>
-    `🌐 Install failed · ${e} · run npm run translate:install on the host for details`,
+    `🌐 Install failed · ${e} · run pnpm translate:install on the host for details`,
+  promptTranslateCommandUsage: (usage) => `Usage: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Prompt translation unavailable: ${error}`,
+  promptTranslateDisabledFor: (source) => `Prompt translation disabled for ${source}`,
+  promptTranslateStatusOff: (source) => `Prompt translation for ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Prompt translation for ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Enabled. ${line}`,
   voiceEmpty: "Didn’t catch that · say it again or send text",
   voiceUnsupported: "Voice transcription needs Apple Silicon",
-  voiceNotInstalled: "Voice not installed (run `npm run whisper:install` in the repo)",
+  voiceNotInstalled: "Voice not installed (run `pnpm whisper:install` in the repo)",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} Current session: ${project}`,
   projectStatusSession: (alive) =>
@@ -70,6 +77,12 @@ export const en: Messages = {
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
   btnRight: "➡️ right",
+  btnKeys: "⌨️ Keys",
+  keyPaletteTitle: "Keyboard shortcuts",
+  keyUsage:
+    "Send one key or chord: /key Shift+Left · /key Ctrl+Left · /key Alt+B. Use Ctrl, Alt, Shift with +. Tap a shortcut below. The active application determines its effect.",
+  cmdKey: "Send a key chord, or open the key palette",
+  keySent: (chord: string) => `Key sent: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 Status",
   btnStart: "🚀 Start",
@@ -138,6 +151,8 @@ export const en: Messages = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
   adoptFailed: "Takeover failed: process would not end, or the agent did not start",
+  adoptAgentDidNotStart:
+    "Takeover failed: the original process ended, but the agent did not start in the managed session. Use /peek to inspect the pane, fix the shell prompt or startup command, then retry.",
   adoptBusy:
     "The target session already has a program in the foreground (another agent or something else). Aborted without touching the original — please exit it there first, then adopt again.",
   adoptProjectRunning:
@@ -150,10 +165,16 @@ export const en: Messages = {
   agentNotRunningRestart: "Not running — use /resume to restore it, or /start for a new session",
   contentTruncated: "...(content too long, truncated)",
   agentEmptyOutput: "Returned nothing · /peek to view the pane",
+  agentReplyUnavailable:
+    "No valid agent reply was captured · use /peek to inspect the pane, then retry if needed.",
   agentStarted: "✅ Started",
   agentResumed: "🔄 Resumed the previous session",
   agentResumeMissingState: "No resumable previous session state — use /start to create a new one.",
   agentAlreadyRunning: "✅ Already running",
+  agentInputNotReady:
+    "The agent is not ready to receive input yet. Try again shortly; if it keeps happening, restart this session.",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `Project automation is running, so ordinary messages are blocked for now.\nTask: ${taskKind}\nProject: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nWait for the task to finish, or inspect/cancel it before continuing.`,
   agentStartedWith: (label) => `✅ Started with "${label}"`,
   startPickerTitle: "🚀 Choose how to start",
   startPickerPrompt: "Multiple start commands are configured — pick one:",
@@ -256,7 +277,7 @@ export const en: Messages = {
   currentProjectTitle: "Current session",
   noRecentProjects: "No recent projects\n\nAdd one with /add_project <path>",
   messageTooLong: (len, max) => `Message too long · ${len} > ${max} chars`,
-  onlyTextVoice: "Only text and voice messages are supported",
+  onlyTextVoice: "Only text, voice, and image messages are supported",
   handlerErrorTelegram: "⚠️ Something went wrong handling that message; please retry.",
   handlerError:
     "⚠️ Something went wrong handling that message; please retry. If the group stops responding, send /restore to reconnect the project.",
@@ -277,6 +298,8 @@ export const en: Messages = {
   taskStillRunningNotice:
     "⏳ Still running — the result will be pushed automatically when it finishes · /peek for a live look",
   voiceDownloadFailed: "Voice download failed · network hiccup, please retry",
+  imageDownloadFailed: "Image download failed · network hiccup, please retry",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 You",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot recovered from an unclean exit (crash / kill) · ${time}`,
@@ -286,14 +309,14 @@ export const en: Messages = {
   noShortId: (id) => `Short ID not found: ${id}`,
   pathNotAllowed: (dirs) => `Path not in the allow-list · allowed: ${dirs.join(", ")}`,
   voiceNotEnabled:
-    "🎙️ Voice not enabled · send /voice_install (Apple Silicon only), or run `npm run whisper:install` on the host",
+    "🎙️ Voice not enabled · send /voice_install (Apple Silicon only), or run `pnpm whisper:install` on the host",
   voiceNeedsAppleSilicon:
     "🎙️ Voice transcription needs Apple Silicon (macOS arm64) · this host can't, send text instead",
   voiceAlreadyInstalled: "🎙️ Voice is ready · just send a voice message",
   voiceInstalling: "🎙️ Installing voice · first run downloads deps (~1-2 min), hold on…",
   voiceInstallOk: "🎙️ Voice is ready · you can send voice messages now",
   voiceInstallFailed: (e) =>
-    `🎙️ Install failed · ${e} · run \`npm run whisper:install\` on the host for details`,
+    `🎙️ Install failed · ${e} · run \`pnpm whisper:install\` on the host for details`,
   voiceLangCurrent: (lang) =>
     `🎙️ Recognition language: ${lang === "auto" ? "auto-detect" : lang} · tap below to switch`,
   voiceLangSet: (lang) =>
@@ -400,74 +423,120 @@ Send any text → forwarded to the agent → reply`,
   homeOperatorDisabled: "Home operator session is not enabled",
   homeOperatorSwitched: "🏠 Switched to the home operator session",
   cmdDashboard: "View the global dashboard (overview of all sessions)",
-  cmdBatch: "Batch scheduler: view status or control a batch run (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegate the current session's work to the Loop Supervisor",
-  cmdOpportunity: "Review proactive opportunity suggestions and delegate approved work",
-  cmdGoals: "List autopilot goal presets",
-  cmdSysload: "Show machine load, heat, and runaway processes",
+  cmdOpportunity: "Review and discuss proactive opportunity suggestions",
+  cmdSysload: "Show machine load, heat, runaway processes, and Resource Guardian",
   sysloadTitle: "🖥 System load",
   dashboardTitle: "📊 Dashboard",
+  dashboardOverallHealth: "Overall Health",
+  dashboardAttention: "Attention",
+  dashboardActiveWork: "Active Work",
+  dashboardAutomation: "Automation",
+  dashboardOperatorAi: "Operator and AI Interfaces",
+  dashboardRuntimeDomains: "Runtime Domains",
+  dashboardRecentOutcomes: "Recent Outcomes",
+  dashboardProjectSessions: "Project Sessions",
+  dashboardNone: "none",
+  dashboardMore: "more",
+  dashboardEnabled: "enabled",
+  dashboardIdle: "idle",
+  dashboardShown: "shown",
+  dashboardHealthy: "healthy",
+  dashboardSession: "session",
+  dashboardSkills: "skills",
+  dashboardMcpProfiles: "MCP profiles",
+  dashboardPromptLibrary: "Prompt Library",
+  dashboardSessions: "sessions",
+  dashboardRunning: "running",
+  dashboardBusy: "busy",
+  dashboardQueue: "queue",
+  dashboardUp: "up",
+  dashboardNoAdapters: "none",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "WorkOrders",
+      "repository-reviews": "Repository PR Reviews",
+      automation: "Automation",
+      "daily-task-audit": "Daily Task Audit",
+      "runtime-guardian": "Runtime Guardian",
+      "resource-guardian": "Resource Guardian",
+      "agent-capacity": "Agent Capacity",
+      power: "Service and Power",
+      "operator-ai": "Operator and AI Interfaces",
+    })[id] ?? id,
+  dashboardHealthHealthy: "healthy",
+  dashboardHealthAttention: "attention",
+  dashboardHealthDegraded: "degraded",
+  dashboardAttentionOperatorSession: "Home Operator Session needs attention",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator skills ${installed}/${expected} ready`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `Managed MCP profiles ${installed}/${expected} ready`,
+  dashboardAttentionOperatorPrompt: "Configured Prompt Library is unavailable",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} WorkOrder failed`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) => `${project} WorkOrder is abandoned`,
+  dashboardAttentionWorkOrderStale: (project: string) => `${project} WorkOrder dispatch is stale`,
+  dashboardAttentionAutomationDependency: (automation: string) =>
+    `${automation} has a disabled dependency`,
+  dashboardAttentionDailyAudit: (count: number) => `${count} Daily Task Audit item needs attention`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} has a Runtime Guardian finding`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
+    "Resource Guardian needs attention",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) =>
+    `${agent} capacity is ${state}`,
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "Power policy needs attention",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} is retrying automatically (epoch ${retryEpoch})`
+      : status === "manual-review"
+        ? `${project} has a verified human boundary`
+        : `${project} repository PR review retry budget is exhausted`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "Delegate the current session context to the Loop Supervisor for implementation, review, verification, PR handling, and final notification.",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot paused [${session}]: ${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot stopped [${session}]: ${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 autopilot goal paused [${session}]: usage reached the ${pct}% threshold`,
-  autopilotNotifyMaxIter: (session) =>
-    `⏹️ autopilot goal stopped [${session}]: max iterations reached`,
-  autopilotNotifyWallClock: (session) =>
-    `⏹️ autopilot goal stopped [${session}]: time budget exhausted`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]: phase looks done — confirm with /autopilot confirm or resume with /autopilot reject`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ autopilot goal complete [${session}]: ${goalId} (please confirm)`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ autopilot cycle complete [${session}]: ${rounds} round(s) done (please confirm)`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ autopilot keep-alive task complete [${session}]: completion marker seen`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]: starting goal ${goalId} (${pos}/${total} · round ${round}/${rounds})`,
-  batchRunStarted: (planId, tasks) => `🚀 Batch run started: plan ${planId}, ${tasks} task(s)`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ Batch pool paused [${agent}]: quota reached, resuming at ${resumeAt}`,
-  batchRunComplete: (summary) => `✅ Batch run complete\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "Global keep-alive ON: all live sessions are auto-managed (use /autopilot off to exclude one)"
-      : "Global keep-alive OFF",
-  autopilotStatus: (o) =>
-    `Autopilot: ${o.enabled ? "on" : "off"} (${o.pureKeepAlive ? "keep-alive" : "goal-driven"}, ${o.iterations} interventions, persona=${o.persona})${o.goal ? ` (goal ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
+    "Delegate the current session context to the Loop Supervisor. Start immediately when the scope is already clear, or review the plan first when you want an explicit checklist and stop conditions before execution.",
   autopilotUsage: (raw) =>
     `Unknown subcommand "${raw}". Usage: /autopilot [requirement] or /autopilot delegate [requirement]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Enable keep-alive/goals`,
-  btnApDisable: "⏹ Disable keep-alive/goals",
+  autopilotPlanPreviewBody:
+    "Plan before delegation\n\nObjective: continue the current user-confirmed task from the live session and repository state until it is genuinely complete.\n\nChecklist: inspect live context, git status, recent commits, existing PRs, and prior verification; identify what remains; make only necessary changes; review the diff; run relevant local verification, coverage review for touched risk paths, and existing evals when justified.\n\nAcceptance: the final summary records what changed, what was verified, PR/merge result when applicable, final branch, clean worktree, and any real blocker with evidence.\n\nStop conditions: stop when the task is complete, a real blocker is proven, or the planned scope would require unrelated work. Avoid optimizing beyond the bounded task.\n\nNon-goals: do not expand scope, redo already-satisfactory work, install target-project dependencies just to satisfy bot policy, or merge unless the configured project policy allows it.\n\nConfirm only if this plan matches your intent.",
+  langUsage: "Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "Use `/sessions <id-prefix>` to resume",
+  opportunityProjectFallback: "Project",
+  opportunityProjectCount: (n) => `${n} projects`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} suggestion${n === 1 ? "" : "s"}\nContinue the discussion; when you are ready to execute, delegate with Autopilot.`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} suggestion${n === 1 ? "" : "s"}\nDiscuss first, then delegate once the scope is clear.`,
+  btnOpportunityContinueDiscuss: "Continue discussion",
+  btnOpportunityDiscussAll: "Discuss all",
+  btnOpportunityShow: "Details",
+  btnOpportunityDiscuss: "Discuss",
+  btnOpportunityDismiss: "Skip",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `Skipped ${n} opportunit${n === 1 ? "y" : "ies"}.`,
+  opportunitySkippedMissing: (n, ids) =>
+    `Skipped ${n} opportunit${n === 1 ? "y" : "ies"}. Missing: ${ids}`,
+  opportunityMixedProjects: "Cannot discuss mixed-project opportunities together.",
+  opportunityCannotOpenProject: (reason) => `Cannot open project for discussion: ${reason}`,
+  opportunityDiscussionStarted: (n) => `Discussing ${n} opportunit${n === 1 ? "y" : "ies"}.`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `This project is running an automation task, so discussion is temporarily blocked. Try again after the task finishes.\n\nTask: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "The project agent is processing work or has queued messages, so discussion is temporarily blocked. Try again after the current task finishes.",
+  opportunityGitStatusUnknown: (reason) =>
+    `Cannot confirm project git status, so discussion is temporarily blocked.\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `The project worktree is dirty, so discussion is temporarily blocked. Resolve the existing changes first.\n\n${preview}`,
   btnApDelegate: "🚀 Continue via supervisor",
+  btnApDelegateNow: "🚀 Delegate now",
+  btnApReviewPlan: "📋 Review plan first",
+  btnApConfirmDelegate: "✅ Confirm delegation",
   btnApCancelDelegate: "⛔ Cancel delegate",
-  btnApPickGoals: "🎯 Pick goals",
-  btnApGlobalOn: "🌐 Global: on",
-  btnApGlobalOff: "🌐 Global: off",
-  btnApStop: "⏹ Stop goal",
-  btnApConfirm: "✅ Confirm done",
-  btnApContinue: "▶️ Keep polishing",
+  btnApQueue: `${UI_ICONS.tone.queue} View queue`,
   btnApBack: "↩︎ Back",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ Start (${n} goal(s) · ${rounds} round(s))`,
-  apRoundsLabel: (rounds: number) => `Rounds: ${rounds}`,
-  goalTestCoverage: "Raise test coverage",
-  goalFixTests: "Fix failing tests",
-  goalCodeReview: "Code review",
-  goalAddFeature: "Add feature",
-  goalRefactorElegant: "Refactor to elegant",
-  goalUiPolish: "Polish UI",
-  goalImproveArchitecture: "Improve architecture",
-  goalHardenStandards: "Harden standards & gates",
-  goalPolishGithub: "Polish GitHub presence",
-  goalSyncDocs: "Align docs with code",
-  autopilotGoalStarted: (id) => `Goal started: ${id}`,
-  autopilotUnknownGoal: (ids) => `Unknown goal. Available: ${ids}`,
-  goalsTitle: "🎯 Goal presets",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor queue`,
   noLogsContext: "No current session. Select a project or specify a trace (/logs <traceId>).",
 
   // ── group binding (Feishu) ──

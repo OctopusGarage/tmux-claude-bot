@@ -36,6 +36,24 @@ const createTestMessage = (
 });
 
 describe("MessageQueue", () => {
+  it("reports pending and in-flight work through one lifecycle predicate", async () => {
+    const queue = new MessageQueue(10);
+    let release: (() => void) | undefined;
+    queue.setHandler(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    expect(queue.hasPendingOrRunning()).toBe(false);
+    queue.enqueue(createTestMessage({ id: "active" }));
+    await waitFor(() => release !== undefined);
+    expect(queue.hasPendingOrRunning()).toBe(true);
+    release?.();
+    await waitFor(() => !queue.hasPendingOrRunning());
+    expect(queue.hasPendingOrRunning()).toBe(false);
+  });
+
   describe("basic processing", () => {
     it("processes messages with handler", async () => {
       const queue = new MessageQueue(10);
@@ -94,6 +112,37 @@ describe("MessageQueue", () => {
       expect(rejected?.message).toBe("boom");
     });
 
+    it("keeps a queued message pending when its start hook cannot acquire a lease", async () => {
+      const queue = new MessageQueue(10);
+      const handled: string[] = [];
+      const rejections: string[] = [];
+      let canStart = false;
+      queue.setReadinessProbe(async () => true, 5);
+      queue.setHandler(async (msg) => {
+        handled.push(msg.id);
+        msg.resolve("ok");
+      });
+
+      queue.enqueue({
+        ...createTestMessage({
+          id: "lease-blocked",
+          reject: (error) => rejections.push(error.message),
+        }),
+        started: () => canStart,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(rejections).toEqual([]);
+      expect(handled).toEqual([]);
+      expect(queue.size("s1")).toBe(1);
+
+      canStart = true;
+      await waitFor(() => handled.length === 1);
+      expect(rejections).toEqual([]);
+      expect(handled).toEqual(["lease-blocked"]);
+      expect(queue.size("s1")).toBe(0);
+    });
+
     it("does not re-run the handler (tmux sends are not idempotent)", async () => {
       // The old retry loop would re-run a throwing handler up to 3x → triple
       // sendKeys. A throwing handler must run exactly once.
@@ -127,7 +176,7 @@ describe("MessageQueue", () => {
 
       queue.enqueue(createTestMessage({ id: "1", text: "a", action: "text" }));
 
-      // While busy: the message stays QUEUED (counts in size, "排队中"), unrun.
+      // While busy: the message stays QUEUED, counts in size, and remains unrun.
       await new Promise((r) => setTimeout(r, 60));
       expect(results).toEqual([]);
       expect(queue.size("s1")).toBe(1);

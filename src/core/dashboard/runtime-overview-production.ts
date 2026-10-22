@@ -1,0 +1,628 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { appStateDir } from "../../shared/state-dir.js";
+import { readAiToolReadiness } from "../ai-tools/install-contract.js";
+import {
+  type AutomationAdmissionEvent,
+  readAutomationAdmissionEvents,
+} from "../automation/admission-events.js";
+import { AgentCapacityStore } from "../automation/capacity-store.js";
+import { AutomationOccurrenceStore } from "../automation/occurrence-window.js";
+import { readAutomationStatuses } from "../config/automation-command.js";
+import type { HandlerDeps } from "../deps.js";
+import { RepositoryReviewQueue } from "../loop/repository-review-queue.js";
+import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
+import { type PowerStatusView, readPowerStatus } from "../platform/power-command.js";
+import { createPowerScheduleProbe } from "../platform/power-schedule.js";
+import { readMacPowerSource } from "../platform/power-source.js";
+import { operatorHomeDir } from "../projects/operator-home.js";
+import { createResourceGuardianStore } from "../resource-guardian/store.js";
+import { discoverRuntimeGuardianFindings } from "../runtime-guardian/inspector.js";
+import { DailyTaskAuditStore } from "../tasks/daily-audit-service.js";
+import { RepairCoordinator } from "../tasks/repair-coordinator.js";
+import {
+  discoverLaunchdScheduledTasks,
+  discoverLoopEngineeringScheduledTasks,
+  mergeDiscoveredTaskRecords,
+} from "../tasks/task-discovery.js";
+import {
+  DailyTaskLedger,
+  previousSingaporeDayWindow,
+  type ScheduledTaskRecord,
+  type ScheduledTaskRepairStatus,
+  summarizeTaskWindow,
+} from "../tasks/task-ledger.js";
+import type { RuntimeOverviewReaders, WorkOrderOverviewRead } from "./runtime-overview-reader.js";
+
+const POWER_CACHE_MS = 30_000;
+const DOMAIN_CACHE_MS = 30_000;
+const CLOSED_REPAIR_STATUSES = new Set<ScheduledTaskRepairStatus>([
+  "completed",
+  "fixed",
+  "not-needed",
+  "blocked",
+  "superseded",
+  "not-reproducible",
+]);
+const REPAIRABLE_STATUSES = new Set(["failed", "missing", "running-timeout"]);
+let powerCache: { key: string; readAt: number; value: PowerStatusView } | null = null;
+let workOrderCache: { key: string; readAt: number; value: WorkOrderOverviewRead } | null = null;
+let dailyAuditCache: {
+  key: string;
+  readAt: number;
+  value: Awaited<ReturnType<RuntimeOverviewReaders["dailyAudit"]>>;
+} | null = null;
+let runtimeGuardianCache: {
+  key: string;
+  readAt: number;
+  value: Awaited<ReturnType<RuntimeOverviewReaders["runtimeGuardian"]>>;
+} | null = null;
+
+function repairStatusForWorkOrder(
+  ledgerRecords: ReturnType<DailyTaskLedger["listAll"]>,
+  input: {
+    id: string;
+    projectId: string;
+    taskKind: string;
+    scheduledAt: number;
+  },
+): ScheduledTaskRepairStatus | undefined {
+  const byTaskId = new Map(ledgerRecords.map((record) => [record.taskId, record]));
+  const candidates = [
+    `autopilot:${input.id}`,
+    `loop:${input.projectId}:${input.taskKind}:${input.scheduledAt}`,
+    `loop:${input.projectId}:${input.scheduledAt}`,
+    ...(input.taskKind === "repository-pull-request-review"
+      ? [`loop:pr-review:${input.projectId}:${input.scheduledAt}`]
+      : []),
+  ];
+  for (const taskId of candidates) {
+    const repairStatus = byTaskId.get(taskId)?.repairStatus;
+    if (repairStatus !== undefined) return repairStatus;
+  }
+  return undefined;
+}
+
+function legacySuccessfulGateRepairStatus(runDir: string): ScheduledTaskRepairStatus | undefined {
+  const summary = readJsonRecord(join(runDir, "supervisor-final-summary.json"));
+  const reviewGate = isRecord(summary?.reviewGate) ? summary.reviewGate : null;
+  if (
+    summary?.status !== "completed" ||
+    summary.finalVerification !== "passed" ||
+    reviewGate?.decision !== "pass"
+  ) {
+    return undefined;
+  }
+  const gate = readJsonRecord(join(runDir, "system-gate.json"));
+  if (!isRecord(gate) || gate.accepted === true) return undefined;
+  const failures = Array.isArray(gate.failures)
+    ? gate.failures.filter((failure): failure is string => typeof failure === "string")
+    : [];
+  return failures.length > 0 && failures.every(isLegacyExecutableGateFailure)
+    ? "not-reproducible"
+    : undefined;
+}
+
+function isLegacyExecutableGateFailure(failure: string): boolean {
+  return (
+    /^isolated worktree is on "[^"]*", expected WorkOrder branch "[^"]+"$/.test(failure) ||
+    failure === "git status failed: spawnSync git ENOENT" ||
+    failure === "git status failed: spawnSync /usr/bin/git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync git ENOENT" ||
+    failure === "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT" ||
+    /\bspawnSync (?:git|sh|\/usr\/bin\/git|\/bin\/sh|\/usr\/bin\/sh) ENOENT$/.test(failure)
+  );
+}
+
+function readJsonRecord(path: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function closedRepositoryReviewRepairClosure(
+  ledgerRecords: ReturnType<DailyTaskLedger["listAll"]>,
+  input: { repositoryId: string; scheduledAt: number },
+): { status: "completed" | "blocked"; reason: string } | null {
+  const taskId = `loop:pr-review:${input.repositoryId}:${input.scheduledAt}`;
+  const repairStatus = ledgerRecords.find((record) => record.taskId === taskId)?.repairStatus;
+  if (repairStatus === undefined || !CLOSED_REPAIR_STATUSES.has(repairStatus)) return null;
+  if (repairStatus === "blocked") {
+    return {
+      status: "blocked",
+      reason: "reconciled from daily task ledger repairStatus=blocked",
+    };
+  }
+  return {
+    status: "completed",
+    reason: `reconciled from daily task ledger repairStatus=${repairStatus}`,
+  };
+}
+
+function isOpenRepairableTask(item: ScheduledTaskRecord): boolean {
+  return (
+    REPAIRABLE_STATUSES.has(item.status) &&
+    !CLOSED_REPAIR_STATUSES.has(item.repairStatus ?? "pending")
+  );
+}
+
+function ledgerOutcomeStatus(record: ScheduledTaskRecord): "passed" | "cancelled" | "failed" {
+  if (record.status === "success") return "passed";
+  if (record.status === "skipped") return "cancelled";
+  if (
+    REPAIRABLE_STATUSES.has(record.status) &&
+    record.repairStatus !== "blocked" &&
+    CLOSED_REPAIR_STATUSES.has(record.repairStatus ?? "pending")
+  ) {
+    return "passed";
+  }
+  return "failed";
+}
+
+function isTransientAdmissionReason(reason: string): boolean {
+  return /^(quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|capacity-unknown-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)$/i.test(
+    reason,
+  );
+}
+
+function admissionOccurrenceIdsFor(item: ScheduledTaskRecord): Set<string> {
+  const ids = new Set<string>([item.taskId]);
+  const parts = item.taskId.split(":");
+  if (parts[0] !== "loop") return ids;
+
+  if (parts.length === 3) {
+    const projectId = parts[1];
+    const scheduledAt = parts[2];
+    if (projectId !== undefined && scheduledAt !== undefined) {
+      ids.add(`${projectId}:${scheduledAt}`);
+      ids.add(`${projectId}:architecture@${scheduledAt}`);
+    }
+    return ids;
+  }
+
+  if (parts.length >= 4) {
+    const scheduledAt = parts.at(-1);
+    if (scheduledAt !== undefined) {
+      if (parts[1] === "pr-review" && parts[2] !== undefined) {
+        ids.add(`pr-review:${parts[2]}:repository-pull-request-review@${scheduledAt}`);
+      } else if (parts[1] !== undefined && parts[2] !== undefined) {
+        ids.add(`${parts[1]}:${parts[2]}:${parts[2]}@${scheduledAt}`);
+        ids.add(`${parts[1]}:${parts[2]}:${scheduledAt}`);
+      }
+    }
+  }
+  return ids;
+}
+
+function hasTransientAdmissionEvent(
+  item: ScheduledTaskRecord,
+  events: AutomationAdmissionEvent[],
+): boolean {
+  const ids = admissionOccurrenceIdsFor(item);
+  return events.some((event) => {
+    if (event.kind !== "deferred" || !isTransientAdmissionReason(event.reason)) return false;
+    if (event.occurrenceId !== undefined && ids.has(event.occurrenceId)) return true;
+    if (ids.has(event.intentId)) return true;
+    return (
+      item.status === "missing" &&
+      item.name.includes("repository-pull-request-review") &&
+      event.source === "loop-engineering" &&
+      event.intentId === "loop-engineering:repository-review-queue-tick"
+    );
+  });
+}
+
+function hasOpenAutomationOccurrence(
+  item: ScheduledTaskRecord,
+  openOccurrenceIds: ReadonlySet<string>,
+): boolean {
+  const ids = admissionOccurrenceIdsFor(item);
+  return [...ids].some((id) => openOccurrenceIds.has(id));
+}
+
+function hasOpenRepairQueueRecord(
+  item: ScheduledTaskRecord,
+  openRepairTaskIds: ReadonlySet<string>,
+) {
+  return openRepairTaskIds.has(item.taskId);
+}
+
+function isTransientAdmissionDeferral(
+  item: ScheduledTaskRecord,
+  admissionEvents: AutomationAdmissionEvent[] = [],
+): boolean {
+  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
+  if (/automation admission deferred: /i.test(evidence)) {
+    return /automation admission deferred: (quiet-hours|critical resource pressure|emergency resource pressure|recovering resource pressure|autonomous-heavy-active-lease|capacity-unknown-active-lease|active automation|queue full|supervisor.*(?:busy|lease)|interactive-agent-busy|no available)/i.test(
+      evidence,
+    );
+  }
+  return hasTransientAdmissionEvent(item, admissionEvents);
+}
+
+function summarizeCurrentDailyAuditWindow(input: {
+  ledger: DailyTaskLedger;
+  now: number;
+  loopConfigFile?: string;
+}): { attention: number; repairPending: number } {
+  const window = previousSingaporeDayWindow(input.now);
+  const discoveredRecords = [
+    ...discoverLaunchdScheduledTasks({
+      window,
+      now: input.now,
+      includeLabel: (label) => label === "com.octopusgarage.tmux-claude-bot",
+    }),
+    ...discoverLoopEngineeringScheduledTasks({
+      window,
+      now: input.now,
+      ...(input.loopConfigFile !== undefined ? { configFile: input.loopConfigFile } : {}),
+    }),
+  ];
+  const records = input.ledger.listForWindow(window);
+  const recordIds = new Set(records.map((record) => record.taskId));
+  const discoveredIds = new Set(discoveredRecords.map((record) => record.taskId));
+  for (const record of input.ledger.listAll()) {
+    if (!discoveredIds.has(record.taskId) || recordIds.has(record.taskId)) continue;
+    records.push(record);
+    recordIds.add(record.taskId);
+  }
+  const summary = summarizeTaskWindow({
+    records: mergeDiscoveredTaskRecords(records, discoveredRecords),
+    now: input.now,
+    window,
+  });
+  const openItems = summary.items.filter(isOpenRepairableTask);
+  const admissionEvents = readAutomationAdmissionEvents({
+    since: window.start,
+    until: input.now,
+    limit: 2_000,
+  }).events;
+  const openOccurrenceIds = new Set(
+    new AutomationOccurrenceStore()
+      .list()
+      .filter((occurrence) => occurrence.status === "planned" || occurrence.status === "admitted")
+      .map((occurrence) => occurrence.id),
+  );
+  const openRepairTaskIds = new Set(
+    new RepairCoordinator()
+      .list()
+      .filter((record) => ["pending", "leased", "running", "retry-wait"].includes(record.status))
+      .flatMap((record) => record.linkedTaskIds),
+  );
+  const attentionItems = openItems.filter(
+    (item) =>
+      !hasOpenAutomationOccurrence(item, openOccurrenceIds) &&
+      !hasOpenRepairQueueRecord(item, openRepairTaskIds) &&
+      !isTransientAdmissionDeferral(item, admissionEvents),
+  );
+  return {
+    attention: attentionItems.length,
+    repairPending: openItems.filter((item) => (item.repairStatus ?? "pending") === "pending")
+      .length,
+  };
+}
+
+function configuredLoopConfigFile(deps: HandlerDeps): string | undefined {
+  const config = deps.config as { loopEngineering?: { configFile?: string } };
+  return config.loopEngineering?.configFile;
+}
+
+function cachedDomain<T>(
+  cache: { key: string; readAt: number; value: T } | null,
+  key: string,
+  now: number,
+  read: () => T,
+): { entry: { key: string; readAt: number; value: T }; value: T } {
+  if (
+    cache !== null &&
+    cache.key === key &&
+    now >= cache.readAt &&
+    now - cache.readAt < DOMAIN_CACHE_MS
+  ) {
+    return { entry: cache, value: cache.value };
+  }
+  const value = read();
+  return { entry: { key, readAt: now, value }, value };
+}
+
+function readCachedPower(deps: HandlerDeps, now: number): PowerStatusView {
+  const key = JSON.stringify(deps.config.hostPower);
+  if (
+    powerCache !== null &&
+    powerCache.key === key &&
+    now >= powerCache.readAt &&
+    now - powerCache.readAt < POWER_CACHE_MS
+  ) {
+    return powerCache.value;
+  }
+  const value = readPowerStatus(
+    deps.config.hostPower,
+    now,
+    createPowerScheduleProbe(),
+    readMacPowerSource(),
+  );
+  powerCache = { key, readAt: now, value };
+  return value;
+}
+
+export function createRuntimeOverviewReaders(input: {
+  deps: HandlerDeps;
+  now: number;
+  operatorSessionRunning: boolean;
+  service?: {
+    uptimeMs: number | null;
+    adapters: { telegram: boolean; lark: boolean };
+  };
+}): RuntimeOverviewReaders {
+  const { deps, now } = input;
+  return {
+    automation: readAutomationStatuses,
+    workOrders: () => {
+      const read = cachedDomain(workOrderCache, appStateDir(), now, () => {
+        const registry = readLoopSupervisorWorkOrderRegistry(now);
+        const ledgerRecords = new DailyTaskLedger().listAll();
+        const mapRecord = (record: (typeof registry.records)[number]) => ({
+          id: record.workOrder.id,
+          projectId: record.workOrder.projectId,
+          projectName: record.workOrder.projectName,
+          taskKind: record.workOrder.task?.kind ?? "loop",
+          status: record.state.status,
+          scheduledAt: record.workOrder.scheduledAt,
+          updatedAt: record.state.updatedAt,
+          ...(() => {
+            const repairStatus =
+              repairStatusForWorkOrder(ledgerRecords, {
+                id: record.workOrder.id,
+                projectId: record.workOrder.projectId,
+                taskKind: record.workOrder.task?.kind ?? "loop",
+                scheduledAt: record.workOrder.scheduledAt,
+              }) ?? legacySuccessfulGateRepairStatus(record.runDir);
+            return repairStatus === undefined ? {} : { repairStatus };
+          })(),
+        });
+        return {
+          unfinished: registry.unfinished.map(mapRecord),
+          terminal: registry.terminal.map(mapRecord),
+          abandoned: registry.abandoned.map(mapRecord),
+          staleDispatching: registry.staleDispatching.map(mapRecord),
+        };
+      });
+      workOrderCache = read.entry;
+      return read.value;
+    },
+    repositoryReviews: () => {
+      const queue = new RepositoryReviewQueue();
+      const queueItems = queue.list({ all: true });
+      const ledgerRecords = new DailyTaskLedger().listAll();
+      return queueItems
+        .filter((item) => {
+          const closure = closedRepositoryReviewRepairClosure(ledgerRecords, {
+            repositoryId: item.repositoryId,
+            scheduledAt: item.scheduledAt,
+          });
+          if (closure !== null) {
+            queue.completeOccurrence(
+              item.repositoryId,
+              item.scheduledAt,
+              now,
+              closure.status,
+              closure.reason,
+            );
+            return false;
+          }
+          if (item.status === "retry-wait") return true;
+          if (item.status !== "manual-review" && item.status !== "dead-letter") return false;
+          return !queueItems.some(
+            (other) =>
+              other.repositoryId === item.repositoryId && other.scheduledAt > item.scheduledAt,
+          );
+        })
+        .map((item) => ({
+          id: item.id,
+          repositoryId: item.repositoryId,
+          status: item.status as "retry-wait" | "manual-review" | "dead-letter",
+          updatedAt: item.updatedAt,
+          nextAttemptAt: item.nextAttemptAt,
+          retryEpoch: item.retryEpoch ?? 0,
+        }));
+    },
+    dailyAudit: () => {
+      const read = cachedDomain(dailyAuditCache, appStateDir(), now, () => {
+        const ledger = new DailyTaskLedger();
+        const window = {
+          start: now - 7 * 24 * 60 * 60 * 1_000,
+          end: now + 1,
+          label: "recent 7 days",
+        };
+        const records = ledger.listForWindow(window);
+        const summary = summarizeTaskWindow({ records, now, window });
+        const current = summarizeCurrentDailyAuditWindow({
+          ledger,
+          now,
+          ...(() => {
+            const loopConfigFile = configuredLoopConfigFile(deps);
+            return loopConfigFile === undefined ? {} : { loopConfigFile };
+          })(),
+        });
+        const outcomes = summary.items
+          .filter(
+            (record) =>
+              !["running", "expected"].includes(record.status) &&
+              !["loop-engineering", "autopilot-delegate"].includes(record.source),
+          )
+          .map((record) => ({
+            id: `ledger:${record.taskId}`,
+            domain: record.source,
+            label: record.name,
+            status: ledgerOutcomeStatus(record),
+            endedAt: record.endedAt ?? record.updatedAt,
+          }));
+        return {
+          enabled: deps.config.taskAudit.enabled && deps.config.taskAudit.tickMs > 0,
+          ...(() => {
+            const lastFiredAt = new DailyTaskAuditStore().getLastFired();
+            return lastFiredAt === undefined ? {} : { lastFiredAt };
+          })(),
+          summary: {
+            active: summary.items.filter(
+              (item) => item.source === "daily-audit" && item.status === "running",
+            ).length,
+            failed: summary.counts.failed + summary.counts.missing + summary.counts.runningTimeout,
+            attention: current.attention,
+            repairPending: current.repairPending,
+            blocked: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "blocked",
+            ).length,
+            completed: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "completed",
+            ).length,
+            fixed: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "fixed",
+            ).length,
+            notNeeded: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "not-needed",
+            ).length,
+            superseded: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "superseded",
+            ).length,
+            notReproducible: summary.items.filter(
+              (item) =>
+                ["failed", "missing", "running-timeout"].includes(item.status) &&
+                item.repairStatus === "not-reproducible",
+            ).length,
+          },
+          outcomes,
+        };
+      });
+      dailyAuditCache = read.entry;
+      return read.value;
+    },
+    runtimeGuardian: () => {
+      const key = `${appStateDir()}:${deps.config.runtimeGuardian.enabled}:${deps.config.runtimeGuardian.tickMs}:${deps.config.runtimeGuardian.lookbackMs}:${deps.config.runtimeGuardian.repoPath}`;
+      const read = cachedDomain(runtimeGuardianCache, key, now, () => ({
+        enabled: deps.config.runtimeGuardian.enabled && deps.config.runtimeGuardian.tickMs > 0,
+        findings:
+          !deps.config.runtimeGuardian.enabled || deps.config.runtimeGuardian.tickMs === 0
+            ? []
+            : discoverRuntimeGuardianFindings({
+                now,
+                lookbackMs: deps.config.runtimeGuardian.lookbackMs,
+                ...(deps.config.runtimeGuardian.repoPath.trim().length > 0
+                  ? { repoPath: deps.config.runtimeGuardian.repoPath }
+                  : {}),
+              }).map((finding) => ({
+                id: `${finding.kind}:${finding.runId}`,
+                projectId: finding.projectId,
+                kind: finding.kind,
+                severity: finding.severity,
+                observedAt: now,
+              })),
+      }));
+      runtimeGuardianCache = read.entry;
+      return read.value;
+    },
+    resourceGuardian: () => {
+      if (!deps.config.resourceGuardian.enabled || deps.config.resourceGuardian.tickMs === 0) {
+        return {
+          enabled: false,
+          mode: deps.config.resourceGuardian.mode,
+          profile: deps.config.resourceGuardian.profile,
+          pressure: "healthy",
+          circuit: "open",
+          changedAt: now,
+          degraded: false,
+          samplingDegraded: false,
+        };
+      }
+      const current = createResourceGuardianStore({
+        stateDir: appStateDir(),
+      }).readCurrentReadOnly();
+      return {
+        enabled: current.view.enabled,
+        mode: current.view.mode,
+        profile: current.view.profile,
+        pressure: current.view.pressure,
+        circuit: current.view.circuit,
+        changedAt: current.circuit.changedAt,
+        degraded: current.degraded,
+        samplingDegraded: current.view.sampling.degraded,
+      };
+    },
+    agentCapacity: () => {
+      const agent = deps.config.loopEngineering.supervisor.agent;
+      const capacity = new AgentCapacityStore().read(agent, now);
+      const occurrences = new AutomationOccurrenceStore();
+      occurrences.reconcileFromLedger(new DailyTaskLedger().listAll(), now);
+      const planned = occurrences
+        .list()
+        .filter(
+          (occurrence) => occurrence.status === "planned" || occurrence.status === "admitted",
+        );
+      const futurePlanned = planned.filter((occurrence) => occurrence.notBefore >= now);
+      return {
+        enabled: deps.config.loopEngineering.supervisor.enabled,
+        agent,
+        authentication: capacity.authentication,
+        state: capacity.state,
+        observedAt: capacity.observedAt,
+        retryAt: capacity.resetAt ?? capacity.nextProbeAt,
+        activeAutonomousLeases: capacity.activeAutonomousLeases,
+        plannedOccurrences: planned.length,
+        nextOccurrenceAt:
+          futurePlanned.length === 0
+            ? null
+            : Math.min(...futurePlanned.map((occurrence) => occurrence.notBefore)),
+        ownerLastActivityAt: deps.ownerActivity.lastObservedAt(),
+      };
+    },
+    power: () => {
+      const status = readCachedPower(deps, now);
+      return {
+        mode: status.mode,
+        phase: status.phase,
+        powerSource: status.powerSource,
+        scheduleStatus: status.schedule.status,
+        degraded: status.degradedReason !== null,
+        ...(input.service === undefined ? {} : { service: input.service }),
+      };
+    },
+    operator: () => {
+      const readiness = readAiToolReadiness(operatorHomeDir(deps.config));
+      return {
+        session: {
+          state: deps.config.homeOperator.enabled
+            ? input.operatorSessionRunning
+              ? "ready"
+              : "attention"
+            : "disabled",
+        },
+        skills: readiness.skills,
+        mcpProfiles: readiness.mcpProfiles,
+        promptLibrary: {
+          state: deps.config.promptMcp.command.trim().length > 0 ? "configured" : "disabled",
+        },
+        // Project-declared MCPs are intentionally excluded from the global snapshot:
+        // their trusted root is not part of the Dashboard request. Dedicated AI-tool
+        // diagnostics may add an explicit project-root reader later without depending on cwd.
+        optionalProjectMcpCount: null,
+      };
+    },
+  };
+}

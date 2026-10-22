@@ -1,14 +1,38 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
-import { runLoopServiceTick, runLoopServiceTickAsync } from "../../src/core/loop/service.js";
+import {
+  runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
+  runLoopServiceTick as runLoopServiceTickProduction,
+} from "../../src/core/loop/service.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
+import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
+
+function ensureFixedScheduler(configFile: string): void {
+  const text = readFileSync(configFile, "utf8");
+  if (!/^scheduler:/m.test(text)) {
+    writeFileSync(configFile, `scheduler:\n  jitter:\n    enabled: false\n${text}`);
+  }
+}
+
+const runLoopServiceTick = (input: Parameters<typeof runLoopServiceTickProduction>[0]) => {
+  ensureFixedScheduler(input.configFile);
+  return runLoopServiceTickProduction(input);
+};
+
+const runLoopServiceTickAsync = async (
+  input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
+) => {
+  ensureFixedScheduler(input.configFile);
+  return runLoopServiceTickAsyncProduction(input);
+};
 
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
@@ -16,6 +40,226 @@ afterEach(() => {
 });
 
 describe("runLoopServiceTick", () => {
+  it("leaves a quiet-hours due target unreserved and due", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-state-"));
+    const file = join(mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-")), "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${mkdtempSync(join(tmpdir(), "tcb-loop-quiet-hours-project-"))}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: pnpm assess
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const runCommand = vi.fn();
+
+    const result = runLoopServiceTick({
+      configFile: file,
+      now: Date.parse("2026-07-16T20:10:00Z"),
+      schedulerStore,
+      runCommand,
+      hostPower: {
+        mode: "scheduled",
+        timezone: "Asia/Singapore",
+        quietStart: "02:00",
+        quietEnd: "09:30",
+      },
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
+  it("defers a due system target synchronously before creating durable execution state", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-system-resource-gated-state-"),
+    );
+    createResourceGuardianStore({ stateDir: process.env.TCB_STATE_DIR }).writeCurrent({
+      circuit: {
+        schemaVersion: 1,
+        pressure: "critical",
+        incidentId: "incident-resource-closed",
+        admission: "background-closed",
+        reason: "critical host pressure",
+        changedAt: 1000,
+        lastSampleAt: 1000,
+        owner: "resource-guardian",
+      },
+      view: {
+        enabled: true,
+        mode: "protect",
+        profile: "balanced",
+        pressure: "critical",
+        circuit: "background-closed",
+        incidentId: "incident-resource-closed",
+        reason: "critical host pressure",
+        attribution: "unknown",
+        latestSample: null,
+        stableSince: null,
+        sampling: {
+          degraded: false,
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastError: null,
+          notifiedPhase: null,
+          overlapSkippedTicks: 0,
+        },
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-system-resource-gated-"));
+    const file = join(dir, "loop.yml");
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${mkdtempSync(join(tmpdir(), "tcb-loop-system-resource-gated-project-"))}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: pnpm assess
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const runCommand = vi.fn();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const result = runLoopServiceTick({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand,
+    });
+
+    expect(result).toMatchObject({ checked: 1, due: 1, ran: 0, failed: 0 });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
+  it("stops the async due scan after a global admission deferral", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-"));
+    const file = join(dir, "loop.yml");
+    const firstProject = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-a-"));
+    const secondProject = mkdtempSync(join(tmpdir(), "tcb-loop-global-deferral-b-"));
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: alpha
+    name: Alpha
+    path: ${firstProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve alpha in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+  - id: beta
+    name: Beta
+    path: ${secondProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve beta in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+`,
+    );
+    const precheck = vi.fn(() => ({
+      allowed: false as const,
+      reason: "critical resource pressure; background-closed admission protection is active",
+      incidentId: "incident-resource-closed",
+    }));
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: vi.fn(),
+      automationAgent: "codex",
+      automationCoordinator: {
+        precheck,
+      } as never,
+    });
+
+    expect(result).toMatchObject({ checked: 2, due: 2, ran: 0, failed: 0 });
+    expect(precheck).toHaveBeenCalledTimes(1);
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
+  it("stops the async due scan after capacity is constrained", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-capacity-gated-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "tcb-loop-capacity-gated-"));
+    const file = join(dir, "loop.yml");
+    const firstProject = mkdtempSync(join(tmpdir(), "tcb-loop-capacity-gated-a-"));
+    const secondProject = mkdtempSync(join(tmpdir(), "tcb-loop-capacity-gated-b-"));
+    writeFileSync(
+      file,
+      `
+projects:
+  - id: alpha
+    name: Alpha
+    path: ${firstProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve alpha in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+  - id: beta
+    name: Beta
+    path: ${secondProject}
+    agent: codex
+    schedule: "*/5 * * * *"
+    goal: Improve beta in small verified slices.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+`,
+    );
+    const precheck = vi.fn(() => ({
+      allowed: false as const,
+      reason: "capacity-constrained",
+      incidentId: null,
+    }));
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: vi.fn(),
+      automationAgent: "codex",
+      automationCoordinator: {
+        precheck,
+      } as never,
+    });
+
+    expect(result).toMatchObject({ checked: 2, due: 2, ran: 0, failed: 0 });
+    expect(precheck).toHaveBeenCalledTimes(1);
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
   it("runs due projects, writes reports, records backlog suggestions, and persists fire anchors", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-state-"));
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-"));
@@ -34,9 +278,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
 `,
     );
@@ -101,7 +345,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -127,7 +371,7 @@ projects:
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add a focused parser regression test.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -171,7 +415,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -197,7 +441,7 @@ projects:
                     autofixSafety: "safe",
                     affectedFiles: ["tests/parser.test.ts"],
                     prompt: "Add a focused parser regression test.",
-                    verificationCommands: ["npm test -- tests/parser.test.ts"],
+                    verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                   },
                 ],
               }),
@@ -253,7 +497,7 @@ projects:
       agent: true
       maxAttempts: 1
     assessment:
-      command: npm run assess
+      command: pnpm assess
     allowedActions: [tests]
 `,
     );
@@ -278,7 +522,7 @@ projects:
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add a focused parser regression test.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),

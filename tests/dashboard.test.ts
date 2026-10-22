@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { projectPathToHistoryDir } from "../src/core/agents/claude/claude-history.js";
-import { AutopilotStore } from "../src/core/autopilot/state-store.js";
 import type { SessionRow } from "../src/core/dashboard/dashboard.js";
 import { buildDashboard } from "../src/core/dashboard/dashboard.js";
 import { setFreeProject } from "../src/core/projects/free-projects.js";
@@ -58,6 +57,7 @@ describe("buildDashboard", () => {
     expect(snap.global.adapters).toEqual({ telegram: true, lark: false });
     expect(typeof snap.global.version).toBe("string");
     expect(snap.generatedAt).toBeGreaterThan(0);
+    expect(snap.overview).toBeDefined();
     const a = row(snap.sessions, "sess_a");
     expect(a.sessionKind).toBe("regular");
     expect(a.workspacePath).toBeNull();
@@ -69,6 +69,33 @@ describe("buildDashboard", () => {
     expect(typeof a.busy).toBe("boolean");
     expect(typeof a.cumulativeBusyMs).toBe("number");
     expect(row(snap.sessions, "sess_b").uptimeMs).toBe(0); // no created time
+  });
+
+  it("uses the injected overview reader without changing existing snapshot fields", async () => {
+    const overview = {
+      health: { status: "healthy" as const, attentionCount: 0, degradedDomainCount: 0 },
+      attention: { items: [], total: 0, limit: 10, truncated: false },
+      activeWork: { items: [], total: 0, limit: 10, truncated: false },
+      automation: [],
+      runtimeDomains: [],
+      operator: {
+        session: { state: "ready" as const },
+        skills: { installed: 2, expected: 2, state: "ready" as const },
+        mcpProfiles: { installed: 2, expected: 2, state: "ready" as const, profiles: [] },
+        promptLibrary: { state: "disabled" as const },
+        optionalProjectMcpCount: 0,
+      },
+      recentOutcomes: { items: [], total: 0, limit: 10, truncated: false },
+      degradedDomains: [],
+    };
+    const snap = await buildDashboard(fakeDeps(), {
+      paneDiffMs: 0,
+      readOverview: async () => overview,
+    });
+
+    expect(snap.overview).toBe(overview);
+    expect(snap.sessions).toHaveLength(2);
+    expect(snap.global.queueDepth).toBe(3);
   });
 
   it("adds a stable task identity for the current queue message", async () => {
@@ -236,26 +263,6 @@ describe("buildDashboard", () => {
     expect(snap.sessions).toHaveLength(2); // both rows present despite sess_a throwing
     expect(row(snap.sessions, "sess_a").kind).toBe("claude"); // degraded default
     expect(row(snap.sessions, "sess_b").kind).toBe("codex");
-  });
-
-  it("populates the autopilot field and autopilotCount for an enabled session", async () => {
-    // Set autopilot state for sess_a via a real store against the tmpdir.
-    const store = new AutopilotStore();
-    store.set("sess_a", {
-      enabled: true,
-      pureKeepAlive: true,
-      persona: "conservative",
-      iterations: 3,
-      apiRetries: 0,
-      recoveries: 0,
-    });
-
-    const snap = await buildDashboard(fakeDeps(), { paneDiffMs: 0 });
-    const a = row(snap.sessions, "sess_a");
-    expect(a.autopilot).toEqual({ enabled: true, pureKeepAlive: true, iterations: 3 });
-    expect(snap.global.autopilotCount).toBe(1);
-    // sess_b has no enabled autopilot → no field
-    expect(row(snap.sessions, "sess_b").autopilot).toBeUndefined();
   });
 
   it("excludes operator row from sessionCount/runningCount/busyCount", async () => {

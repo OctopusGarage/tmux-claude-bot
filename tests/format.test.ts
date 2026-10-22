@@ -22,7 +22,7 @@ describe("looksLikeTerminalOutput", () => {
   });
 
   it("detects a user@host shell prompt as terminal output", () => {
-    expect(looksLikeTerminalOutput("user@host:~/project$ npm test")).toBe(true);
+    expect(looksLikeTerminalOutput("user@host:~/project$ pnpm test")).toBe(true);
   });
 
   it("does not flag prose that merely mentions a dollar amount", () => {

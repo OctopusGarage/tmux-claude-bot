@@ -1,8 +1,18 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runDailyTaskAudit } from "../../src/core/tasks/daily-audit.js";
+import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
+import { loopScheduleJitterMs } from "../../src/core/loop/schedule-jitter.js";
+import {
+  buildDailyTaskAuditNotification,
+  renderDailyTaskAudit,
+  runDailyTaskAudit,
+} from "../../src/core/tasks/daily-audit.js";
+import { reconcileDailyAuditRepairQueue } from "../../src/core/tasks/daily-audit-run-state.js";
+import { RepairCoordinator } from "../../src/core/tasks/repair-coordinator.js";
+import { discoverLoopEngineeringScheduledTasks } from "../../src/core/tasks/task-discovery.js";
+import type { TaskAuditItem } from "../../src/core/tasks/task-ledger.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -13,6 +23,211 @@ afterEach(() => {
 });
 
 describe("runDailyTaskAudit", () => {
+  it("renders a compact audit summary without task paths or verbose raw errors", () => {
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 3,
+          failed: 2,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [
+          {
+            taskId: "loop:demo:test-coverage:1",
+            source: "loop-engineering",
+            name: "demo test-coverage",
+            scheduledAt: 1,
+            status: "failed",
+            failureKind: "system-gate",
+            error: `system gate failed at ${homedir()}/project/report.json`,
+            reportPath: `${homedir()}/project/report.md`,
+            repairStatus: "pending",
+            updatedAt: 1,
+          },
+        ],
+      },
+      [],
+      { repairDispatch: "queued" },
+    );
+
+    expect(body).toContain("Status: ATTENTION");
+    expect(body).toContain("Counts: 3 success · 2 failed · 1 missing · 0 running");
+    expect(body).toContain("Repair: 0 candidates · queued");
+    expect(body).toContain("demo test-coverage · failed · system-gate");
+    expect(body).not.toContain("taskId:");
+    expect(body).not.toContain("report:");
+    expect(body).not.toContain(homedir());
+  });
+
+  it("renders an explicit empty audit summary when the window has no records", () => {
+    const body = renderDailyTaskAudit(
+      {
+        window: null,
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [],
+      },
+      [],
+    );
+
+    expect(body).toContain("Status: OK");
+    expect(body).toContain("Repair: 0 candidates");
+    expect(body).toContain("No scheduled task records found.");
+  });
+
+  it("counts closed failures when a repair dispatch result is rendered", () => {
+    const closedFailure = taskAuditItem({
+      taskId: "loop:closed",
+      name: "closed repair",
+      status: "failed",
+      repairStatus: "fixed",
+    });
+    const activeFailure = taskAuditItem({
+      taskId: "loop:active",
+      name: "active repair",
+      status: "missing",
+      repairStatus: "pending",
+    });
+
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 1,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [closedFailure, activeFailure],
+      },
+      [activeFailure],
+      { repairDispatch: "queued repair run" },
+    );
+
+    expect(body).toContain("Repair: 1 candidates · queued repair run");
+    expect(body).toContain("Closed: 1 previously reported");
+    expect(body).toContain("active repair · missing");
+    expect(body).not.toContain("closed repair · failed");
+  });
+
+  it("renders automation admission deferrals as waiting instead of attention", () => {
+    const deferred = taskAuditItem({
+      taskId: "loop:geo-backend:test-coverage:1",
+      name: "geo-backend test-coverage",
+      status: "missing",
+      repairStatus: "pending",
+      failureKind: "system-gate",
+      summary:
+        "Recovery dispatch deferred: automation admission deferred: autonomous-heavy-active-lease",
+    });
+
+    const notification = buildDailyTaskAuditNotification({
+      summary: {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 1,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [deferred],
+      },
+      repairCandidates: [deferred],
+      repairDispatch: "deferred - automation admission deferred: autonomous-heavy-active-lease",
+    });
+
+    expect(notification).toMatchObject({
+      level: "info",
+      title: "Daily task audit waiting for automation capacity",
+      delivery: {
+        mode: "state-change",
+        topic: "daily-task-audit:health",
+        state: "waiting:geo-backend test-coverage:missing:system-gate",
+      },
+    });
+    expect(notification.body).toContain("Status: WAITING");
+    expect(notification.body).toContain("geo-backend test-coverage · missing · system-gate");
+  });
+
+  it("caps the rendered issue list and reports the hidden count", () => {
+    const issues = Array.from({ length: 10 }, (_, index) =>
+      taskAuditItem({
+        taskId: `loop:issue-${index}`,
+        name: `issue ${index}`,
+        status: "failed",
+        repairStatus: "pending",
+      }),
+    );
+
+    const body = renderDailyTaskAudit(
+      {
+        window: { start: 0, end: 1, label: "2026-08-04 SGT" },
+        counts: {
+          success: 0,
+          failed: 10,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: issues,
+      },
+      issues,
+    );
+
+    expect(body).toContain("issue 0 · failed");
+    expect(body).toContain("issue 2 · failed");
+    expect(body).not.toContain("issue 3 · failed");
+    expect(body).toContain("• …and 7 more");
+  });
+
+  it("builds an ok notification for an unknown empty window", () => {
+    const notification = buildDailyTaskAuditNotification({
+      summary: {
+        window: null,
+        counts: {
+          success: 0,
+          failed: 0,
+          missing: 0,
+          running: 0,
+          runningTimeout: 0,
+          skipped: 0,
+        },
+        items: [],
+      },
+      repairCandidates: [],
+      channel: "telegram",
+    });
+
+    expect(notification).toMatchObject({
+      channel: "telegram",
+      level: "success",
+      source: "daily-task-audit",
+      title: "Daily task audit healthy",
+      delivery: {
+        mode: "state-change",
+        topic: "daily-task-audit:health",
+        state: "healthy",
+        notifyInitial: false,
+      },
+    });
+    expect(notification.body).toContain("No scheduled task records found.");
+  });
+
   it("sends a previous-day success and failure summary and returns repair candidates", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-"));
     const ledger = new DailyTaskLedger();
@@ -45,8 +260,8 @@ describe("runDailyTaskAudit", () => {
       expect.objectContaining({
         channel: "lark",
         level: "warning",
-        title: "Daily scheduled task audit: 2026-07-27 SGT",
-        body: expect.stringContaining("failed: 1"),
+        title: "Daily task audit needs attention",
+        body: expect.stringContaining("Counts: 1 success · 1 failed · 0 missing · 0 running"),
       }),
     );
     expect(result.repairCandidates.map((item) => item.taskId)).toEqual(["radar:daily:failed"]);
@@ -78,12 +293,250 @@ describe("runDailyTaskAudit", () => {
     expect(result.repairCandidates.map((item) => item.taskId)).toEqual([
       "launchd:com.example.daily:2026-07-27 SGT",
     ]);
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({
+        taskId: "launchd:com.example.daily:2026-07-27 SGT",
+        status: "expected",
+      }),
+    ]);
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "warning",
-        body: expect.stringContaining("missing: 1"),
+        body: expect.stringContaining("Counts: 0 success · 0 failed · 1 missing · 0 running"),
       }),
     );
+  });
+
+  it("closes missing Loop repair work when its durable occurrence was superseded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-daily-audit-superseded-occurrence-"));
+    process.env.TCB_STATE_DIR = root;
+    const configFile = join(root, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+    const laterScheduledAt = Date.parse("2026-07-29T02:40:00Z");
+    const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+    const now = Date.parse("2026-07-29T03:00:00Z");
+    const window = {
+      start: Date.parse("2026-07-27T16:00:00Z"),
+      end: Date.parse("2026-07-28T16:00:00Z"),
+      label: "2026-07-28 SGT",
+    };
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: /tmp/geo-backend
+    agent: codex
+    goal: Improve architecture
+    maxRounds: 1
+    targetScore: 95
+    assessment:
+      command: "true"
+    preflight:
+      commands: []
+      repair:
+        agent: false
+    execution:
+      agent: true
+    eval:
+      command: "true"
+      minScore: 95
+    runner:
+      kind: agent-supervised
+    recovery:
+      agent: true
+    commit:
+      enabled: true
+    pullRequest:
+      enabled: true
+    opportunityDiscovery:
+      enabled: true
+      schedule: "40 2 * * *"
+    allowedActions: []
+    blockedActions: []
+`,
+      "utf8",
+    );
+    const config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+    loopScheduleJitterMs({
+      config,
+      jobKey: "geo-backend:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt,
+    });
+    expect(discoverLoopEngineeringScheduledTasks({ configFile, window, now })).toEqual([
+      expect.objectContaining({ taskId, status: "expected" }),
+    ]);
+    loopScheduleJitterMs({
+      config,
+      jobKey: "geo-backend:opportunity-discovery",
+      jobKind: "opportunity-discovery",
+      scheduledAt: laterScheduledAt,
+    });
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "geo-backend opportunity-discovery",
+      scheduledAt,
+    });
+    ledger.reconcileExpectedMissing(scheduledAt + 1);
+    const coordinator = new RepairCoordinator();
+    coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/tmp/tmux-claude-bot",
+      source: "loop-engineering",
+      taskFamily: "geo-backend opportunity-discovery",
+      fingerprint: "missing scheduled occurrence",
+      taskId,
+      now: scheduledAt + 1,
+    });
+
+    const discoveredRecords = discoverLoopEngineeringScheduledTasks({ configFile, window, now });
+    expect(discoveredRecords).toEqual([
+      expect.objectContaining({ taskId, status: "skipped", repairStatus: "superseded" }),
+    ]);
+
+    const result = await runDailyTaskAudit({
+      now,
+      ledger,
+      discover: () => discoveredRecords,
+    });
+
+    expect(result.summary.counts).toMatchObject({ missing: 0, skipped: 1 });
+    expect(result.repairCandidates).toEqual([]);
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({ taskId, status: "skipped", repairStatus: "superseded" }),
+    ]);
+    expect(ledger.reconcileTerminalStatuses(now + 1)).toBe(0);
+    reconcileDailyAuditRepairQueue({ ledger, coordinator, now });
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ linkedTaskIds: [taskId], status: "superseded" }),
+    ]);
+  });
+
+  it("preserves an already closed missing Loop repair outcome", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-closed-missing-"));
+    const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+    const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "geo-backend opportunity-discovery",
+      scheduledAt,
+    });
+    ledger.reconcileExpectedMissing(scheduledAt + 1);
+    ledger.markRepairStatus(taskId, {
+      repairStatus: "fixed",
+      updatedAt: scheduledAt + 2,
+      summary: "Authoritative repair completed.",
+    });
+
+    await runDailyTaskAudit({
+      now: Date.parse("2026-07-29T03:00:00Z"),
+      ledger,
+      discover: () => [
+        {
+          taskId,
+          source: "loop-engineering",
+          name: "geo-backend opportunity-discovery",
+          scheduledAt,
+          status: "skipped",
+          repairStatus: "superseded",
+          updatedAt: scheduledAt + 3,
+        },
+      ],
+    });
+
+    expect(ledger.listAll()).toEqual([
+      expect.objectContaining({
+        taskId,
+        status: "missing",
+        repairStatus: "fixed",
+        summary: "Authoritative repair completed.",
+      }),
+    ]);
+  });
+
+  it.each(["fixed", "blocked", "not-reproducible"] as const)(
+    "preserves an already terminal Repair Coordinator outcome: %s",
+    (terminalStatus) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-terminal-repair-"));
+      const scheduledAt = Date.parse("2026-07-28T02:40:00Z");
+      const taskId = `loop:geo-backend:opportunity-discovery:${scheduledAt}`;
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "geo-backend opportunity-discovery",
+        scheduledAt,
+      });
+      ledger.skip(taskId, {
+        endedAt: scheduledAt + 1,
+        summary: "A later occurrence superseded this one.",
+      });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "superseded",
+        updatedAt: scheduledAt + 1,
+      });
+      const coordinator = new RepairCoordinator();
+      const repair = coordinator.enqueue({
+        projectId: "tmux-claude-bot",
+        projectPath: "/tmp/tmux-claude-bot",
+        source: "loop-engineering",
+        taskFamily: "geo-backend opportunity-discovery",
+        fingerprint: "missing scheduled occurrence",
+        taskId,
+        now: scheduledAt,
+      });
+      coordinator.markTerminal(repair.id, terminalStatus, scheduledAt + 1);
+
+      reconcileDailyAuditRepairQueue({ ledger, coordinator, now: scheduledAt + 2 });
+
+      expect(coordinator.list()).toEqual([
+        expect.objectContaining({ id: repair.id, linkedTaskIds: [taskId], status: terminalStatus }),
+      ]);
+    },
+  );
+
+  it("matches discovered jittered tasks to closed ledger records outside the audit window", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-jittered-"));
+    const ledger = new DailyTaskLedger();
+    const scheduledAt = Date.parse("2026-07-26T23:50:00Z");
+    const windowStart = Date.parse("2026-07-27T00:00:00Z");
+    const taskId = `loop:knowledge-engine:security-maintenance:${scheduledAt}`;
+    ledger.expect({
+      taskId,
+      source: "loop-engineering",
+      name: "knowledge-engine security-maintenance",
+      scheduledAt,
+    });
+    ledger.skip(taskId, {
+      endedAt: windowStart + 10 * 60_000,
+      summary: "risk score 0 was below action threshold",
+    });
+
+    const result = await runDailyTaskAudit({
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      ledger,
+      discover: () => [
+        {
+          taskId,
+          source: "loop-engineering",
+          name: "knowledge-engine security-maintenance",
+          scheduledAt,
+          status: "expected",
+          summary: "loop-engineering schedule discovered after jitter",
+          updatedAt: windowStart + 10 * 60_000,
+        },
+      ],
+    });
+
+    expect(result.summary.counts.missing).toBe(0);
+    expect(result.summary.counts.skipped).toBe(1);
+    expect(result.repairCandidates).toEqual([]);
   });
 
   it("reports non-timeout running tasks without dispatching them for repair", async () => {
@@ -111,10 +564,12 @@ describe("runDailyTaskAudit", () => {
     expect(result.repairCandidates).toEqual([]);
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
-        level: "success",
-        body: expect.stringContaining("running: 1"),
+        level: "warning",
+        body: expect.stringContaining("Counts: 0 success · 0 failed · 0 missing · 1 running"),
       }),
     );
+    expect(notifiedBody(notify)).toContain("Status: ATTENTION");
+    expect(notifiedBody(notify)).toContain("Repair: 0 candidates");
   });
 
   it("keeps superseded failures in the report but excludes them from repair candidates", async () => {
@@ -152,11 +607,11 @@ describe("runDailyTaskAudit", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "success",
-        body: expect.stringContaining("failed: 1"),
+        body: expect.stringContaining("Counts: 0 success · 1 failed · 0 missing · 0 running"),
       }),
     );
-    expect(notifiedBodies[0]).toContain("repair: fixed");
-    expect(notifiedBodies[0]).toContain("Closed failures:");
+    expect(notifiedBodies[0]).toContain("Status: OK");
+    expect(notifiedBodies[0]).toContain("Repair: 0 candidates");
   });
 
   it("renders failure kinds for active repair candidates", async () => {
@@ -191,7 +646,24 @@ describe("runDailyTaskAudit", () => {
       taskId: "loop:geo-frontend:bug-fix",
       failureKind: "external-ci",
     });
-    expect(notifiedBodies[0]).toContain("failure-kind: external-ci");
-    expect(notifiedBodies[0]).toContain("kind=external-ci");
+    expect(notifiedBodies[0]).toContain("geo-frontend bug-fix · failed · external-ci");
+    expect(notifiedBodies[0]).toContain("Status: ATTENTION");
+    expect(notifiedBodies[0]).toContain("Repair: 1 candidates");
   });
 });
+
+function taskAuditItem(
+  overrides: Partial<TaskAuditItem> & Pick<TaskAuditItem, "taskId" | "name" | "status">,
+): TaskAuditItem {
+  return {
+    source: "loop-engineering",
+    scheduledAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function notifiedBody(notify: ReturnType<typeof vi.fn>): string {
+  const first = notify.mock.calls[0]?.[0] as { body?: string } | undefined;
+  return first?.body ?? "";
+}

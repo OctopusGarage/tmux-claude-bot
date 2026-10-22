@@ -29,10 +29,17 @@ export const es: Messages = {
   promptTranslateInstallOk:
     "🌐 Las dependencias de traducción de prompts están listas · ya puedes activar el modo",
   promptTranslateInstallFailed: (e) =>
-    `🌐 Falló la instalación · ${e} · ejecuta npm run translate:install en el host para más detalle`,
+    `🌐 Falló la instalación · ${e} · ejecuta pnpm translate:install en el host para más detalle`,
+  promptTranslateCommandUsage: (usage) => `Uso: /prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error) => `Traducción de prompts no disponible: ${error}`,
+  promptTranslateDisabledFor: (source) => `Traducción de prompts desactivada para ${source}`,
+  promptTranslateStatusOff: (source) => `Traducción de prompts para ${source}: off`,
+  promptTranslateStatusLine: (source, from, to) =>
+    `Traducción de prompts para ${source}: argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line) => `Activada. ${line}`,
   voiceEmpty: "No te entendí · repítelo o envía texto",
   voiceUnsupported: "La transcripción de voz requiere Apple Silicon",
-  voiceNotInstalled: "Voz no instalada (ejecuta `npm run whisper:install` en el repo)",
+  voiceNotInstalled: "Voz no instalada (ejecuta `pnpm whisper:install` en el repo)",
 
   currentProjectIs: (project) => `${UI_ICONS.session.current} Sesión actual: ${project}`,
   projectStatusSession: (alive) =>
@@ -70,6 +77,12 @@ export const es: Messages = {
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
   btnRight: "➡️ right",
+  btnKeys: "⌨️ Teclas",
+  keyPaletteTitle: "Atajos de teclado",
+  keyUsage:
+    "Envía una tecla o combinación: /key Shift+Left · /key Ctrl+Left · /key Alt+B. Usa Ctrl, Alt, Shift separados por +, o pulsa un atajo. La aplicación activa determina su efecto.",
+  cmdKey: "Enviar una combinación o abrir el panel de teclas",
+  keySent: (chord: string) => `Tecla enviada: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 Estado",
   btnStart: "🚀 Iniciar",
@@ -141,6 +154,8 @@ export const es: Messages = {
       ? `✅ Adoptado y sesión reanudada: ${proj}`
       : `✅ Adoptado e iniciado de nuevo: ${proj}`,
   adoptFailed: "Fallo al adoptar: el proceso no terminó o el agente no se inició",
+  adoptAgentDidNotStart:
+    "Fallo al adoptar: el proceso original terminó, pero el agente no se inició en la sesión gestionada. Usa /peek para revisar el panel, corrige el prompt de shell o el comando de inicio y vuelve a intentarlo.",
   adoptBusy:
     "La sesión destino ya tiene un programa en primer plano (otro agente u otra cosa). Se canceló sin tocar el original — sal de ahí primero y vuelve a adoptar.",
   adoptProjectRunning:
@@ -154,11 +169,17 @@ export const es: Messages = {
     "No está en ejecución — usa /resume para restaurarlo, o /start para iniciar uno nuevo",
   contentTruncated: "...(contenido demasiado largo, truncado)",
   agentEmptyOutput: "No devolvió nada · /peek para ver el panel",
+  agentReplyUnavailable:
+    "No se capturó una respuesta válida del agente · usa /peek para revisar el panel y vuelve a intentar si hace falta.",
   agentStarted: "✅ Iniciado",
   agentResumed: "🔄 Sesión anterior reanudada",
   agentResumeMissingState:
     "No hay estado de sesión anterior para reanudar — usa /start para crear una nueva.",
   agentAlreadyRunning: "✅ Ya está en ejecución",
+  agentInputNotReady:
+    "The agent is not ready to receive input yet. Try again shortly; restart this session if it keeps happening.",
+  projectAutomationBusy: (taskKind, projectId, runId, supervisor) =>
+    `Hay una automatización del proyecto en ejecución; los mensajes normales quedan bloqueados por ahora.\nTarea: ${taskKind}\nProyecto: ${projectId}\nRun: ${runId}\nSupervisor: ${supervisor}\n\nEspera a que termine, o revísala/cancélala antes de continuar.`,
   agentStartedWith: (label) => `✅ Iniciado con «${label}»`,
   startPickerTitle: "🚀 Elige cómo iniciar",
   startPickerPrompt: "Hay varios comandos de inicio configurados — elige uno:",
@@ -264,7 +285,7 @@ export const es: Messages = {
   currentProjectTitle: "Sesión actual",
   noRecentProjects: "No hay proyectos recientes\n\nAñade uno con /add_project <ruta>",
   messageTooLong: (len, max) => `Mensaje demasiado largo · ${len} > ${max} caracteres`,
-  onlyTextVoice: "Solo se admiten mensajes de texto y de voz",
+  onlyTextVoice: "Solo se admiten mensajes de texto, voz e imagen",
   handlerErrorTelegram: "⚠️ Error al procesar el mensaje; inténtalo de nuevo.",
   handlerError:
     "⚠️ Error al procesar el mensaje; inténtalo de nuevo. Si el grupo no responde, envía /restore para reconectar el proyecto.",
@@ -286,6 +307,8 @@ export const es: Messages = {
   taskStillRunningNotice:
     "⏳ Aún en curso — el resultado se enviará automáticamente al terminar · /peek para verlo en vivo",
   voiceDownloadFailed: "Falló la descarga de voz · problema de red, reintenta",
+  imageDownloadFailed: "Falló la descarga de imagen · problema de red, reintenta",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 Tú",
   crashRecovered: (time) =>
     `♻️ tmux-claude-bot se recuperó de una salida anómala (caída / kill) · ${time}`,
@@ -295,14 +318,14 @@ export const es: Messages = {
   noShortId: (id) => `ID corto no encontrado: ${id}`,
   pathNotAllowed: (dirs) => `Ruta fuera de la lista permitida · permitidas: ${dirs.join(", ")}`,
   voiceNotEnabled:
-    "🎙️ Voz no habilitada · envía /voice_install (solo Apple Silicon), o ejecuta `npm run whisper:install` en el host",
+    "🎙️ Voz no habilitada · envía /voice_install (solo Apple Silicon), o ejecuta `pnpm whisper:install` en el host",
   voiceNeedsAppleSilicon:
     "🎙️ La transcripción de voz requiere Apple Silicon (macOS arm64) · este host no puede, envía texto",
   voiceAlreadyInstalled: "🎙️ La voz está lista · solo envía un mensaje de voz",
   voiceInstalling: "🎙️ Instalando voz · la primera vez descarga dependencias (~1-2 min), espera…",
   voiceInstallOk: "🎙️ La voz está lista · ya puedes enviar mensajes de voz",
   voiceInstallFailed: (e) =>
-    `🎙️ Falló la instalación · ${e} · ejecuta \`npm run whisper:install\` en el host para más detalles`,
+    `🎙️ Falló la instalación · ${e} · ejecuta \`pnpm whisper:install\` en el host para más detalles`,
   voiceLangCurrent: (lang) =>
     `🎙️ Idioma de reconocimiento: ${lang === "auto" ? "detección automática" : lang} · toca abajo para cambiar`,
   voiceLangSet: (lang) =>
@@ -412,77 +435,122 @@ Envía cualquier texto → se reenvía al agente → respuesta`,
   homeOperatorDisabled: "La sesión del operador principal no está habilitada",
   homeOperatorSwitched: "🏠 Cambiado a la sesión del operador principal",
   cmdDashboard: "Ver el panel global (resumen de todas las sesiones)",
-  cmdBatch:
-    "Planificador de lotes: ver estado o controlar ejecución (start/pause/resume/stop/report)",
   cmdAutopilot: "Delegar el trabajo de la sesión actual al Loop Supervisor",
-  cmdOpportunity: "Revisar oportunidades propuestas y delegar el trabajo aprobado",
-  cmdGoals: "Listar presets de objetivos de autopilot",
-  cmdSysload: "Ver carga, temperatura y procesos descontrolados",
+  cmdOpportunity: "Revisar y discutir oportunidades propuestas",
+  cmdSysload: "Ver carga, temperatura, procesos descontrolados y Resource Guardian",
   sysloadTitle: "🖥 Carga del sistema",
   dashboardTitle: "📊 Panel",
+  dashboardOverallHealth: "Salud general",
+  dashboardAttention: "Atención",
+  dashboardActiveWork: "Trabajo activo",
+  dashboardAutomation: "Automatización",
+  dashboardOperatorAi: "Interfaces de Operator e IA",
+  dashboardRuntimeDomains: "Dominios de ejecución",
+  dashboardRecentOutcomes: "Resultados recientes",
+  dashboardProjectSessions: "Sesiones de proyecto",
+  dashboardNone: "ninguno",
+  dashboardMore: "más",
+  dashboardEnabled: "habilitadas",
+  dashboardIdle: "inactivas",
+  dashboardShown: "mostradas",
+  dashboardHealthy: "saludables",
+  dashboardSession: "sesión",
+  dashboardSkills: "habilidades",
+  dashboardMcpProfiles: "perfiles MCP",
+  dashboardPromptLibrary: "biblioteca de prompts",
+  dashboardSessions: "sesiones",
+  dashboardRunning: "en ejecución",
+  dashboardBusy: "ocupadas",
+  dashboardQueue: "cola",
+  dashboardUp: "activo",
+  dashboardNoAdapters: "sin adaptadores",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "órdenes de trabajo",
+      "repository-reviews": "revisiones PR del repositorio",
+      automation: "automatización",
+      "daily-task-audit": "auditoría diaria de tareas",
+      "runtime-guardian": "guardián de ejecución",
+      "resource-guardian": "guardián de recursos",
+      "agent-capacity": "capacidad del agente",
+      power: "servicio y energía",
+      "operator-ai": "operador e interfaces de IA",
+    })[id] ?? id,
+  dashboardHealthHealthy: "saludable",
+  dashboardHealthAttention: "requiere atención",
+  dashboardHealthDegraded: "degradado",
+  dashboardAttentionOperatorSession: "La sesión Home Operator requiere atención",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Habilidades de Home Operator listas ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `Perfiles MCP administrados listos ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "La biblioteca de prompts configurada no está disponible",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `Falló el WorkOrder de ${project}`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) =>
+    `El WorkOrder de ${project} está abandonado`,
+  dashboardAttentionWorkOrderStale: (project: string) =>
+    `El despacho del WorkOrder de ${project} está obsoleto`,
+  dashboardAttentionAutomationDependency: (automation: string) =>
+    `${automation} tiene una dependencia deshabilitada`,
+  dashboardAttentionDailyAudit: (count: number) =>
+    `${count} elemento(s) de Daily Task Audit requieren atención`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} tiene un hallazgo de Runtime Guardian`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) =>
+    "Resource Guardian requiere atención",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) =>
+    `La capacidad de ${agent} está ${state}`,
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "La política de energía requiere atención",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} se reintenta automáticamente (época ${retryEpoch})`
+      : status === "manual-review"
+        ? `${project} tiene un límite humano verificado`
+        : `${project} agotó el presupuesto de reintentos de revisión PR`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "Delega el contexto de la sesión actual al Loop Supervisor para implementar, revisar, verificar, gestionar PRs y notificar el resultado final.",
-  autopilotNotifyPaused: (session, reason) => `🛑 autopilot en pausa [${session}]: ${reason}`,
-  autopilotNotifyStopped: (session, reason) => `⏹️ autopilot detenido [${session}]: ${reason}`,
-  autopilotNotifyUsage: (session, pct) =>
-    `🛑 objetivo de autopilot en pausa [${session}]: el uso alcanzó el umbral del ${pct}%`,
-  autopilotNotifyMaxIter: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: máximo de iteraciones alcanzado`,
-  autopilotNotifyWallClock: (session) =>
-    `⏹️ objetivo de autopilot detenido [${session}]: presupuesto de tiempo agotado`,
-  autopilotNotifyAwaitHuman: (session) =>
-    `🎯 autopilot [${session}]: la fase parece completa — confirma con /autopilot confirm o continúa con /autopilot reject`,
-  autopilotNotifyGoalComplete: (session, goalId) =>
-    `✅ objetivo de autopilot completado [${session}]: ${goalId} (confirma por favor)`,
-  autopilotNotifyCycleComplete: (session, rounds) =>
-    `✅ ciclo de autopilot completado [${session}]: ${rounds} ronda(s) (confirma)`,
-  autopilotNotifyKeepaliveDone: (session) =>
-    `✅ tarea keep-alive de autopilot completada [${session}]: marcador de fin detectado`,
-  autopilotNotifyGoalAdvance: (session, goalId, pos, total, round, rounds) =>
-    `➡️ autopilot [${session}]: objetivo ${goalId} (${pos}/${total} · ronda ${round}/${rounds})`,
-  batchRunStarted: (planId, tasks) =>
-    `🚀 Ejecución de lote iniciada: plan ${planId}, ${tasks} tarea(s)`,
-  batchPoolPaused: (agent, resumeAt) =>
-    `⏸ Pool de lote pausado [${agent}]: cuota alcanzada, reanudación en ${resumeAt}`,
-  batchRunComplete: (summary) => `✅ Ejecución de lote completada\n${summary}`,
-  autopilotGlobal: (on) =>
-    on
-      ? "Mantener activo global ACTIVADO: todas las sesiones activas se gestionan (usa /autopilot off para excluir una)"
-      : "Mantener activo global DESACTIVADO",
-  autopilotStatus: (o) =>
-    `Autopilot: ${o.enabled ? "activado" : "desactivado"} (${o.pureKeepAlive ? "mantener activo" : "por objetivo"}, ${o.iterations} intervenciones, persona=${o.persona})${o.goal ? ` (objetivo ${o.goal.id}#${o.goal.phaseIndex})` : ""}`,
+    "Delega el contexto de la sesión actual al Loop Supervisor. Empieza directamente cuando el alcance esté claro, o revisa primero el plan si quieres ver la lista, criterios y condiciones de parada.",
   autopilotUsage: (raw) =>
-    `Subcomando desconocido «${raw}». Uso: /autopilot [delegate [requisito]|on|off|keepalive on|off|stop|goals <ids> [rounds N]|goal <id>|confirm|reject|global on|off]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} Activar keep-alive/objetivos`,
-  btnApDisable: "⏹ Desactivar keep-alive/objetivos",
+    `Subcomando desconocido «${raw}». Uso: /autopilot [requisito] o /autopilot delegate [requisito]`,
+  autopilotPlanPreviewBody:
+    "Vista previa del plan de delegación\n\nObjetivo: continuar la tarea confirmada por el usuario desde la sesión y el repositorio actuales hasta completarla de verdad.\n\nLista: revisar contexto vivo, estado de git, commits recientes, PRs existentes y verificación previa; identificar lo pendiente; cambiar solo lo necesario; revisar el diff; ejecutar verificación relevante y evals existentes cuando proceda.\n\nAceptación: el resumen final registra cambios, verificación, PR/merge si aplica, rama final, worktree limpio y cualquier bloqueo real con evidencia.\n\nParada: terminar cuando la tarea esté completa, haya un bloqueo probado, o seguir exceda el alcance.\n\nNo objetivos: no ampliar alcance, rehacer trabajo ya satisfactorio, instalar dependencias del proyecto solo por política del bot, ni fusionar salvo que la política lo permita.",
+  langUsage: "Uso: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "Usa `/sessions <prefijo-id>` para reanudar",
+  opportunityProjectFallback: "Proyecto",
+  opportunityProjectCount: (n) => `${n} proyectos`,
+  opportunityDigestDelegable: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nPuedes seguir discutiendo; cuando quieras ejecutar, delega con Autopilot.`,
+  opportunityDigestDiscussFirst: (project, n) =>
+    `${project} · ${n} sugerencia(s)\nDiscute primero y delega cuando el alcance esté claro.`,
+  btnOpportunityContinueDiscuss: "Seguir discutiendo",
+  btnOpportunityDiscussAll: "Discutir todo",
+  btnOpportunityShow: "Detalles",
+  btnOpportunityDiscuss: "Discutir",
+  btnOpportunityDismiss: "Omitir",
+  opportunityNotFound: (ids) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n) => `${n} sugerencia(s) omitida(s).`,
+  opportunitySkippedMissing: (n, ids) => `${n} sugerencia(s) omitida(s). Faltan: ${ids}`,
+  opportunityMixedProjects: "No se pueden discutir juntas oportunidades de proyectos distintos.",
+  opportunityCannotOpenProject: (reason) => `No se pudo abrir el proyecto para discutir: ${reason}`,
+  opportunityDiscussionStarted: (n) => `Discutiendo ${n} sugerencia(s).`,
+  opportunityAutomationConflict: (taskKind, runId, supervisorSession) =>
+    `Este proyecto está ejecutando una tarea de automatización, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine.\n\nTarea: ${taskKind}\nRun: ${runId}\nSupervisor: ${supervisorSession}`,
+  opportunityQueueBusy:
+    "El agent del proyecto está procesando trabajo o tiene mensajes en cola, así que la discusión está bloqueada temporalmente. Inténtalo cuando termine la tarea actual.",
+  opportunityGitStatusUnknown: (reason) =>
+    `No se pudo confirmar el estado git del proyecto, así que la discusión está bloqueada temporalmente.\n${reason}`,
+  opportunityDirtyWorktree: (preview) =>
+    `El worktree del proyecto tiene cambios sin resolver, así que la discusión está bloqueada temporalmente. Resuelve esos cambios primero.\n\n${preview}`,
   btnApDelegate: "🚀 Continuar con supervisor",
+  btnApDelegateNow: "🚀 Delegar ahora",
+  btnApReviewPlan: "📋 Revisar plan",
+  btnApConfirmDelegate: "✅ Confirmar delegación",
   btnApCancelDelegate: "⛔ Cancelar delegación",
-  btnApPickGoals: "🎯 Elegir objetivos",
-  btnApGlobalOn: "🌐 Global: sí",
-  btnApGlobalOff: "🌐 Global: no",
-  btnApStop: "⏹ Detener objetivo",
-  btnApConfirm: "✅ Confirmar",
-  btnApContinue: "▶️ Continuar",
+  btnApQueue: `${UI_ICONS.tone.queue} Ver cola`,
   btnApBack: "↩︎ Volver",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) =>
-    `▶️ Iniciar (${n} objetivo(s) · ${rounds} ronda(s))`,
-  apRoundsLabel: (rounds: number) => `Rondas: ${rounds}`,
-  goalTestCoverage: "Aumentar cobertura de pruebas",
-  goalFixTests: "Reparar pruebas",
-  goalCodeReview: "Revisión de código",
-  goalAddFeature: "Añadir función",
-  goalRefactorElegant: "Refactorizar con elegancia",
-  goalUiPolish: "Pulir interfaz",
-  goalImproveArchitecture: "Mejorar la arquitectura",
-  goalHardenStandards: "Reforzar estándares y controles",
-  goalPolishGithub: "Pulir la presencia en GitHub",
-  goalSyncDocs: "Alinear la documentación con el código",
-  autopilotGoalStarted: (id) => `Objetivo iniciado: ${id}`,
-  autopilotUnknownGoal: (ids) => `Objetivo desconocido. Disponibles: ${ids}`,
-  goalsTitle: "🎯 Objetivos predefinidos",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Cola del supervisor`,
   noLogsContext:
     "No hay sesión actual. Selecciona un proyecto o especifica un trace (/logs <traceId>).",
 

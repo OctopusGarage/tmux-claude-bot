@@ -4,19 +4,22 @@ import {
   type LarkChannel,
   type LarkChannelOptions,
   LoggerLevel,
+  type NormalizedMessage,
 } from "@larksuiteoapi/node-sdk";
-import { restorePersistedChannel } from "../../core/command/queue-restore.js";
 import type { HandlerDeps } from "../../core/deps.js";
-import { messages } from "../../core/i18n/index.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { makeCardActionHandler } from "./card-actions.js";
-import { createLarkRestoredMessage } from "./executor.js";
 import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
-import { notifyLarkOwner } from "./resource.js";
 
 const log = createLogger("lark.start");
+
+export function logIncomingMessageBoundary(msg: NormalizedMessage): void {
+  log.info(
+    `message event received chat=${msg.chatId} chat_type=${msg.chatType} content_type=${msg.rawContentType} sender=${msg.senderId || "?"}`,
+  );
+}
 
 /**
  * Options for the SDK's `createLarkChannel`. Extracted (and exported) so the
@@ -61,6 +64,15 @@ export function larkChannelOptions(
   };
 }
 
+export async function reconnectLarkChannel(
+  channel: Pick<LarkChannel, "connect" | "disconnect" | "getConnectionStatus">,
+): Promise<void> {
+  if (channel.getConnectionStatus()) {
+    await channel.disconnect();
+  }
+  await channel.connect();
+}
+
 /**
  * Start the Lark adapter on the SDK's higher-level Lark channel (WebSocket
  * long-connection, no public callback URL needed). No-op when `config.lark`
@@ -68,37 +80,42 @@ export function larkChannelOptions(
  * path is unaffected. A connection failure here is logged and never crashes the
  * process — it must not take down the Telegram bot.
  */
-export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolean } = {}): void {
+export function startLark(deps: HandlerDeps): void {
   const cfg = deps.config.lark;
   if (!cfg) {
-    log.info("disabled — skipping (run `npm run setup:lark` to onboard via QR scan)");
+    log.info("disabled — skipping (run `pnpm setup:lark` to onboard via QR scan)");
     return;
   }
   const domain = cfg.domain === "lark" ? Domain.Lark : Domain.Feishu;
   const channel: LarkChannel = createLarkChannel(larkChannelOptions(cfg, domain));
-  channel.on("message", makeMessageHandler(channel, deps));
+  const messageHandler = makeMessageHandler(channel, deps);
+  channel.on("message", async (msg) => {
+    logIncomingMessageBoundary(msg);
+    await messageHandler(msg);
+  });
   channel.on("cardAction", makeCardActionHandler(channel, deps));
 
-  // Restore this channel's persisted backlog so a bot restart doesn't drop
-  // queued Lark messages (parity with Telegram). Each adapter restores + drops
-  // ONLY its own channel, so a Telegram+Lark deployment loses neither side.
-  const restored = restorePersistedChannel({
-    channel: "lark",
-    loadPersisted: () => deps.queue.loadPersisted(),
-    enqueue: (message) => deps.queue.enqueue(message),
-    keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
-    restore: (message) => createLarkRestoredMessage(message, channel),
-  });
-  if (restored.restored > 0) log.info("queue restored", { channel: "lark", data: restored });
+  // Chat prompts are intentionally not restored across bot restarts. Replaying a
+  // recovered user message can duplicate input that was already typed into the
+  // agent pane before the process stopped.
+  let initialConnectFailed = false;
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
-  // network flaps that the SDK's own reconnect loop can miss. Ticks are
-  // no-ops until connect() initializes the WS client.
+  // network flaps that the SDK's own reconnect loop can miss. While the initial
+  // connect is pending, ticks remain no-ops. If it rejects before the SDK exposes
+  // connection status, the normal probed/debounced reconnect path takes over.
   startKeepalive({
     getStatus: () => channel.getConnectionStatus(),
+    shouldRecoverUninitialized: () => initialConnectFailed,
     probeUrl: cfg.domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn",
     forceReconnect: async () => {
-      await channel.disconnect();
-      await channel.connect();
+      initialConnectFailed = false;
+      try {
+        await reconnectLarkChannel(channel);
+        log.info("reconnected");
+      } catch (err) {
+        initialConnectFailed = true;
+        throw err;
+      }
     },
   });
   registerLarkNotifications(deps, cfg, channel);
@@ -106,15 +123,11 @@ export function startLark(deps: HandlerDeps, opts: { recoveredFromCrash?: boolea
   channel
     .connect()
     .then(() => {
+      initialConnectFailed = false;
       log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
-      // Mirror Telegram: after a launchd auto-recovery, DM the owner that the bot
-      // restarted from a crash. Best-effort. Disable with TCB_STARTUP_NOTIFY=0.
-      if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
-        void notifyLarkOwner(
-          cfg,
-          messages("lark").crashRecovered(new Date().toLocaleString()),
-        ).catch((err) => log.warn("owner crash-alert failed", { err }));
-      }
     })
-    .catch((err) => log.error("connect failed", { err }));
+    .catch((err) => {
+      initialConnectFailed = true;
+      log.error("connect failed", { err });
+    });
 }

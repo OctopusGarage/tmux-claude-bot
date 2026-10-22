@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
@@ -33,7 +32,6 @@ function deps(): HandlerDeps {
     config: {
       lark: larkConfig(),
     },
-    notifier: new NotifierRegistry(),
     notifications: new NotificationGateway(),
     channelSenders: new ChannelSenderRegistry(),
   } as unknown as HandlerDeps;
@@ -82,6 +80,33 @@ describe("registerLarkNotifications", () => {
       "Radar report",
       undefined,
       "open_id",
+    );
+  });
+
+  it("routes lark session notification attachments to the bound project group", async () => {
+    mocks.boundLarkGroupForSession.mockReturnValue({ chatId: "oc_group" });
+    const { registerLarkNotifications } = await import(
+      "../../../src/adapters/lark/notifications.js"
+    );
+    const d = deps();
+    const registerAttachment = vi.spyOn(d.notifications, "registerAttachment");
+
+    registerLarkNotifications(d, larkConfig(), channel as never);
+    const attachmentSender = registerAttachment.mock.calls.find((c) => c[0] === "lark")?.[1];
+    await attachmentSender?.("/tmp/report.html", "file", "Radar report", {
+      title: "Long task finished: api",
+      session: "tmux_proj_api",
+    });
+
+    expect(mocks.boundLarkGroupForSession).toHaveBeenCalledWith("tmux_proj_api");
+    expect(mocks.sendLarkAttachment).toHaveBeenCalledWith(
+      expect.anything(),
+      "oc_group",
+      "/tmp/report.html",
+      "file",
+      "Radar report",
+      undefined,
+      undefined,
     );
   });
 

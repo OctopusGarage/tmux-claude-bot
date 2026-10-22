@@ -14,6 +14,7 @@ function item(action: RecoverAction, over: Partial<RecoverItem> = {}): RecoverIt
     kind: "claude",
     command: "claude",
     sessionId: null,
+    recoveryTaskId: null,
     needsRecreate: false,
     action,
     ...over,

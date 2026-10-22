@@ -7,11 +7,15 @@ vi.mock("../../src/core/command/dispatch.js", async (importOriginal) => {
   return { ...actual, executeMessage: vi.fn(async () => "ok") };
 });
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   IMMEDIATE as LARK_IMMEDIATE,
   QUEUED as LARK_QUEUED,
 } from "../../src/adapters/lark/commands.js";
 import { handleQueuedCommand } from "../../src/adapters/telegram/executor.js";
+import { parseCallbackData } from "../../src/adapters/telegram/keyboards.js";
+import { AUTOPILOT_ACTIONS } from "../../src/core/autopilot/action-registry.js";
 import {
   ACTION_META,
   getImmediateActions,
@@ -77,5 +81,35 @@ describe("Lark derives its sets from the same single source", () => {
 
   it("Lark QUEUED equals the registry's queued set", () => {
     expect([...LARK_QUEUED].sort()).toEqual(queued.sort());
+  });
+});
+
+describe("Autopilot action registry parity", () => {
+  it("every Autopilot registry action parses through Telegram callbacks", () => {
+    for (const action of Object.values(AUTOPILOT_ACTIONS)) {
+      expect(parseCallbackData(`${action.telegramPrefix}:abc123`), action.id).toEqual({
+        kind: action.telegramKind,
+        sid: "abc123",
+      });
+    }
+  });
+
+  it("every Autopilot registry action is handled by the Lark card router", () => {
+    const cardActions = fs.readFileSync(
+      path.resolve(__dirname, "../../src/adapters/lark/card-actions.ts"),
+      "utf8",
+    );
+    const registryAccess: Record<string, string> = {
+      delegate: "AUTOPILOT_ACTIONS.delegate.larkCmd",
+      "review-plan": 'AUTOPILOT_ACTIONS["review-plan"].larkCmd',
+      "confirm-delegate": 'AUTOPILOT_ACTIONS["confirm-delegate"].larkCmd',
+      "cancel-delegate": 'AUTOPILOT_ACTIONS["cancel-delegate"].larkCmd',
+    };
+
+    for (const action of Object.values(AUTOPILOT_ACTIONS)) {
+      expect(cardActions, `missing Lark handler for ${action.id}`).toContain(
+        `[${registryAccess[action.id]}]`,
+      );
+    }
   });
 });

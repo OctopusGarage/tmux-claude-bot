@@ -2,18 +2,16 @@ import { type FileFlavor, hydrateFiles } from "@grammyjs/files";
 import { Bot, type Context, GrammyError } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
-import { renderNotice } from "../../core/autopilot/notifier.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { markCleanShutdown } from "../../core/infra/lifecycle.js";
-import { sessionShortId } from "../../shared/utils/hash.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
-import { buildAutopilotGateKeyboard, buildOpportunityNotificationKeyboard } from "./keyboards.js";
+import { buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
@@ -45,7 +43,7 @@ export function isFatalPollingError(err: unknown): boolean {
 
 export async function startTelegram(
   deps: HandlerDeps,
-  opts: { recoveredFromCrash?: boolean; onNotificationsReady?: () => void } = {},
+  opts: { onNotificationsReady?: () => void } = {},
 ): Promise<void> {
   const { config, queue } = deps;
 
@@ -112,7 +110,7 @@ export async function startTelegram(
     try {
       await err.ctx.reply(messages("telegram").handlerErrorTelegram);
     } catch (replyErr) {
-      log.error(`failed to send handler-error reply: ${String(replyErr)}`);
+      log.error("failed to send handler-error reply", { err: replyErr });
     }
   });
 
@@ -197,35 +195,9 @@ export async function startTelegram(
     }
   }
 
-  // launchd KeepAlive restarts crashes silently — after an unclean exit, tell the
-  // owner the bot auto-recovered (repeated alerts = a crash-loop to investigate).
-  // Best-effort; never blocks startup. Disable with TCB_STARTUP_NOTIFY=0.
-  if (opts.recoveredFromCrash && process.env.TCB_STARTUP_NOTIFY !== "0") {
-    const owner = [...config.telegramAllowedUserIds][0];
-    if (owner !== undefined) {
-      try {
-        await bot.api.sendMessage(
-          owner,
-          messages("telegram").crashRecovered(new Date().toLocaleString()),
-        );
-      } catch (err) {
-        log.warn(`owner crash-alert failed: ${err instanceof Error ? err.message : err}`);
-      }
-    }
-  }
-
-  // Register the Telegram owner as the proactive-notification channel so the
-  // autopilot (and any other notifier.broadcast caller) can DM the owner.
+  // Register the Telegram owner as the notification-gateway target.
   const owner = [...config.telegramAllowedUserIds][0];
   if (owner !== undefined) {
-    deps.notifier.register((notice) => {
-      const text = renderNotice(notice, messages("telegram"));
-      const reply_markup =
-        notice.kind === "awaitHuman"
-          ? buildAutopilotGateKeyboard(sessionShortId(notice.session))
-          : undefined;
-      return bot.api.sendMessage(owner, text, reply_markup ? { reply_markup } : {}).then(() => {});
-    });
     deps.notifications.register("telegram", (message, req) => {
       const reply_markup =
         req?.source === "opportunity-discovery" && req.opportunities?.length

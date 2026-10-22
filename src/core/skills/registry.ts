@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { JsonMapStore } from "../infra/json-map-store.js";
+import { skillChecksum } from "./checksum.js";
 import {
   approvedFromCatalogEntry,
   approvedSkillSpecsEqual,
@@ -192,21 +192,6 @@ export function refreshAgentSkillCatalog(input: {
   };
 }
 
-function checksumForResolvedSkill(skill: SkillCatalogEntry, ref: string): string {
-  const hash = createHash("sha256")
-    .update("loop-skill-v1")
-    .update("\n")
-    .update(skill.id)
-    .update("\n")
-    .update(skill.sourceUrl)
-    .update("\n")
-    .update(skill.sourcePath)
-    .update("\n")
-    .update(ref)
-    .digest("hex");
-  return `sha256:${hash}`;
-}
-
 export function resolveLatestGitSkill(skill: SkillCatalogEntry): AgentSkillResolvedVersion {
   const result = spawnSync("git", ["ls-remote", skill.sourceUrl, skill.trackingRef], {
     encoding: "utf8",
@@ -228,7 +213,12 @@ export function resolveLatestGitSkill(skill: SkillCatalogEntry): AgentSkillResol
   }
   return {
     ref,
-    checksum: checksumForResolvedSkill(skill, ref),
+    checksum: skillChecksum({
+      id: skill.id,
+      sourceUrl: skill.sourceUrl,
+      sourcePath: skill.sourcePath,
+      ref,
+    }),
   };
 }
 

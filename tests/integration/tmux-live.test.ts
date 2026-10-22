@@ -17,7 +17,7 @@ vi.setConfig({ testTimeout: 30_000 });
  * foundation every agent relies on — "send a command through tmux and read the
  * result" — actually works against real tmux.
  *
- * Auto-skips when tmux isn't on PATH (e.g. CI), so `npm test` stays green there;
+ * Auto-skips when tmux isn't on PATH (e.g. CI), so `pnpm test` stays green there;
  * run locally where tmux exists.
  */
 
@@ -33,9 +33,22 @@ function hasTmux(): boolean {
 const sessions = new Set<string>();
 let counter = 0;
 function newSession(): string {
-  // Unique per test; a plain detached shell in /tmp.
+  // Unique per test; a plain detached POSIX shell in /tmp. Passing `sh`
+  // explicitly avoids user zsh startup hooks racing the first pasted command.
   const name = `tcb_it_${counter++}_${process.hrtime.bigint().toString().slice(-9)}`;
-  execFileSync("tmux", ["new-session", "-d", "-s", name, "-c", "/tmp", "-x", "200", "-y", "50"]);
+  execFileSync("tmux", [
+    "new-session",
+    "-d",
+    "-s",
+    name,
+    "-c",
+    "/tmp",
+    "-x",
+    "200",
+    "-y",
+    "50",
+    "sh",
+  ]);
   sessions.add(name);
   return name;
 }

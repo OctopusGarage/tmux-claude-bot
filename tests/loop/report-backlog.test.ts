@@ -28,7 +28,7 @@ function summary(overrides: Partial<LoopRunSummary> = {}): LoopRunSummary {
     commands: [
       {
         kind: "assessment",
-        command: "npm run assess",
+        command: "pnpm assess",
         cwd: "/repo/hub",
         env: {},
         status: 0,
@@ -106,7 +106,7 @@ describe("loop reports and backlog", () => {
       blockedActions: ["direct-model-api"],
       skills: { approved: [] },
       preflight: { commands: [], repair: { agent: false } },
-      assessment: { command: "npm run assess" },
+      assessment: { command: "pnpm assess" },
       execution: { agent: true },
       recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
       commitPolicy: { enabled: false, perRound: true },
@@ -164,5 +164,20 @@ describe("loop reports and backlog", () => {
     expect(store.list({ all: true })).toEqual([
       expect.objectContaining({ id: first?.id, status: "closed", closedAt: 3_000 }),
     ]);
+  });
+
+  it("bounds and filters backlog queries while preserving the reconciliation list", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-backlog-query-"));
+    const store = new LoopBacklogStore();
+    store.addFollowUps("alpha", ["first", "second"], 1_000, "run-a");
+    store.addFollowUps("beta", ["third"], 2_000, "run-b");
+
+    expect(store.query({ projectId: "alpha", limit: 1 })).toEqual({
+      items: [expect.objectContaining({ projectId: "alpha" })],
+      total: 2,
+      limit: 1,
+      truncated: true,
+    });
+    expect(store.list()).toHaveLength(3);
   });
 });

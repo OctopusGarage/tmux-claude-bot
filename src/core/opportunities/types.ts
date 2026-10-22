@@ -65,3 +65,10 @@ export type OpportunityNotificationDigest = {
   suggestions: OpportunitySuggestion[];
   reportPath: string;
 };
+
+/** Whether a suggestion belongs in the current actionable list. */
+export function isOpportunityVisible(suggestion: OpportunitySuggestion, now: number): boolean {
+  if (suggestion.status === "dismissed" || suggestion.status === "implemented") return false;
+  if (suggestion.status !== "snoozed") return true;
+  return suggestion.snoozedUntil !== undefined && suggestion.snoozedUntil <= now;
+}

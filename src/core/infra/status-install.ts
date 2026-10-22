@@ -42,17 +42,18 @@ else
   # Two-line render: context bar + model, then session (5h) and weekly quotas
   # with reset times. Colour by usage: green <50, yellow 50-89, red >=90.
   e=$(printf '\\033'); r="$e[0m"
-  col() { p=$1; [ -z "$p" ] && p=0; if [ "$p" -ge 90 ]; then printf '%s[31m' "$e"; elif [ "$p" -ge 50 ]; then printf '%s[33m' "$e"; else printf '%s[32m' "$e"; fi; }
-  bar() { p=$1; [ -z "$p" ] && p=0; w=20; f=$(( p * w / 100 )); [ "$f" -gt "$w" ] && f="$w"; [ "$f" -lt 0 ] && f=0; i=0; while [ "$i" -lt "$w" ]; do if [ "$i" -lt "$f" ]; then printf '█'; else printf '░'; fi; i=$(( i + 1 )); done; }
+  col() { p=$1; [ -z "$p" ] && { printf '%s[2m' "$e"; return; }; if [ "$p" -ge 90 ]; then printf '%s[31m' "$e"; elif [ "$p" -ge 50 ]; then printf '%s[33m' "$e"; else printf '%s[32m' "$e"; fi; }
+  bar() { p=$1; w=20; [ -z "$p" ] && f=0 || f=$(( p * w / 100 )); [ "$f" -gt "$w" ] && f="$w"; [ "$f" -lt 0 ] && f=0; i=0; while [ "$i" -lt "$w" ]; do if [ "$i" -lt "$f" ]; then printf '█'; else printf '░'; fi; i=$(( i + 1 )); done; }
+  pct_label() { p=$1; [ -z "$p" ] && printf '?' || printf '%s' "$p"; }
   fmt() { t=$1; [ -z "$t" ] && { printf '?'; return; }; case "$t" in *[!0-9]*) date -j -f '%Y-%m-%dT%H:%M:%SZ' "$t" '+%m/%d %H:%M' 2>/dev/null || date -d "$t" '+%m/%d %H:%M' 2>/dev/null || printf '?' ;; *) date -r "$t" '+%m/%d %H:%M' 2>/dev/null || date -d "@$t" '+%m/%d %H:%M' 2>/dev/null || printf '?' ;; esac; }
   model=$(printf '%s' "$input" | jq -r '.model.display_name // "claude"' 2>/dev/null || echo claude)
-  pct=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
-  sess=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // .rate_limits.session.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+  pct=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // ""' 2>/dev/null | cut -d. -f1)
+  sess=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // .rate_limits.session.used_percentage // ""' 2>/dev/null | cut -d. -f1)
   sres=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // .rate_limits.five_hour.reset_at // .rate_limits.session.reset_at // .rate_limits.session.resets_at // ""' 2>/dev/null)
-  week=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // .rate_limits.weekly.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+  week=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // .rate_limits.weekly.used_percentage // ""' 2>/dev/null | cut -d. -f1)
   wres=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.resets_at // .rate_limits.seven_day.reset_at // .rate_limits.weekly.reset_at // .rate_limits.weekly.resets_at // ""' 2>/dev/null)
-  printf '%s[%s] %s%% ctx%s  [%s]\\n' "$(col "$pct")" "$(bar "$pct")" "$pct" "$r" "$model"
-  printf '%ssession %s%% (reset %s)%s  %sweekly %s%% (reset %s)%s\\n' "$(col "$sess")" "$sess" "$(fmt "$sres")" "$r" "$(col "$week")" "$week" "$(fmt "$wres")" "$r"
+  printf '%s[%s] %s%% ctx%s  [%s]\\n' "$(col "$pct")" "$(bar "$pct")" "$(pct_label "$pct")" "$r" "$model"
+  printf '%ssession %s%% (reset %s)%s  %sweekly %s%% (reset %s)%s\\n' "$(col "$sess")" "$(pct_label "$sess")" "$(fmt "$sres")" "$r" "$(col "$week")" "$(pct_label "$week")" "$(fmt "$wres")" "$r"
 fi
 `;
 }

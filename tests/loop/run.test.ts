@@ -17,9 +17,9 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
 `;
 
@@ -33,7 +33,7 @@ projects:
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
       agent: true
       minScore: 95
@@ -51,7 +51,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     commit:
       enabled: true
       perRound: true
@@ -72,7 +72,7 @@ projects:
     execution:
       agent: true
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
       agent: true
       minScore: 90
@@ -84,6 +84,7 @@ projects:
       enabled: true
       base: main
       switchBack: main
+      githubAccount: example-owner
     allowedActions: [tests, docs, small-refactor]
     blockedActions: [direct-model-api, dependency-upgrade, broad-rewrite]
 `;
@@ -110,7 +111,7 @@ projects:
       dirtyWorktree: true
       maxAttempts: 1
     assessment:
-      command: npm run assess
+      command: pnpm assess
     commit:
       enabled: true
       perRound: true
@@ -143,8 +144,8 @@ describe("runLoopProject", () => {
     expect(
       invocations.map((invocation) => [invocation.kind, invocation.command, invocation.cwd]),
     ).toEqual([
-      ["assessment", "npm run assess", "/repo/hub"],
-      ["eval", "npm run loop-eval", "/repo/hub"],
+      ["assessment", "pnpm assess", "/repo/hub"],
+      ["eval", "pnpm loop-eval", "/repo/hub"],
     ]);
     expect(invocations[0]?.env).toMatchObject({
       LOOP_PROJECT_ID: "hub",
@@ -271,7 +272,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
                 {
                   id: "unsafe",
@@ -280,7 +281,7 @@ describe("runLoopProject", () => {
                   confidence: "high",
                   autofixSafety: "safe",
                   affectedFiles: ["src/index.ts"],
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -379,7 +380,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -440,7 +441,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -541,7 +542,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -647,7 +648,7 @@ describe("runLoopProject", () => {
             passed: true,
             score: 95,
             findings: ["dirty recovery was verified before publishing"],
-            suggestedBotImprovements: [],
+            suggestedBotImprovements: ["Surface dirty recovery runs in the dashboard."],
           }),
           stderr: "",
         };
@@ -667,6 +668,9 @@ describe("runLoopProject", () => {
     });
 
     expect(summary.status).toBe("passed");
+    expect(summary.suggestedBotImprovements).toEqual([
+      "Surface dirty recovery runs in the dashboard.",
+    ]);
     expect(summary.rounds).toEqual([
       expect.objectContaining({
         findingId: "dirty-worktree-recovery",
@@ -710,7 +714,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
               suggestedBotImprovements: [],
@@ -790,7 +794,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "guarded",
                   affectedFiles: ["src"],
                   prompt: "Add a focused architecture guard.",
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -858,7 +862,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "guarded",
                   affectedFiles: ["src"],
                   prompt: "Add a focused architecture guard.",
-                  verificationCommands: ["npm test"],
+                  verificationCommands: ["pnpm test"],
                 },
               ],
             }),
@@ -930,7 +934,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["src", "tests"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1003,7 +1007,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1126,7 +1130,7 @@ describe("runLoopProject", () => {
       ["status", "--porcelain"],
       ["status", "--porcelain"],
     ]);
-    expect(summary.commands.map((command) => command.command)).not.toContain("npm run assess");
+    expect(summary.commands.map((command) => command.command)).not.toContain("pnpm assess");
   });
 
   it("fails dirty-worktree recovery when git state cannot be inspected", () => {
@@ -1149,7 +1153,7 @@ describe("runLoopProject", () => {
         reason: "dirty worktree recovery requires a git adapter",
       }),
     ]);
-    expect(summary.commands.map((command) => command.command)).not.toContain("npm run assess");
+    expect(summary.commands.map((command) => command.command)).not.toContain("pnpm assess");
   });
 
   it("runs one recovery attempt after verification fails and commits if the retry passes", () => {
@@ -1178,7 +1182,7 @@ describe("runLoopProject", () => {
                   autofixSafety: "safe",
                   affectedFiles: ["tests/parser.test.ts"],
                   prompt: "Add focused parser regression tests.",
-                  verificationCommands: ["npm test -- tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
                 },
               ],
             }),
@@ -1220,5 +1224,165 @@ describe("runLoopProject", () => {
     expect(agentPrompts).toHaveLength(2);
     expect(agentPrompts[1]).toContain("verification failed");
     expect(verificationAttempts).toBe(2);
+  });
+
+  it("skips unsafe or unverifiable findings before handing work to an agent", () => {
+    const config = parseLoopConfigYaml(configText);
+
+    const summary = runLoopProject({
+      config,
+      projectId: "hub",
+      runCommand: (invocation) => {
+        if (invocation.kind === "assessment") {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              score: 50,
+              findings: [
+                {
+                  id: "blocked-action",
+                  title: "Upgrade every dependency",
+                  action: "dependency-upgrade",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: ["package.json"],
+                  verificationCommands: ["pnpm test"],
+                },
+                {
+                  id: "low-confidence",
+                  title: "Maybe change parser shape",
+                  action: "tests",
+                  confidence: 0.7,
+                  autofixSafety: "safe",
+                  affectedFiles: ["tests/parser.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/parser.test.ts"],
+                },
+                {
+                  id: "unsafe-autofix",
+                  title: "Rewrite scheduler internals",
+                  action: "small-refactor",
+                  confidence: "high",
+                  autofixSafety: "risky",
+                  affectedFiles: ["src/core/scheduler"],
+                  verificationCommands: ["pnpm test -- tests/scheduler"],
+                },
+                {
+                  id: "missing-files",
+                  title: "Clarify docs",
+                  action: "docs",
+                  confidence: "high",
+                  autofixSafety: "safe",
+                  affectedFiles: [],
+                },
+                {
+                  id: "missing-verification",
+                  title: "Change runtime code without gates",
+                  action: "small-refactor",
+                  confidence: "strong",
+                  autofixSafety: "guarded",
+                  affectedFiles: ["src/core/loop/run.ts"],
+                  verificationCommands: [],
+                },
+                {
+                  id: "docs-ok",
+                  title: "Document loop run policy",
+                  action: "docs",
+                  confidence: "safe",
+                  autofixSafety: "low-risk",
+                  affectedFiles: ["docs/automation-alignment.md"],
+                },
+                {
+                  id: "max-rounds",
+                  title: "Add focused run tests",
+                  action: "tests",
+                  confidence: 0.95,
+                  autofixSafety: "low",
+                  affectedFiles: ["tests/loop/run.test.ts"],
+                  verificationCommands: ["pnpm test -- tests/loop/run.test.ts"],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: JSON.stringify({ passed: true, score: 96 }), stderr: "" };
+      },
+    });
+
+    expect(summary.status).toBe("passed");
+    expect(summary.rounds).toEqual([
+      expect.objectContaining({
+        findingId: "blocked-action",
+        reason: "blocked action: dependency-upgrade",
+      }),
+      expect.objectContaining({
+        findingId: "low-confidence",
+        reason: "confidence is not high enough",
+      }),
+      expect.objectContaining({
+        findingId: "unsafe-autofix",
+        reason: "autofix safety is not safe enough",
+      }),
+      expect.objectContaining({ findingId: "missing-files", reason: "affectedFiles is required" }),
+      expect.objectContaining({
+        findingId: "missing-verification",
+        reason: "verificationCommands is required",
+      }),
+      expect.objectContaining({ findingId: "max-rounds", reason: "maxRounds limit reached" }),
+      expect.objectContaining({ findingId: "docs-ok", reason: "execution.agent is false" }),
+    ]);
+    expect(summary.commands.map((command) => command.kind)).toEqual(["assessment", "eval"]);
+  });
+
+  it("requires an active-agent eval adapter for agent-backed evaluation", () => {
+    const config = parseLoopConfigYaml(agentEvalConfigText);
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({
+          status: 0,
+          stdout: JSON.stringify({ score: 50, findings: [], suggestedBotImprovements: [] }),
+          stderr: "",
+        }),
+      }),
+    ).toThrow(/requires an active-agent eval adapter/);
+  });
+
+  it("requires execution and git adapters before running selected agent work", () => {
+    const config = parseLoopConfigYaml(executableConfigText);
+    const selectedFinding = JSON.stringify({
+      score: 50,
+      findings: [
+        {
+          id: "f1",
+          title: "Add focused run tests",
+          action: "tests",
+          confidence: "high",
+          autofixSafety: "safe",
+          affectedFiles: ["tests/loop/run.test.ts"],
+          prompt: "Add focused run tests.",
+          verificationCommands: ["pnpm test -- tests/loop/run.test.ts"],
+        },
+      ],
+    });
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({ status: 0, stdout: selectedFinding, stderr: "" }),
+      }),
+    ).toThrow(/requires an active-agent execution adapter/);
+
+    expect(() =>
+      runLoopProject({
+        config,
+        projectId: "hub",
+        runCommand: () => ({ status: 0, stdout: selectedFinding, stderr: "" }),
+        runAgentTask: () => ({ status: 0, stdout: "agent done", stderr: "" }),
+      }),
+    ).toThrow(/requires a git adapter when commit.enabled is true/);
   });
 });

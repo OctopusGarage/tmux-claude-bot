@@ -1,7 +1,6 @@
 import type { AgentKind } from "../../shared/types.js";
 import { appVersion } from "../../shared/version.js";
 import { readAgentActivitySnapshot } from "../agents/activity-snapshot.js";
-import { AutopilotStore } from "../autopilot/state-store.js";
 import type { HandlerDeps } from "../deps.js";
 import { instanceStartedAt } from "../infra/instance-lock.js";
 import { freeLabel, freeSlotOf, getFreeProject } from "../projects/free-projects.js";
@@ -12,13 +11,14 @@ import { getPathBySession } from "../projects/sessionPathMap.js";
 import type { UsageSnapshot } from "../read/usage.js";
 import { PANE_DIFF_MS } from "../session/pane-activity.js";
 import { SESSION_ACTIVITY_WINDOW_MS } from "../session/session-telemetry.js";
+import type { RuntimeOverview, RuntimeOverviewOptions } from "./runtime-overview.js";
+import { createRuntimeOverviewReaders } from "./runtime-overview-production.js";
+import { readRuntimeOverview } from "./runtime-overview-reader.js";
 
 /** A transcript written within this window counts the session as actively
  * working. Generous so brief gaps between streamed writes don't flip to idle;
  * the cost is up to this much "busy" lag after a task actually finishes. */
 const ACTIVITY_WINDOW_MS = SESSION_ACTIVITY_WINDOW_MS;
-
-const autopilotStore = new AutopilotStore();
 
 /**
  * One live session's aggregated state for the dashboard. Neutral data only —
@@ -49,8 +49,6 @@ export type SessionRow = {
   uptimeMs: number;
   usage: UsageSnapshot | null;
   apiMode?: "api" | "subscription";
-  /** Present only when autopilot is enabled for this session. */
-  autopilot?: { enabled: boolean; pureKeepAlive: boolean; iterations: number };
   /** True when this row is the reserved operator (home) session. */
   operator?: boolean;
 };
@@ -58,6 +56,8 @@ export type SessionRow = {
 /** A global snapshot: every live session plus bot-level totals. */
 export type DashboardSnapshot = {
   sessions: SessionRow[];
+  /** Additive canonical operations read model. Optional for old Control snapshots. */
+  overview?: RuntimeOverview;
   global: {
     botUptimeMs: number | null;
     version: string;
@@ -67,7 +67,6 @@ export type DashboardSnapshot = {
     busyCount: number;
     queueDepth: number;
     adapters: { telegram: boolean; lark: boolean };
-    autopilotCount: number;
   };
   generatedAt: number;
 };
@@ -119,18 +118,6 @@ async function gatherRow(
 
   const apiMode = (await deps.configResolver.resolveApiInfo?.(session).catch(() => null))?.mode;
 
-  // Best-effort autopilot state: wrap in try/catch so a store read failure
-  // degrades to no autopilot field rather than sinking the whole row.
-  let autopilot: SessionRow["autopilot"];
-  try {
-    const ap = autopilotStore.get(session);
-    if (ap.enabled) {
-      autopilot = { enabled: true, pureKeepAlive: ap.pureKeepAlive, iterations: ap.iterations };
-    }
-  } catch {
-    // degraded: leave autopilot undefined
-  }
-
   return {
     session,
     label,
@@ -147,7 +134,6 @@ async function gatherRow(
     uptimeMs,
     usage: activity.usage,
     ...(apiMode !== undefined && { apiMode }),
-    ...(autopilot && { autopilot }),
     ...(operatorFlag && { operator: true }),
   };
 }
@@ -160,7 +146,15 @@ async function gatherRow(
  */
 export async function buildDashboard(
   deps: HandlerDeps,
-  opts: { paneDiffMs?: number } = {},
+  opts: {
+    paneDiffMs?: number;
+    overviewOptions?: RuntimeOverviewOptions;
+    readOverview?: (input: {
+      now: number;
+      rows: SessionRow[];
+      options?: RuntimeOverviewOptions;
+    }) => Promise<RuntimeOverview>;
+  } = {},
 ): Promise<DashboardSnapshot> {
   const paneDiffMs = opts.paneDiffMs ?? PANE_DIFF_MS;
   const now = Date.now();
@@ -174,9 +168,52 @@ export async function buildDashboard(
 
   const st = instanceStartedAt();
   const botUptimeMs = st ? Math.max(0, now - Date.parse(st)) : null;
+  const readOverview =
+    opts.readOverview ??
+    ((input: { now: number; rows: SessionRow[]; options?: RuntimeOverviewOptions }) =>
+      readRuntimeOverview({
+        now: input.now,
+        sessions: input.rows.map((row) => ({
+          session: row.session,
+          label: row.label,
+          busy: row.busy,
+          running: row.running,
+          ...(row.operator === undefined ? {} : { operator: row.operator }),
+          ...(row.task === undefined ? {} : { taskStartedAt: row.task.startedAt }),
+        })),
+        readers: createRuntimeOverviewReaders({
+          deps,
+          now: input.now,
+          operatorSessionRunning: input.rows.some((row) => row.operator && row.running),
+          service: {
+            uptimeMs: botUptimeMs,
+            adapters: {
+              telegram: Boolean(deps.config.telegramBotToken),
+              lark: Boolean(deps.config.lark),
+            },
+          },
+        }),
+        ...(input.options === undefined ? {} : { options: input.options }),
+      }));
+  const overview = await readOverview({
+    now,
+    rows,
+    ...(opts.overviewOptions === undefined ? {} : { options: opts.overviewOptions }),
+  });
+  const project = opts.overviewOptions?.project?.toLowerCase();
+  const selectedRows = opts.overviewOptions?.problemsOnly
+    ? []
+    : rows.filter(
+        (row) =>
+          project === undefined ||
+          project.length === 0 ||
+          row.session.toLowerCase() === project ||
+          row.label.toLowerCase().includes(project),
+      );
 
   return {
-    sessions: rows,
+    sessions: selectedRows,
+    overview,
     global: {
       botUptimeMs,
       version: appVersion(),
@@ -188,7 +225,6 @@ export async function buildDashboard(
         telegram: Boolean(deps.config.telegramBotToken),
         lark: Boolean(deps.config.lark),
       },
-      autopilotCount: rows.filter((r) => r.autopilot).length,
     },
     generatedAt: now,
   };

@@ -1,4 +1,4 @@
-/** 解析 forge-mcp-server 提示词工具返回的格式化字符串(容错:格式微变不致崩)。 */
+/** Parse formatted prompt-tool output from forge-mcp-server. Tolerates minor format drift. */
 
 export interface PromptSummary {
   name: string;
@@ -9,7 +9,7 @@ export interface PromptSummary {
 
 const ROW = /^•\s+(.+)\s+\[([^\]]*)\](?:\s+—\s+(.*))?$/;
 
-/** 解析 search_prompts / 列表输出。无匹配/空库 → []。 */
+/** Parse search_prompts/list output. No matches or an empty library returns []. */
 export function parseSearchResults(text: string): PromptSummary[] {
   const out: PromptSummary[] = [];
   const lines = text.split("\n");
@@ -32,7 +32,7 @@ export function parseSearchResults(text: string): PromptSummary[] {
 
 const TAG_ROW = /^\s+(.+?)\s+\((\d+)\)\s*$/;
 
-/** 解析 list_prompt_tags 输出。无标签 → []。 */
+/** Parse list_prompt_tags output. No tags returns []. */
 export function parseTagList(text: string): Array<{ tag: string; count: number }> {
   const out: Array<{ tag: string; count: number }> = [];
   for (const line of text.split("\n")) {

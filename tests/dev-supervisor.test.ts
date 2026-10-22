@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupervisorStatus } from "../src/core/dev/supervisor-core.js";
-import { startSupervisor } from "../src/scripts/dev-supervisor.js";
+import { installSupervisorSignalHandlers, startSupervisor } from "../src/scripts/dev-supervisor.js";
 
 /** A fake ChildHandle that captures the onExit callback so tests can fire it. */
 class FakeChild {
   kill = vi.fn();
+  waitForExit = vi.fn(async () => true);
   private _exitCb: (() => void) | null = null;
   onExit(cb: () => void): void {
     this._exitCb = cb;
@@ -26,6 +27,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
   let onChange: ((rel: string) => void) | null = null;
   const children: FakeChild[] = [];
   const statuses: SupervisorStatus[] = [];
+  const unwatch = vi.fn();
 
   // Each startChild() call creates and records a new FakeChild.
   const startChild = vi.fn(() => {
@@ -41,7 +43,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
     runTypecheck,
     watchSrc: (cb: (rel: string) => void) => {
       onChange = cb;
-      return () => {};
+      return unwatch;
     },
     writeStatus: (s: SupervisorStatus) => statuses.push(s),
     now: () => 1000,
@@ -55,6 +57,7 @@ function makeDeps(over: Partial<Parameters<typeof startSupervisor>[0]> = {}) {
     /** children[0] is the boot child, children[1] the first respawn, etc. */
     children,
     statuses,
+    unwatch,
     startChild,
     runTypecheck,
     fire: (rel: string) => onChange?.(rel),
@@ -96,6 +99,32 @@ describe("startSupervisor", () => {
     expect(startChild).toHaveBeenCalledTimes(1); // respawned
   });
 
+  it("waits for the old child to exit before starting the reload child", async () => {
+    let releaseExit!: () => void;
+    const { deps, children, startChild, runTypecheck, fire } = makeDeps();
+    startSupervisor(deps);
+    expectChild(children, 0).waitForExit.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseExit = () => resolve(true);
+        }),
+    );
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGTERM");
+    expect(startChild).not.toHaveBeenCalled();
+
+    releaseExit();
+    await flushAll();
+
+    expect(startChild).toHaveBeenCalledTimes(1);
+  });
+
   it("on a failing typecheck, holds the child and records the error", async () => {
     const { deps, children, statuses, startChild, fire } = makeDeps({
       runTypecheck: vi.fn(async () => 1),
@@ -108,6 +137,97 @@ describe("startSupervisor", () => {
     expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
     expect(startChild).not.toHaveBeenCalled();
     expect(statuses.at(-1)?.state).toBe("typecheck-failed");
+  });
+
+  it("rechecks one transient typecheck failure and reloads after it passes", async () => {
+    const runTypecheck = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    const { deps, children, statuses, startChild, fire } = makeDeps({
+      runTypecheck,
+      typecheckFailureRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("typecheck-failed");
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGTERM");
+    expect(startChild).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)?.state).toBe("running");
+  });
+
+  it("stops rechecking after a persistent typecheck failure", async () => {
+    const runTypecheck = vi.fn(async () => 1);
+    const { deps, children, statuses, startChild, fire } = makeDeps({
+      runTypecheck,
+      typecheckFailureRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(startChild).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("typecheck-failed");
+  });
+
+  it("defers clean reloads while active automation is using the bot process", async () => {
+    const shouldDeferReload = vi.fn(() => true);
+    const { deps, children, statuses, startChild, runTypecheck, fire } = makeDeps({
+      shouldDeferReload,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(1);
+    expect(shouldDeferReload).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).not.toHaveBeenCalled();
+    expect(startChild).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe("reload-deferred");
+  });
+
+  it("reloads on the deferred recheck after active automation clears", async () => {
+    let activeAutomation = true;
+    const { deps, children, startChild, runTypecheck, fire } = makeDeps({
+      shouldDeferReload: () => activeAutomation,
+      reloadDeferRecheckMs: 100,
+    });
+    startSupervisor(deps);
+    startChild.mockClear();
+
+    fire("core/x.ts");
+    await vi.advanceTimersByTimeAsync(60);
+    await flushAll();
+    expect(startChild).not.toHaveBeenCalled();
+
+    activeAutomation = false;
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAll();
+
+    expect(runTypecheck).toHaveBeenCalledTimes(2);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
+    expect(startChild).toHaveBeenCalledTimes(1);
   });
 
   it("ignores changes to test files (no typecheck, no restart)", async () => {
@@ -274,5 +394,56 @@ describe("startSupervisor", () => {
     // Only 2 respawns should have happened (crashes 1 and 2 respawn; crash 3 waits).
     expect(startChild).toHaveBeenCalledTimes(2);
     expect(statuses.at(-1)?.state).toBe("crash-wait");
+  });
+
+  it("stop marks the live child intentional, clears the watcher, and is idempotent", async () => {
+    const { deps, children, unwatch } = makeDeps();
+    const supervisor = startSupervisor(deps);
+
+    await supervisor.stop("SIGINT");
+    await supervisor.stop("SIGTERM");
+    expect(unwatch).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledTimes(1);
+    expect(expectChild(children, 0).kill).toHaveBeenCalledWith("SIGINT");
+
+    expectChild(children, 0).fireExit();
+    expect(deps.startChild).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("installSupervisorSignalHandlers", () => {
+  it("stops the supervisor once before exiting on a shutdown signal", async () => {
+    const handlers = new Map<string, () => void>();
+    const signalTarget = {
+      once: vi.fn((event: string, cb: () => void) => {
+        handlers.set(event, cb);
+        return signalTarget;
+      }),
+    };
+    let releaseStop!: () => void;
+    const supervisor = {
+      stop: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          }),
+      ),
+    };
+    const exit = vi.fn() as unknown as (code: number) => never;
+
+    installSupervisorSignalHandlers(supervisor, signalTarget, exit);
+
+    handlers.get("SIGTERM")?.();
+    handlers.get("SIGINT")?.();
+    expect(supervisor.stop).toHaveBeenCalledTimes(1);
+    expect(supervisor.stop).toHaveBeenCalledWith("SIGTERM");
+    expect(exit).not.toHaveBeenCalled();
+
+    releaseStop();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });

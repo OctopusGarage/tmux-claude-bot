@@ -8,12 +8,12 @@ import { ClaudeRunner } from "./core/agents/claude/claude-runner.js";
 import { parseCodexFlavorAliases } from "./core/agents/codex/codex-flavor-alias.js";
 import { CodexRunner } from "./core/agents/codex/codex-runner.js";
 import { AgentRunnerDispatcher } from "./core/agents/runner-dispatcher.js";
-import { NotifierRegistry } from "./core/autopilot/notifier.js";
 import { agentIsIdle } from "./core/command/agent-ready.js";
 import { executeMessage } from "./core/command/dispatch.js";
 import { MessageQueue } from "./core/command/queue.js";
 import { defaultQueueObserver } from "./core/command/queue-observer.js";
 import type { HandlerDeps } from "./core/deps.js";
+import { disableStateRepositoryHooks } from "./core/infra/state-git-guard.js";
 import { migrateLegacyStateDir } from "./core/infra/state-migration.js";
 import { NotificationGateway } from "./core/notifications/gateway.js";
 import { OwnerActivityTracker } from "./core/notifications/owner-activity.js";
@@ -71,6 +71,7 @@ export function bootstrap(): HandlerDeps {
   // Relocate any legacy root-level state into the state/ subdir BEFORE loadConfig
   // reads .env from it — closes the deploy-wipe that erased group_bindings.json.
   migrateLegacyStateDir();
+  disableStateRepositoryHooks(appStateDir());
   const config = loadConfig();
   const { currentProject } = createProjectManager(appStateDir());
 
@@ -127,7 +128,6 @@ export function bootstrap(): HandlerDeps {
   const activity = createActivityWatcher(deriveWatchRoots(homedir()));
   activity.start();
 
-  const notifier = new NotifierRegistry();
   const notifications = new NotificationGateway();
   const ownerActivity = new OwnerActivityTracker();
 
@@ -140,7 +140,6 @@ export function bootstrap(): HandlerDeps {
     currentProject,
     configResolver,
     activity,
-    notifier,
     notifications,
     ownerActivity,
     channelSenders: new ChannelSenderRegistry(),

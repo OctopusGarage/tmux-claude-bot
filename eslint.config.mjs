@@ -1,6 +1,6 @@
 // Deep, type-aware lint — a NARROW complement to biome (style) and tsc (types):
 // three behavioural rules needing type info that neither can express. Mixed
-// severity on purpose (`npm run lint:deep`):
+// severity on purpose (`pnpm lint:deep`):
 //  - the async-hygiene rules ERROR (and gate CI): a floating / misused promise is
 //    almost always a real bug, with an explicit escape hatch (`void x()`).
 //  - no-unnecessary-condition WARNS only: it's type-based, and types lie (parsed

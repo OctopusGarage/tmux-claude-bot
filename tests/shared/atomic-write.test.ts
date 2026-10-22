@@ -49,6 +49,25 @@ describe("atomic-write", () => {
       writeFileAtomicSync(file, "TOKEN=abc", { mode: 0o600 });
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     });
+
+    it("removes only stale temp siblings for the same target before writing", () => {
+      const file = nodePath.join(dir, "a.json");
+      const stale = `${file}.tmp-123-old`;
+      const fresh = `${file}.tmp-456-new`;
+      const otherTarget = nodePath.join(dir, "b.json.tmp-123-old");
+      fs.writeFileSync(stale, "stale");
+      fs.writeFileSync(fresh, "fresh");
+      fs.writeFileSync(otherTarget, "other");
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      fs.utimesSync(stale, old, old);
+
+      writeFileAtomicSync(file, "new");
+
+      expect(fs.existsSync(stale)).toBe(false);
+      expect(fs.existsSync(fresh)).toBe(true);
+      expect(fs.existsSync(otherTarget)).toBe(true);
+      expect(fs.readFileSync(file, "utf-8")).toBe("new");
+    });
   });
 
   describe("writeFileAtomic (async)", () => {
@@ -77,6 +96,25 @@ describe("atomic-write", () => {
       await expect(writeFileAtomic(target, "x")).rejects.toThrow();
       const leftovers = fs.readdirSync(dir).filter((f) => f.includes(".tmp-"));
       expect(leftovers).toEqual([]);
+    });
+
+    it("removes only stale temp siblings for the same target before writing", async () => {
+      const file = nodePath.join(dir, "b.txt");
+      const stale = `${file}.tmp-123-old`;
+      const fresh = `${file}.tmp-456-new`;
+      const otherTarget = nodePath.join(dir, "c.txt.tmp-123-old");
+      fs.writeFileSync(stale, "stale");
+      fs.writeFileSync(fresh, "fresh");
+      fs.writeFileSync(otherTarget, "other");
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      fs.utimesSync(stale, old, old);
+
+      await writeFileAtomic(file, "new");
+
+      expect(fs.existsSync(stale)).toBe(false);
+      expect(fs.existsSync(fresh)).toBe(true);
+      expect(fs.existsSync(otherTarget)).toBe(true);
+      expect(fs.readFileSync(file, "utf-8")).toBe("new");
     });
   });
 });

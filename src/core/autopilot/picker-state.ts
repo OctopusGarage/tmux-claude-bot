@@ -1,5 +1,5 @@
 /** Transient per-session goal-picker selection (which goals are ticked + the
- * round count) before the user taps "开始". In-memory and rebuildable — NOT
+ * round count) before the user starts the flow. In-memory and rebuildable — NOT
  * persisted: a restart just drops an in-progress selection (no message lost).
  * Shared by every surface (Telegram/Lark/TUI). */
 export type PickerState = { selected: string[]; rounds: number };

@@ -134,7 +134,7 @@ describe("prompt translation readiness", () => {
         { from: "zh", to: "en", timeoutMs: 1000 },
         { canImport: () => false },
       ),
-    ).rejects.toThrow("run npm run translate:install");
+    ).rejects.toThrow("run pnpm translate:install");
   });
 });
 

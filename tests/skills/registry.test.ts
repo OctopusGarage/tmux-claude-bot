@@ -211,6 +211,40 @@ describe("applyAgentSkillRegistryActions", () => {
       }),
     ).toThrow(/failed for install "improve-codebase-architecture": stderr detail\nstdout detail/i);
   });
+
+  it("quarantines floating refs locally without requiring the external apply command", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-skills-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const store = new AgentSkillRegistryStore();
+    store.set(installed({ ref: "old-pin", installedAt: 100 }));
+
+    const summary = applyAgentSkillRegistryActions({
+      approved: [{ ...approvedSkill, ref: "latest" }],
+      store,
+      now: 1_234,
+      runCommand: () => {
+        throw new Error("quarantine must not run external commands");
+      },
+    });
+
+    expect(summary.actions).toEqual([
+      expect.objectContaining({
+        action: "quarantine",
+        skillId: "improve-codebase-architecture",
+        reason: "floating ref is unsafe",
+      }),
+    ]);
+    expect(summary.applied).toBe(1);
+    expect(listAgentSkills(store)).toEqual([
+      expect.objectContaining({
+        skillId: "improve-codebase-architecture",
+        ref: "latest",
+        status: "quarantined",
+        installedAt: 100,
+        updatedAt: 1_234,
+      }),
+    ]);
+  });
 });
 
 describe("refreshAgentSkillCatalog", () => {
@@ -291,6 +325,39 @@ describe("refreshAgentSkillCatalog", () => {
       }),
     ]);
   });
+
+  it("keeps catalog refresh stable when the resolved approved spec is unchanged", () => {
+    const summary = refreshAgentSkillCatalog({
+      catalog: [
+        {
+          id: approvedSkill.id,
+          sourceUrl: approvedSkill.sourceUrl,
+          sourcePath: approvedSkill.sourcePath,
+          trackingRef: "main",
+          platforms: approvedSkill.platforms,
+          tags: approvedSkill.tags,
+          trustLevel: approvedSkill.trustLevel,
+          risk: approvedSkill.risk,
+          updatePolicy: approvedSkill.updatePolicy,
+        },
+      ],
+      approved: [approvedSkill],
+      resolveLatest: () => ({
+        ref: approvedSkill.ref,
+        checksum: approvedSkill.checksum,
+      }),
+    });
+
+    expect(summary.changed).toBe(0);
+    expect(summary.updates).toEqual([
+      expect.objectContaining({
+        skillId: "improve-codebase-architecture",
+        previousRef: approvedSkill.ref,
+        changed: false,
+      }),
+    ]);
+    expect(summary.approved).toEqual([approvedSkill]);
+  });
 });
 
 describe("resolveLatestGitSkill", () => {
@@ -359,6 +426,41 @@ printf '%s\\trefs/heads/main\\n' 'not-a-sha'
           updatePolicy: "manual",
         }),
       ).toThrow(/to a commit SHA/i);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
+
+  it("reports git ls-remote failures with stderr context", () => {
+    const binDir = mkdtempSync(join(tmpdir(), "tcb-fake-git-"));
+    const git = join(binDir, "git");
+    writeFileSync(
+      git,
+      `#!/bin/sh
+printf '%s\\n' 'remote rejected ref' >&2
+exit 128
+`,
+    );
+    chmodSync(git, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+    try {
+      expect(() =>
+        resolveLatestGitSkill({
+          id: "bad-skill",
+          sourceUrl: "https://example.com/repo",
+          sourcePath: "skills/bad",
+          trackingRef: "main",
+          platforms: ["claude"],
+          tags: [],
+          trustLevel: "community",
+          risk: "high",
+          updatePolicy: "manual",
+        }),
+      ).toThrow(
+        /failed to resolve skill "bad-skill" from https:\/\/example.com\/repo: remote rejected ref/i,
+      );
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;

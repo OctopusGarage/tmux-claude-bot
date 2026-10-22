@@ -1,3 +1,4 @@
+import { buildAutomationNotificationIntent } from "../notifications/automation-intent.js";
 import type {
   NotificationChannelSelection,
   NotificationRequest,
@@ -31,8 +32,56 @@ export async function runDailyTaskAudit(input: {
 }): Promise<DailyTaskAuditResult> {
   const window = previousSingaporeDayWindow(input.now);
   input.ledger.reconcileSupersededFailures();
-  const ledgerRecords = input.ledger.listForWindow(window);
   const discoveredRecords = input.discover?.({ window, now: input.now }) ?? [];
+  const ledgerRecordsByTaskId = new Map(
+    input.ledger.listAll().map((record) => [record.taskId, record]),
+  );
+  for (const record of discoveredRecords) {
+    if (record.status === "expected") {
+      input.ledger.expect({
+        taskId: record.taskId,
+        source: record.source,
+        name: record.name,
+        scheduledAt: record.scheduledAt,
+        ...(record.summary === undefined ? {} : { summary: record.summary }),
+      });
+      continue;
+    }
+    if (
+      record.source !== "loop-engineering" ||
+      record.status !== "skipped" ||
+      record.repairStatus !== "superseded"
+    ) {
+      continue;
+    }
+    const existing = ledgerRecordsByTaskId.get(record.taskId);
+    const repairStillOpen =
+      existing?.repairStatus === undefined ||
+      ["pending", "running", "failed"].includes(existing.repairStatus);
+    if (
+      existing !== undefined &&
+      ((existing.status !== "expected" && existing.status !== "missing") || !repairStillOpen)
+    ) {
+      continue;
+    }
+    input.ledger.expect({
+      taskId: record.taskId,
+      source: record.source,
+      name: record.name,
+      scheduledAt: record.scheduledAt,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+    input.ledger.skip(record.taskId, {
+      endedAt: input.now,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+    input.ledger.markRepairStatus(record.taskId, {
+      repairStatus: "superseded",
+      updatedAt: input.now,
+      ...(record.summary === undefined ? {} : { summary: record.summary }),
+    });
+  }
+  const ledgerRecords = ledgerRecordsForAuditWindow(input.ledger, window, discoveredRecords);
   const summary = summarizeTaskWindow({
     records: mergeDiscoveredTaskRecords(ledgerRecords, discoveredRecords),
     now: input.now,
@@ -53,20 +102,61 @@ export async function runDailyTaskAudit(input: {
   return { summary, repairCandidates };
 }
 
+function ledgerRecordsForAuditWindow(
+  ledger: DailyTaskLedger,
+  window: ReturnType<typeof previousSingaporeDayWindow>,
+  discoveredRecords: ReturnType<ScheduledTaskDiscovery>,
+) {
+  const records = ledger.listForWindow(window);
+  const recordIds = new Set(records.map((record) => record.taskId));
+  const discoveredIds = new Set(discoveredRecords.map((record) => record.taskId));
+  for (const record of ledger.listAll()) {
+    if (!discoveredIds.has(record.taskId) || recordIds.has(record.taskId)) continue;
+    records.push(record);
+    recordIds.add(record.taskId);
+  }
+  return records;
+}
+
 export function buildDailyTaskAuditNotification(input: {
   summary: TaskAuditSummary;
   repairCandidates: TaskAuditItem[];
   channel?: NotificationChannelSelection;
   repairDispatch?: string;
 }): NotificationRequest {
+  const activeIssues = activeIssueItems(input.summary.items);
+  const status = dailyTaskAuditNotificationStatus(activeIssues);
+  const body = renderDailyTaskAudit(input.summary, input.repairCandidates, {
+    ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
+  });
+  const intent = buildAutomationNotificationIntent({
+    title:
+      status === "attention"
+        ? "Daily task audit needs attention"
+        : status === "waiting"
+          ? "Daily task audit waiting for automation capacity"
+          : "Daily task audit healthy",
+    status,
+    summary: body.split("\n"),
+  });
   return {
     ...(input.channel !== undefined ? { channel: input.channel } : {}),
-    level: input.repairCandidates.length > 0 ? "warning" : "success",
+    level: intent.level,
     source: "daily-task-audit",
-    title: `Daily scheduled task audit: ${input.summary.window?.label ?? "unknown window"}`,
-    body: renderDailyTaskAudit(input.summary, input.repairCandidates, {
-      ...(input.repairDispatch !== undefined ? { repairDispatch: input.repairDispatch } : {}),
-    }),
+    title: intent.title,
+    body: intent.sections.flatMap((section) => section.lines).join("\n"),
+    delivery: {
+      mode: "state-change",
+      topic: "daily-task-audit:health",
+      state:
+        status === "ok"
+          ? "healthy"
+          : `${status}:${activeIssues
+              .map((item) => `${item.name}:${item.status}:${item.failureKind ?? "unknown"}`)
+              .sort()
+              .join("|")}`,
+      ...(status === "ok" ? { notifyInitial: false } : {}),
+    },
   };
 }
 
@@ -76,54 +166,61 @@ export function renderDailyTaskAudit(
   opts: { repairDispatch?: string } = {},
 ): string {
   const counts = summary.counts;
+  const activeIssues = activeIssueItems(summary.items);
+  const status = dailyTaskAuditNotificationStatus(activeIssues);
+  const closedFailures = closedFailureItems(summary.items);
   const lines = [
-    "Summary:",
-    `- success: ${counts.success}`,
-    `- failed: ${counts.failed}`,
-    `- missing: ${counts.missing}`,
-    `- running: ${counts.running}`,
-    `- running-timeout: ${counts.runningTimeout}`,
-    `- skipped: ${counts.skipped}`,
+    `Status: ${status.toUpperCase()}`,
+    `Counts: ${counts.success} success · ${counts.failed} failed · ${counts.missing} missing · ${counts.running} running`,
+    `Repair: ${repairCandidates.length} candidates${
+      opts.repairDispatch === undefined ? "" : ` · ${opts.repairDispatch}`
+    }`,
   ];
   if (opts.repairDispatch !== undefined) {
-    lines.push(`- repair-dispatch: ${opts.repairDispatch}`);
+    lines.push(`Closed: ${closedFailures.length} previously reported`);
   }
   if (summary.items.length === 0) {
-    lines.push("", "No scheduled task records were found for this window.");
+    lines.push("", "No scheduled task records found.");
     return lines.join("\n");
   }
-  lines.push("", "Tasks:");
-  for (const item of summary.items) {
-    lines.push(
-      `- ${item.status}: ${item.name} (${item.source})`,
-      `  taskId: ${item.taskId}`,
-      item.repairStatus ? `  repair: ${item.repairStatus}` : "",
-      item.failureKind ? `  failure-kind: ${item.failureKind}` : "",
-      item.error ? `  error: ${item.error}` : "",
-      item.summary ? `  summary: ${item.summary}` : "",
-      item.reportPath ? `  report: ${item.reportPath}` : "",
-    );
-  }
-  if (repairCandidates.length > 0) {
-    lines.push("", "Repair candidates:");
-    for (const item of repairCandidates) {
+  if (activeIssues.length > 0) {
+    lines.push("", "Issues:");
+    const visibleIssues = activeIssues.slice(0, 3);
+    for (const item of visibleIssues) {
       lines.push(
-        `- ${item.taskId}: ${item.status}${
-          item.failureKind ? ` kind=${item.failureKind}` : ""
-        }${item.error ? ` - ${item.error}` : ""}`,
+        `• ${item.name} · ${item.status}${item.failureKind ? ` · ${item.failureKind}` : ""}`,
       );
     }
-  }
-  const closed = summary.items.filter(
-    (item) => isRepairableStatus(item.status) && isClosedRepairStatus(item.repairStatus),
-  );
-  if (closed.length > 0) {
-    lines.push("", "Closed failures:");
-    for (const item of closed) {
-      lines.push(`- ${item.taskId}: repair=${item.repairStatus}`);
+    if (activeIssues.length > visibleIssues.length) {
+      lines.push(`• …and ${activeIssues.length - visibleIssues.length} more`);
     }
   }
   return lines.filter((line) => line.length > 0).join("\n");
+}
+
+function dailyTaskAuditNotificationStatus(
+  activeIssues: TaskAuditItem[],
+): "ok" | "waiting" | "attention" {
+  if (activeIssues.length === 0) return "ok";
+  return activeIssues.every(isAutomationAdmissionDeferredIssue) ? "waiting" : "attention";
+}
+
+function activeIssueItems(items: TaskAuditItem[]): TaskAuditItem[] {
+  return items.filter((item) => {
+    if (item.status === "running") return true;
+    return isRepairableStatus(item.status) && !isClosedRepairStatus(item.repairStatus);
+  });
+}
+
+function isAutomationAdmissionDeferredIssue(item: TaskAuditItem): boolean {
+  const evidence = `${item.error ?? ""}\n${item.summary ?? ""}`;
+  return evidence.includes("Recovery dispatch deferred: automation admission deferred:");
+}
+
+function closedFailureItems(items: TaskAuditItem[]): TaskAuditItem[] {
+  return items.filter(
+    (item) => isRepairableStatus(item.status) && isClosedRepairStatus(item.repairStatus),
+  );
 }
 
 function isClosedRepairStatus(status: TaskAuditItem["repairStatus"]): boolean {

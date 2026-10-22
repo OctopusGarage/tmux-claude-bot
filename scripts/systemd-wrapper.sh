@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# shellcheck source=scripts/sanitize-service-environment.sh
+. "$SCRIPT_DIR/sanitize-service-environment.sh"
+tcb_sanitize_inherited_environment
+
 # shellcheck source=scripts/resolve-node.sh
 . "$SCRIPT_DIR/resolve-node.sh"
 
@@ -17,6 +21,6 @@ export TCB_ENV_FILE="$PROJECT_DIR/state/.env"
 export TCB_LOG_DIR="$PROJECT_DIR/logs"
 cd "$PROJECT_DIR"
 
-# Run the bundled CLI (built by install.sh via `npm run build`). No tsx loader:
+# Run the bundled CLI (built by install.sh via `pnpm build`). No tsx loader:
 # dist is plain node ESM, so a restart runs whatever was last built.
 exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" run

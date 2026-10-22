@@ -1,0 +1,1235 @@
+# Automation Alignment Contract
+
+This document is the alignment contract for tmux-claude-bot's agent-facing
+instructions, user-facing surfaces, intelligent automation modules, and
+maintenance documentation. It exists because this project now has several
+surfaces that can drift independently: Claude Code project memory, Codex
+`AGENTS.md`, repo skills, `.claude` commands, CLI commands, the TUI, Telegram,
+Feishu/Lark, MCP, Loop Engineering, Autopilot, Opportunity Discovery, PR review,
+Daily Task Audit, Runtime Guardian, Resource Guardian, and docs.
+
+For the current intelligent-automation business model, read
+`docs/intelligent-automation.md`. For user-facing command usage, read
+`docs/manual.md`, `docs/commands.md`, `docs/tui.md`, and
+`docs/agents/usage-guide.md`. For surface-by-surface feature parity, read
+`docs/automation-capability-matrix.md`. For governed system prompts, prompt
+metadata, allowed actions, and eval expectations, read
+`docs/prompt-governance.md`. For role-based CLI/MCP/skill exposure, read
+`docs/ai-tool-surface-governance.md`.
+
+## External Guidance Baseline
+
+Use official tool behavior as the baseline when deciding where a rule belongs:
+
+- Claude Code loads `CLAUDE.md` / `.claude/CLAUDE.md` as project memory. Keep it
+  concise and use it for project standards, architecture decisions, build/test
+  commands, and review checklists. Larger procedure-like material should move
+  into skills or scoped rules.
+- Claude Code skills and old `.claude/commands/*.md` both create slash-command
+  workflows. Prefer skills for reusable procedures with references, scripts, or
+  optional automatic invocation. Keep `.claude/commands` as thin compatibility
+  entry points when needed.
+- Claude Code hooks are deterministic lifecycle automation. Use hooks for
+  enforceable checks around tool use or session lifecycle, not for long business
+  explanations.
+- Codex reads `AGENTS.md` files as durable repository guidance. Nested
+  `AGENTS.override.md` / `AGENTS.md` files can specialize subdirectories.
+- Codex skills package repeatable workflows and load only when selected or
+  relevant. Use skills for reusable operator recipes; do not put long task
+  procedures in always-loaded guidance.
+- Codex hooks can observe or block supported tool calls and session events, but
+  hook output must stay concise and should not leak secrets.
+- ChatGPT/Codex scheduled tasks can run in local projects or isolated worktrees.
+  Prefer worktrees for unattended code-changing work; use source worktrees only
+  for explicit live/self-repair flows with clean-worktree preflight.
+
+Memory and instruction files are context, not a policy engine. If a rule must be
+enforced, add a schema check, contract test, hook, runtime gate, or CI/local
+verification command.
+
+## Rule Placement
+
+Use the smallest durable surface that matches the scope:
+
+| Surface | Use For | Do Not Use For |
+| --- | --- | --- |
+| `AGENTS.md` | Cross-agent repository rules Codex and other coding agents must see immediately. Keep it short, strict, and pointer-heavy. | Long tutorials, historical design notes, or feature matrices. |
+| `CLAUDE.md` | Claude Code project memory: development conventions, service/runtime facts, logging, verification, architecture constraints. | Full product manuals or repeated copies of intelligent automation docs. |
+| `docs/intelligent-automation.md` | Business truth for Loop Engineering, Supervisor, WorkOrder, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, Runtime Guardian, and Resource Guardian. | Tool-specific memory mechanics or one-off historical plans. |
+| `docs/automation-alignment.md` | Alignment checklist and source-of-truth map across agent instructions, docs, commands, channels, config, and tests. | User-facing command reference. |
+| `docs/automation-capability-matrix.md` | Surface-by-surface capability parity for CLI, TUI, Telegram, Feishu/Lark, MCP, and the home/operator skill. | Deep implementation details or task-family business truth. |
+| `docs/ai-tool-surface-governance.md` | Role-based exposure rules for AI-facing CLI, MCP tools, and skills. | Human command manuals or provider-specific SDK integration. |
+| `docs/manual.md`, `docs/commands.md`, `docs/tui.md` | Human-facing usage and command behavior. | Internal-only design constraints unless needed to explain user behavior. |
+| `docs/agents/usage-guide.md` | AI operator recipes for using the installed bot. | Source-code implementation details that can drift from CLI help. |
+| `skills/tcb-home-operator/SKILL.md` | Bundled source for the optional global `tcb-home-operator` Home Operator skill. | A second source of truth for product behavior; link back to docs. |
+| `.agents/skills/*` | Codex-compatible repo workflows that should load on demand. | Always-on repo rules. |
+| `.claude/skills/*` | Claude Code reusable workflows with references/scripts. | Short one-off reminders that belong in `CLAUDE.md`. |
+| `.claude/commands/*` | Legacy/thin slash-command compatibility. Prefer a skill for new reusable workflows. | New long-lived workflow truth. |
+| `.claude/rules/*` or nested instruction files | Scoped rules for specific directories/file types when always-loaded files get too large. | Global automation taxonomy. |
+| `src/**` schema/gates/tests | Enforced behavior and contracts. | Human-only prose. |
+
+## Alignment Matrix
+
+Remote keyboard alignment: Telegram and Feishu expose `/key [chord]` plus a Keys
+button on expanded control/help surfaces. `key-chord.ts` owns the common parser
+and palette presets; `key` is one immediate MessageAction carrying a chord in its
+text payload, validated again by the dispatcher. Generic chords require a live
+agent. Telegram palette callbacks retain the originating session; Feishu follows
+the existing current/bound-chat control routing and signed callback gate. There
+are no Codex-specific semantic bindings or per-chord actions. Legacy controls
+retain their preconditions. Parser, dispatch, both adapter command/callback tests
+and an isolated real-tmux byte test cover this contract. No new personal config
+or CLI/TUI/MCP chord entry point is introduced.
+
+Feishu Active sessions (`listalive` / `/list_alive_projects`) sends at most ten
+session rows per card to stay below the JSON 2.0 200-element limit, including
+nested button text and hover elements. All rows retain their existing private-chat
+actions and group read-only policy. Failed card delivery falls back to plain-text
+summaries for that batch. `tests/adapters/lark/views.test.ts` verifies large-list
+delivery, complete row coverage, and the fallback.
+
+Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
+worker-consumption timeout as retryable delivery, deduplicate project recovery
+by project identity while an active recovery exists, and reconcile ledger plus
+repair-queue state only from an authoritative passing supervisor final summary.
+Managed-development reload alignment invariant: after a source change, the dev
+supervisor must retry one failed typecheck after a bounded delay. A later pass
+continues through the active-automation deferral gate, while a repeated failure
+keeps the last-good child and waits for a new source change.
+Deterministic architecture assessment must normalize a legacy app-home
+`TCB_STATE_DIR` to its canonical nested `state/` directory when only that child
+contains Loop run evidence. This keeps system verification stable while a
+managed-development runtime is draining before source adoption.
+Recognized supervisor agent startup failures (authentication refresh, Codex
+response-endpoint credential rejection, MCP startup, or hook initialization)
+must enter the same bounded readiness recovery:
+recreate the supervisor session identified by that current dispatch result and
+retry the WorkOrder once.
+Process liveness alone must not return that pane to the available pool, and a
+repeated failure must remain durable bot-repairable evidence.
+Project recovery must resolve a run-directory `reportPath` to its final summary
+and system gate before classifying a generic failure; missing a directory read
+must not manufacture an owner-decision outcome.
+Accepted blocked project-recovery closures that explicitly state no retryable
+project repair remains are terminal durable evidence. Later capacity/admission
+deferrals must not reopen those records or turn them back into pending repair
+work.
+Accepted blocked project-recovery closures are not terminal when their current
+ledger evidence contains bot-owned recovery defects such as assessment scoring
+contract failures, missing numeric scores, explicit worker-control timeouts,
+dispatch-failed supervisor setup, or missing service-safe git executables; the
+hourly self-heal path must re-enter recovery for those defects instead of
+requiring an operator prompt.
+The bare presence of an `open-worker` command or action in an accepted blocked
+summary is not retry evidence: successful recovery and superseded optional
+worker attempts may both mention that command. Retry classification requires a
+concrete failure signal such as `control request timed out` or a structured
+automatic bot-repairable system-gate finding.
+When verified revision evidence proves that the running bot has not adopted the
+current checked-out source, the supervisor final summary must emit the
+allowlisted structured `stale-runtime-source-adoption` repair finding. The
+system gate must preserve that bot-repairable finding, and project recovery must
+keep or return the linked repair to bounded automatic retry instead of accepting
+the blocked summary as terminal. This signal reports adoption drift only; it
+does not pull, switch branches, or restart the service.
+The exception is the expected pre-gate source gap after the same WorkOrder's
+validated bot-owned PR has merged and every other deterministic gate passed. The
+supervisor must report completion instead of blocking solely on that gap, so the
+system gate can revalidate the PR and fast-forward the configured clean source
+switch-back branch before independent assessment. The worker still must not
+pull, switch, or restart the source runtime itself.
+When a Loop WorkOrder's system gate accepts a valid blocked supervisor summary,
+the task ledger must close that task with `repairStatus=blocked`; Daily Task
+Audit and dashboard attention must not keep it as pending repair work.
+Dashboard recent outcomes must also project a failed WorkOrder with a closed
+non-blocking repair status (`completed`, `fixed`, `not-needed`, `superseded`,
+or `not-reproducible`) as resolved, so historical stale WorkOrder state does not
+contradict authoritative repair evidence.
+When task-family governance declares `requiresPlanning: true`, the WorkOrder
+builder must persist a `planning` block and the system gate must reject a
+completed final summary that omits `planReview`.
+Architecture and harness architecture WorkOrders must preserve resource
+reservation boundaries in target repositories: slow work such as network calls,
+LLM routing, file scans, database queries, and subprocess startup must not move
+inside queue, admission, semaphore, or lock reservations. Fast-fail capacity
+checks may be non-mutating, but the real reservation must remain adjacent to the
+protected work and be covered by an ordering regression test when changed.
+Source worktree or configured source-branch divergence from its remote base is
+retryable automation repair evidence, not an accepted blocked closure, even when
+the worker blocked after verifying the divergence.
+When one project-recovery queue links multiple attempts, a newer authoritative
+artifact with that retryable evidence must reopen an older accepted blocked
+attempt; historical terminal evidence must not win solely because it appears
+first in the linked record set.
+When a system gate or execution-isolation producer knows that a finding belongs
+to a target or external boundary, it must persist a structured repair
+disposition; Runtime Guardian must never infer terminal ownership from log or
+failure wording. Legacy artifacts without that disposition remain repairable
+until a current flow classifies them.
+Legacy executable ENOENT gate artifacts with an authoritative successful final
+summary remain non-findings even when stale structured metadata labels the gate
+bot-repairable.
+Recovery admission is the shared lifecycle module for bot-owned repair queues:
+adapters may discover and render findings, but claim, immediate deferral,
+retry-backoff, and queue terminalization must not be reimplemented by an
+adapter. Shared automation notification intent owns severity and content facts;
+Telegram and Lark remain the only channel-rendering adapters.
+An empty Repair Coordinator window (`no due findings`) is normal deferral
+evidence. Runtime Guardian must not emit a warning, mark findings handled, or
+consume its repair cooldown for that response.
+Long-task completion notifications must only describe a credible current task
+window. Implausibly stale task windows are cleanup signals, not user-facing
+completion events, and must not read old transcript history or deliver chat
+notifications.
+Resource Guardian recovery is a guarded reopening phase: it must keep heavy
+autonomous work closed while allowing light repair probes and health checks to
+continue, so a recovering host can prove and repair system state without waiting
+for the full healthy window.
+Resource Guardian host CPU samples without a reliable delta baseline are
+unavailable, not zero. Notifications and public status output must render them
+as unknown while preserving load-based pressure decisions.
+Resource Guardian ownership collection must use two independent bulk pane
+snapshots around its process snapshot. Retained WorkOrder history must not
+increase tmux subprocess count. Live terminal workers remain attributable, while
+failed or changed observations cannot authorize termination. Repair reconciliation
+must skip historical WorkOrder scans when no attached active Resource Guardian
+repair needs settlement.
+Failed or partially delivered Resource Guardian pressure notifications must retry
+at a bounded one-minute cadence while their typed transition remains current.
+Persist retry evidence in the incident so restart preserves the cadence; reuse
+channel deduplication, and never replay untyped legacy or superseded transitions.
+Resource Guardian must measure each interval's delivery delay independently.
+After a delayed callback, the next expected sample is anchored to that callback's
+actual delivery time, including delays below the suspension threshold. A single
+stall must not become permanent pressure that prevents automatic recovery.
+Resource Guardian event-loop lag above the normal control request window is a
+resource pressure signal, not a healthy sample. In protect mode it must close
+background admission so Loop, Autopilot, Daily Task Audit, Runtime Guardian, and
+Project Recovery do not start work while the bot cannot reliably answer control
+requests or deliver worker prompts.
+During a low-host-pressure recovery window, an isolated control-loop lag sample
+must keep the host guarded but must not erase the recovery anchor. Recovery must
+be able to progress to `recovering` so light probes and repair checks can prove
+system health while heavy autonomous work remains closed.
+User-facing automation status must not render unavailable percentages or probe
+timestamps as numeric zero or the Unix epoch. Use null, unknown, or n/a at the
+presentation boundary unless zero is measured evidence.
+Autonomous background heavy work is serialized per agent even when usage
+capacity is available. The shared admission gate must defer a new background or
+resource-repair heavy task while another autonomous heavy lease is active, so
+Loop Engineering, Autopilot, Daily Task Audit, Runtime Guardian, Project
+Recovery, and Resource Guardian repair cannot stack verification-heavy workers
+on the same host.
+When a Loop Engineering tick sees a global admission closure such as Resource
+Guardian `background-closed`, quiet hours, owner/interactive activity, capacity
+exhaustion, or an active autonomous heavy lease, it must stop scanning additional
+heavy due targets for that tick. The scheduler must preserve the due occurrence
+for a later retry instead of marking it fired, but the closed gate must not cause
+one log/precheck/write burst per due target on every service tick.
+The independent repository PR review queue tick may use a faster normal cadence
+for final-summary pickup, but it must perform a top-level heavy-work admission
+precheck and back off to the main Loop cadence after global admission closure
+instead of continuing a 10-second closed-gate polling loop.
+When that top-level precheck or a per-item repository-review dispatch precheck
+defers ready work, the queue must move `nextAttemptAt` to the admission retry
+time without incrementing the attempt count, so dashboards do not advertise
+already-past automatic retry times during quiet hours or closed admission.
+The top-level deferral also coalesces retries scheduled to become due before the
+admission retry time; retries already scheduled later remain unchanged.
+System Self-Heal broad agent sweeps must leave durable retryable failure ledger
+evidence when admission blocks the sweep before WorkOrder creation; otherwise
+the hourly operator-equivalent check can disappear from the next audit window.
+Daily Task Audit service ticks must prune terminal task and repair history by
+task occurrence or queue creation time on a bounded retention window before
+reconciliation. Completed/fixed/superseded history is evidence, not an
+unbounded hot path: once it is older than the retention window, it must not keep
+inflating JSON state files that are rewritten on every repair or audit tick.
+When a later System Self-Heal broad agent sweep queues successfully, it must
+claim due `system-self-heal` repair records, mark their ledger records running,
+and link them to the new active-delegation task so completion can close the
+original deferral instead of leaving stale Daily Task Audit attention.
+A successful operator-equivalent investigation covers only self-heal occurrences
+and queue records created no later than its scheduled start. Replaying historical
+success must not close newer failures. Reconciliation reopens legacy false closures
+only when the sole linked investigation predates every source occurrence and the
+ledger retains the exact automatic closure evidence, including the historical generic
+project-recovery closure; unrelated closures remain intact. Generic project artifact
+reconciliation must not close or release `system-self-heal` queues: their dedicated
+Autopilot reconciliation owns investigation-window checks. Repeated passes through
+both reconcilers must preserve a reopened newer occurrence as pending.
+When an operator-equivalent tmux-claude-bot active delegation completes the same
+last-24-hour automation investigation outside the exact hourly sweep dispatch,
+Autopilot reconciliation must also terminalize open `system-self-heal` sweep
+deferral records so manually prompted recovery does not leave stale audit
+attention behind.
+When a System Self-Heal broad sweep changes this repository, the WorkOrder must
+verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
+after the successful push, and finish with a clean worktree. If commit, push, or
+rebase is blocked, the WorkOrder must record the exact blocker instead of
+leaving uncommitted edits behind.
+Loop execution worktree cleanup must remove terminal completed isolated
+worktrees as soon as they are safe to verify and must retain only recent
+unreferenced supervisor worktree directories by default. The orphan fallback
+retention window is one week; active WorkOrders, active leases, and currently
+owned worker sessions remain protected from directory-based cleanup.
+Repository-wide PR-review WorkOrders must carry the deterministic worker-session
+identity whenever a project session prefix is configured, and their delegation
+instructions must use that identity. Terminal reconciliation cannot reliably
+release an improvised or otherwise untracked worker session.
+Workspace cleanup applies the same verified worktree lifecycle to every isolated
+member repository, then removes only the empty bot-owned run container. The
+non-Git workspace container and coordination root must never be passed to Git as
+if either were one repository.
+When cleanup refuses a bot-owned path because Git cannot prove that path is the
+expected worktree, retain the path and coalesce repeated refusals into bounded
+periodic warnings with suppressed-repeat evidence; never trade log quietness for
+unsafe recursive deletion.
+That durable evidence is a `failed/pending` repair candidate, because no
+WorkOrder was created and the next scheduled sweep alone is not enough evidence
+that the operator-equivalent check actually ran.
+Legacy deferred sweep records that were stored as `skipped/not-needed` must be
+reopened to `failed/pending` during audit reconciliation so historical missed
+operator-equivalent checks do not stay hidden.
+Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
+through this module; neither may directly claim, retry, or mark a repair running
+during admission and dispatch. Runtime Guardian may still reconcile an existing
+record to a terminal outcome from authoritative later artifacts. Its artifact
+lookback limits new discovery, not durable queue consumption: due Runtime
+Guardian records must re-enter shared admission until they terminalize. The
+Repair Coordinator enforces the shared three-attempt budget and dead-letters
+both newly exhausted and legacy over-budget records before another claim.
+Before Runtime Guardian discovers terminal WorkOrder artifacts, it must run the
+same Loop WorkOrder reconciliation used by startup and Loop ticks so persisted
+valid final summaries can synthesize missing system gates before self-repair
+admission. Runtime Guardian must not delegate a bot repair for stale
+`invalid-output` artifacts that deterministic Loop reconciliation can settle
+from already-written summary evidence.
+When a linked Runtime Guardian repair WorkOrder becomes terminal, reconciliation
+must mark a completed repair fixed or detach a non-completed WorkOrder and return
+the queue record to bounded retry; terminal WorkOrders must never leave durable
+repair ownership stuck in `running`.
+If the matching ledger closure is recorded under the Autopilot task id form
+`autopilot:<original-runtime-run-id>`, Runtime Guardian queue reconciliation must
+treat it as terminal evidence for the original runtime finding id.
+Known target-project and external blockers are admitted there as durable terminal
+records without invoking a bot repair.
+The coordinator must also collapse duplicate non-terminal repairs linked to the
+same task before dispatch; project recovery wins over an accidental bot-owned
+import for the same task. When the equivalent non-terminal record already exists,
+that handoff transfers its source to `project-recovery` while preserving the
+record id, attempt, lease, WorkOrder, and task links, so later audit ticks find
+the durable recovery owner instead of reimporting and superseding it. Runtime
+Guardian rediscovery must reuse its active
+record by durable task identity even when diagnostic evidence formatting changes;
+evidence text is not queue identity and must not create one record per tick.
+Once a Runtime Guardian record is terminal for a durable task identity, artifact
+lookback must not admit the same finding again as new repair work.
+Derived `autopilot:<workOrderId>` links identify aggregate execution evidence,
+not duplicate source tasks; every attached finding remains independently owned
+and settles from the shared WorkOrder outcome, including after a failed outcome
+detaches the WorkOrder and returns every finding to bounded retry. Reconciliation
+must also restore due aggregate siblings that an older dedupe pass terminalized
+as `superseded`; this migration is evidence-bound and must not require operators
+to edit the durable repair queue. Derived aggregate links must never replace the
+original runtime finding id when a due record re-enters admission.
+Repository PR review alignment invariant: every repository-wide review WorkOrder
+must persist one structured decision per in-scope PR. Only `merged` and
+evidence-backed allowlisted `closed` decisions complete the queue item; retryable
+decisions return to the shared queue. `manual-review` remains terminal only when
+the decision carries a validated structured boundary code for ownership,
+protected-branch policy, product, migration, security, legal/compliance, or
+organization policy. Free-form evidence text is never a boundary classifier.
+Generic architecture/design review, Draft, conflict, age, pending CI,
+`action_required`, workflow approval, and temporary worker or GitHub failures
+are normalized to retry and must never silently complete or close a PR. An isolated
+review without an execution branch must sync to a detached remote base rather
+than attempting to check out the source worktree's branch. Queue infrastructure
+retries use a five-attempt budget and legacy over-budget records terminalize as
+`dead-letter` before another worker can lease them. System-owned Repository PR
+recovery may enable private-fork workflow execution only with write tokens and
+secrets disabled, revalidates the exact PR head before every action, and
+persists a sanitized intent before mutation plus its outcome afterward.
+Draft-to-ready recovery requires a structured `approved` PR decision whose
+`reviewedHeadSha` exactly matches the current PR head, completed successful head
+workflow runs, clean mergeability, and mutation authority; `approved` is
+retryable handoff evidence, not a completed repository-review outcome.
+Historical prose-only `manual-review` or repairable `dead-letter` records are
+reopened once with a fresh retry epoch only while the PR is open and no newer or
+active occurrence owns the repository.
+Repository review queue reconciliation must treat authoritative ledger repair
+closures such as `fixed`, `completed`, `not-needed`, `superseded`, and
+`not-reproducible` as terminal completed queue evidence.
+Loop remote-branch cleanup may delete closed unmerged Loop PR heads only from
+structured WorkOrder PR decisions or repository-authorized post-close comments
+that use allowlisted close reasons, including concise forms such as `obsolete`
+and operator prose such as `closed as duplicate`; free-form unclassified closure
+text remains non-deletable.
+No-delta recovery alignment invariant: when authoritative verification proves
+the target already healthy, the WorkOrder completes with a clean-worktree gate
+and `commits: []` even if its normal commit and PR policies are enabled. The
+system must not require or create an empty commit or no-op PR.
+System-gate eval synthesis must distinguish terminal deterministic failures
+from repaired setup observations: an initial failed preflight recorded before a
+successful environment repair and successful post-repair preflight is evidence
+for the repair history, not a reason to rewrite a completed, verified
+`reviewGate.decision=pass` run to `deterministic-gate-failed`.
+Agent Capacity views must reconcile planned/admitted occurrence-window records
+from authoritative terminal task-ledger repair statuses before reporting open
+planned load, so completed historical occurrences do not keep capacity degraded
+or display stale next-occurrence timestamps.
+Loop ticks must also settle planned/admitted occurrence-window records whose
+task-family key is no longer enabled with a schedule in the current Loop config,
+so disabled or removed scheduled work cannot keep Agent Capacity degraded.
+When planned work is overdue because admission is closed or serialized behind an
+active autonomous lease, keep the planned backlog count visible, but do not
+render that overdue timestamp as the next future occurrence on dashboard, TUI,
+MCP, or CLI status surfaces.
+Architecture alignment invariant: every project and workspace Architecture
+schedule must run its deterministic score assessment before creating a
+WorkOrder. The configured target is normally 95; a score at or above target is
+a terminal no-op, while an invalid assessment or unsafe repository state blocks
+dispatch without repository mutation. The score, target, notes, and decision
+must remain visible in the WorkOrder or task ledger evidence.
+Assessment output that has actionable architecture findings but omits a numeric
+score is an assessment scoring contract failure owned by automation recovery,
+not a project-owner decision. Recovery must retry or repair the assessment
+command/contract so the result becomes deterministic, and must not dead-letter
+that failure solely because an earlier recovery exhausted the generic attempt
+budget.
+Task Family is the single scheduled-job read model for Loop Engineering. The
+scheduler and Daily Task Audit discovery must consume it rather than reconstruct
+project, workspace, or repository task policy, job keys, or job kinds.
+Active-delegated WorkOrders are aggregate execution evidence, not scheduled
+Architecture occurrences. Their settlement identity must include
+`active-delegated-task` so a completed delegation cannot advance the plain
+project Architecture `lastFired` checkpoint or overwrite the Architecture
+ledger task id.
+Active-delegation iteration checkpoints may normalize known legacy
+agent-authored field aliases only into `source: agent-reported` evidence.
+Compatibility parsing must never create system evidence, bypass repository
+identity/clean-worktree checks, or replace the required independent system
+command verification artifact.
+Security alignment invariant: every project Security Maintenance schedule must
+run its configured deterministic risk assessment before creating a WorkOrder.
+The default action threshold is 70 and the default critical threshold is 90;
+critical findings always run, actionable findings at or above the action
+threshold run, lower-risk findings are recorded as not-needed, and missing or
+invalid evidence blocks dispatch without repository mutation. The risk score,
+thresholds, notes, and decision must remain visible in the WorkOrder or task
+ledger evidence. Project and workspace security assessment commands must receive
+the configured target path and bot root environment so shared scripts can resolve
+project-local inputs and bot-owned helpers deterministically.
+Bundled dependency assessments that cannot execute or return the expected audit
+metadata must emit the structured `dependency-audit-unavailable` failure kind.
+Valid vulnerability metadata remains a security finding even when the package
+audit command exits non-zero. The ledger and project-recovery classifier must
+retain availability failures as pending bot-owned retry work; unstructured
+non-zero assessment failures remain blocked rather than being guessed retryable.
+Dispatching reservations without an active worker lease must be reconciled after
+the short dispatch grace period; active leases must prevent that recovery, and
+the recovery must not run target-project commands.
+Queued or dispatching WorkOrders with an active worker lease are still only
+reserved, not proven active: after the same dispatch grace period, Loop
+reconciliation must validate that the leased supervisor pane still owns an
+active agent turn or confirmation gate. If that signal is gone, the WorkOrder is
+terminalized as `dispatch-timeout`, the lease is settled as a failed worker
+lease, and recovery can requeue from authoritative artifacts rather than waiting
+for an operator to inspect tmux.
+Repository-review queue recovery may label an occurrence `running` only when
+its WorkOrder id and supervisor session match an active worker lease; a
+`dispatching` file alone is never a capacity reservation.
+Control-socket write failures are retryable transport failures and must fail
+the in-flight request promptly instead of waiting for the full request timeout.
+Server-side broken-pipe responses must be contained to the affected connection
+and must not leave command delivery ambiguous for automation recovery.
+Safe project-recovery dispatch deferrals remain pending in the Repair
+Coordinator queue and re-enter shared admission independently of the original
+cron schedule.
+An admission retry timestamp is a recheck clock, not permission to execute.
+Project Recovery bounds fresh admission deferrals to fifteen minutes and
+rechecks legacy longer deferrals only for never-dispatched pending records
+without lease or WorkOrder ownership. Execution retry backoff remains intact;
+every recheck still passes through normal capacity, power, and conflict gates.
+When a project already has any live WorkOrder, an open recovery remains pending
+and is deferred without claiming or incrementing its retry attempt; admission
+resumes after the live WorkOrder reaches a terminal state.
+A non-terminal WorkOrder with a valid final summary remains a project
+reservation while its system gate is still being written. Delegated-task
+reconciliation must leave its ledger entry running, and project recovery must
+defer without consuming a retry, until either an accepted gate or terminal
+WorkOrder state makes the outcome authoritative.
+If a later authoritative recovery or no-op verification has already terminalized
+the original scheduled task, older failed delegated-recovery ledger twins are
+superseded and the shared repair queue is closed from that original task
+outcome instead of being requeued forever.
+When a completed supervised WorkOrder reports verified commits and the project
+explicitly enables pull requests, the system gate owns publication as well as
+verification: if the WorkOrder branch has no PR, it pushes that exact branch,
+creates the configured-base PR, then applies the normal commit, CI,
+mergeability, auto-merge, and switch-back gates. This deterministic step must
+also work during restart recovery so a service reload after final-summary write
+cannot strand a verified commit in an isolated worktree.
+If that WorkOrder PR is already merged when independent assessment begins, the
+system gate must first apply the existing source switch-back fast-forward. It
+may do so only after validating the exact PR commits, successful checks, clean
+PR body, configured GitHub identity, clean source worktree, and expected source
+branch. Unsafe source state stays untouched and is recorded as gate evidence;
+an assessment must not repeatedly score an older source checkout merely because
+normal post-merge reconciliation has not run yet.
+Concurrent owner edits in the source checkout do not invalidate an isolated
+worker's clean target worktree. The system gate verifies the isolated target and
+the configured source branch, but it must not attribute unrelated source
+worktree dirtiness to the WorkOrder.
+If GitHub rejects auto-merge because the PR head is behind the base branch, the
+system gate must use GitHub's same-PR branch update mechanism and retry
+auto-merge before treating the finalization as failed.
+Remote-branch maintenance must use asynchronous subprocesses for configured
+repository discovery, Git-root checks, and every GitHub operation. Each command
+has a 15-second deadline and a 1 MiB combined output limit; expiry terminates
+only that command's process group and fails closed. Awaiting a network result
+must not block Control responses or keepalive timers. Re-read durable WorkOrder
+and active-lease ownership after remote observations and after the final SHA
+lookup, immediately before issuing DELETE; the initial tick snapshot cannot
+authorize deletion after an await.
+
+Control-socket actions use the shared action registry's immediate/queued policy
+and the shared dispatcher, matching chat adapters. Escape, interrupt, navigation,
+and other immediate actions do not wait behind an active text turn or acquire
+its 30-second queue-consumption deadline. CLI/TUI dangerous-action confirmation
+and dispatcher session/precondition checks remain authoritative. Text always
+uses prompt intake and the per-session queue, including its origin/conflict
+checks; action parity must never become a direct text-send shortcut.
+
+Bot-owned remote branches have a separate terminal lifecycle from local
+forensic worktrees. GitHub delete-on-merge is the normal path; Loop startup and
+a bounded 30-minute maintenance cadence reconcile configured
+`loop/<project-id>/...` refs left behind after terminal PRs or terminal
+WorkOrders that never obtained a PR. Deletion requires an exact observed ref SHA,
+no open PR, no live WorkOrder or active lease, exclusion of
+protected/default/base/switch-back branches, last-moment revalidation, and a
+durable sanitized intent/outcome. A no-PR ref additionally requires exact durable
+terminal WorkOrder branch ownership. A merged PR is authoritative; a merely closed
+PR additionally requires a structured allowlisted close reason from a terminal
+supervisor summary, or an allowlisted reason recorded at or after closure by a
+repository owner, member, or collaborator. Free-form or unauthorized comments
+never authorize deletion. The remote ref may be deleted while a failed local
+worktree remains inside its independent retention window.
+If restart recovery finds a genuinely recoverable summary or system-gate
+failure, it must reserve the original supervisor session and run the same
+bounded revision contract as the uninterrupted path before terminal settlement;
+it must not convert a correctable finalization gap into a terminal repair loop.
+Once `system-gate.json` is durable, the same terminal failed WorkOrder is not
+periodically reprocessed. Closed or merged PR state is terminal external evidence,
+not authorization to revise and recreate the old branch.
+Daily Audit ticks, forced audits, and startup-triggered audits share a process
+mutex; an overlapping tick exits as `in-progress` before it can mutate ledger or
+repair-queue state.
+When an abandoned WorkOrder is closed, its scheduler `lastFired` checkpoint is
+advanced for that occurrence so a concurrent scheduler pass cannot immediately
+dispatch the same run again. Abandoned dispatches terminalize as
+`dispatch-timeout`, not `invalid-output`, because no supervisor output contract
+was parsed and rejected. Delegated-task reconciliation also accepts a valid final
+summary while the WorkOrder state file is still `in-flight`.
+Service startup must await Loop WorkOrder reconciliation before restoring the
+persisted control queue or resuming active delegations. Queue restoration must
+also discard any supervisor prompt whose WorkOrder already has a valid final
+summary, so a crash between summary persistence and queue cleanup cannot replay
+completed work or move it back to `in-flight`.
+Queued or dispatching active-delegate WorkOrders must be resumed during service
+startup when their worker lease is no longer active. An active lease must also
+be validated against the leased supervisor session that actually consumes its
+queue turn and against the configured agent; a derived WorkOrder worker-session
+name is not liveness evidence for this queue-driven path. A surviving agent
+process is also insufficient because pooled supervisors remain alive while
+idle; after the bounded startup grace its pane must still carry the shared
+active-turn or confirmation-gate signal. If the leased consumer disappeared or
+became idle during restart, the WorkOrder is recorded as a
+bounded invalid-output failure, the lease is released, and project recovery
+requeues it. Reboot recovery must not leave a durable delegation orphaned in an
+intermediate state or falsely fail a live supervisor-owned turn.
+When a queued, dispatching, or in-flight active-delegate WorkOrder is relaunched
+or reused, stale terminal run artifacts from an earlier failed dispatch attempt
+must be removed before the fresh WorkOrder state is written. Daily Task Audit
+and Runtime Guardian must not rediscover old `supervisor-summary.json`,
+`supervisor.md`, `supervisor-final-summary.json`, or `system-gate.json` files as
+current failure evidence while the WorkOrder has a live lease.
+Failed Autopilot delegations for configured projects must enter the same
+project-scoped recovery path as Loop Engineering failures. Invalid or missing
+supervisor summaries are retryable orchestration evidence; capacity and active
+automation deferrals must remain pending rather than terminal blocked records.
+A supervisor lease is reservation evidence, not proof that a `dispatching`
+WorkOrder started. After the five-minute dispatch grace, reconciliation must
+fail and settle that reservation even when its active lease leaked; fresh
+dispatch reservations remain untouched.
+Project recovery must link each delegated Autopilot WorkOrder back to the
+original task and close both records only from passing authoritative evidence.
+Passing authoritative final summaries must close pending `autopilot-delegate`
+records directly, just as they close `loop-engineering` records, before another
+project-recovery WorkOrder can be admitted.
+That closure also requires an accepted `system-gate.json` whose WorkOrder id,
+project id, result status, and canonical supervisor review-gate snapshot match
+the same run and summary. Compare normalized snapshots so accepted flexible JSON
+forms do not create false mismatches. Missing, rejected, malformed, or mismatched
+gate evidence keeps the ledger and Repair Coordinator item pending and retryable.
+Daily Task Audit repair dispatch must use the same link and return failed
+delegations to the queue immediately.
+The generic Daily Task Audit repair dispatcher must exclude
+`project-recovery` records because that queue family is owned by the dedicated
+project-recovery admission path; one historical failure must not be dispatched
+through both paths.
+Pending-ledger imports must skip any durable task ID linked to a nonterminal
+`project-recovery` record, preserving its retry timing, attempts, lease, and
+WorkOrder ownership across repeated audit ticks. Terminal recovery records do
+not hold this import guard; unrelated task IDs remain eligible for normal import.
+If an open project-recovery record links only to terminal WorkOrders and no live
+WorkOrder remains for that project, its stale lease must be released before the
+next recovery admission pass; unknown active recoveries remain deferred.
+Audit reconciliation must normalize successful ledger records and ordinary
+skipped records to the `not-needed` repair terminal before evaluating active
+failures. A skipped occurrence explicitly marked `superseded` must retain that
+terminal reason so the ledger and Repair Coordinator preserve why it closed.
+Discovery must persist expected scheduled occurrences before repair admission;
+an expected ledger record is projected as `missing` for the repair prompt, then
+keeps its durable task id through running and terminal repair states. Do not
+enqueue an in-memory-only missing item that cannot be resolved after restart.
+Daily Task Audit pending-ledger imports must use stable category fingerprints
+for missing or timed-out records; accumulated summary prose remains evidence,
+not Repair Coordinator identity.
+Stale `repairStatus=running` records must be reopened per linked WorkOrder;
+one unrelated active delegation must not suppress recovery of every other stale
+record. Ledger/queue reconciliation must run before project-recovery admission
+so an already terminal WorkOrder cannot keep a project recovery lease occupied;
+an autopilot record linked to a terminal WorkOrder is eligible immediately,
+without waiting for the general stale-status timeout.
+On service restart, dedicated supervisor panes with no queued, dispatching,
+in-flight, running, or needs-revision WorkOrder must receive an interrupt before
+new work is accepted. A released lease alone is not proof that the interactive
+supervisor turn is idle; startup must clear this stale pane state while
+preserving sessions that still own a live WorkOrder.
+Agent input-readiness must interpret visible pane evidence in lifecycle order.
+Codex may retain an earlier `esc to interrupt` line after its footer reports
+`Context … Goal achieved` or its current UI renders `Worked for <duration>`;
+either later completion marker makes the composer ready again. A newer working
+marker still wins, so genuine active turns remain protected from queued input.
+Periodic WorkOrder reconciliation must defer a final summary while the owning
+supervisor queue is still processing or has queued work. The summary can appear
+before the live dispatch promise resolves; consuming it early can terminalize
+the WorkOrder, release its lease/worktree, and then let the live owner overwrite
+it back to `in-flight`. Startup reconciliation may consume the same durable
+summary because the previous process and its queue owner are gone.
+A journaled started delegation remains the unique owner before its durable
+delegation deadline and must not be replayed or duplicated after restart. Once
+that deadline expires, reconciliation checks expiry before the live-session busy
+guard, interrupts only the WorkOrder's recorded supervisor through the agent
+control surface, freezes an immutable `dispatch-timeout` settlement, and settles
+the matching lease so normal Repair Coordinator retry can proceed. A final
+summary written after that timeout cannot replace the frozen settlement or
+reopen system-gate acceptance.
+Queued, dispatching, and in-flight WorkOrders with an existing worker pane
+receive a bounded two-minute grace period for agent startup before orphan
+reconciliation; a transient startup probe must not fail a valid WorkOrder, and
+the grace period waits for the worker session to appear rather than treating a
+currently absent session as immediate proof of orphaning. Once the grace expires,
+an idle agent process cannot retain the lease without active-turn evidence.
+Ledger reconciliation must include pending queue records: when every linked
+task has reached a terminal repair outcome, a pending duplicate is closed before
+it can be claimed again. If a linked historical ledger task is missing while all
+remaining linked outcomes are terminal, the queue is closed as blocked rather
+than retried forever, preserving the missing-evidence review state.
+A queue record with no resolvable ledger evidence is also closed as blocked
+because dispatching it cannot construct an auditable repair request.
+When Daily Task Audit discovers a Loop final-summary artifact from a nearby
+report path, reconciliation must preserve that exact artifact path as the
+authoritative evidence source instead of re-deriving only the standard filename
+from the directory.
+When a linked delegated recovery reaches a terminal failure, reconciliation must
+release its project-recovery lease and return the original and delegated records
+to pending in the same audit pass; lease expiry is not a recovery mechanism.
+Daily Task Audit's historical import must use an exact bot-owned task-family
+boundary; a configured project whose name merely shares the bot identifier
+prefix must remain under project recovery ownership.
+Runtime Guardian must also classify target-project and external blockers as
+terminal blocked findings, and reconcile stale invalid-output queue records from
+later gate artifacts. Terminal WorkOrders must release their worker session
+regardless of success, failure, timeout, or cancellation. Successful runs remove
+bot-owned isolated execution worktrees immediately; failed/timeout/cancelled
+runs retain those worktrees only until the configured retention TTL expires.
+Supervised system gates must resolve required git executables from the current
+service-safe environment at gate execution time so launch-time PATH drift does
+not create false terminal orchestration failures.
+System-owned git command failures during finalization, including fetch network
+failures and missing git executables, must not request a supervisor revision;
+they are automation/external recovery evidence, not agent-correctable code
+defects.
+If an isolated worktree directory disappears before normal cleanup, terminal
+reconciliation must use the WorkOrder's verified source repository to remove its
+exact stale Git worktree registration; a missing directory is not cleanup proof.
+Worker leases whose bot-owned worktree disappeared are stale and must be
+released during reconciliation. Source worktrees are never removed. The
+invariant is enforced by coordinator/runtime/worktree tests rather than
+notification wording alone.
+When an isolated WorkOrder uses a bot-owned `loop/*` branch, successful or
+retention-expired cleanup must treat the worktree registration and its local
+branch ref as one lifecycle. Verify the source repository, expected branch, and
+HEAD; detach the terminal worktree; compare-and-delete the exact ref; then remove
+the worktree. When the directory disappeared first, the eligible terminal
+WorkOrder remains the authority: prove the source registry no longer owns that
+path, re-read the exact ref SHA, and compare-and-delete it rather than deleting
+by name.
+An isolated worktree created before its WorkOrder became durable has no terminal
+record to drive cleanup. Reconciliation must treat it as an orphan only when no
+WorkOrder resource path or worker lease references the exact state-owned path;
+it must then preserve the path for the default 72-hour failure-evidence window
+and repeat the exact Git-toplevel check before removal. Young, referenced,
+leased, and unverifiable paths remain fail-closed.
+
+Host power alignment invariant: macOS owns the decision to sleep; the bot never
+forces it. `off` leaves power behavior unmanaged, `always` explicitly holds the
+existing AC-only assertion, and `scheduled` releases that assertion during quiet
+hours only after verifying one operator-installed fixed daily `wake` event. The
+runtime reads but never mutates `pmset`; only a dedicated interactive command may
+install or remove the exact managed event. Quiet hours govern admission of new
+autonomous work before reservation. Do not add dynamic/frequent wakes,
+`wakeorpoweron`, forced sleep, a root helper, passwordless sudo, screen/HID
+presence policy, agent termination for sleep, or a parallel durable host-power
+state machine. Telegram may retrieve retained updates after wake; Feishu/Lark
+events missed during sleep are an accepted best-effort limitation.
+Mode changes use the allowlisted, domain-validated `tcb config set
+TCB_KEEP_AWAKE_MODE <off|always|scheduled>` surface and require a service restart.
+Power status distinguishes schedule-not-required from missing, reports the live
+power source, and treats battery operation as degraded whenever the AC-only
+assertion is expected. Doctor validates the mode without prescribing a permanent
+clamshell-sleep override.
+The configured policy timezone remains authoritative when it differs from the
+macOS host timezone. Wake inspection and installation translate the policy time
+to the host wall clock and expose both values; timezone-name inequality alone is
+never an admission failure, and process `TZ` overrides must not redefine the
+macOS system timezone. A fixed event may be refused only when the relative
+offset changes over the schedule horizon and cannot be represented faithfully.
+Power history accepts a keep-awake reacquisition within the scheduled wake
+correlation tolerance even when TCB starts during DarkWake before macOS records
+the transition to full Wake; earlier same-cycle assertions do not satisfy it.
+
+Resource Guardian alignment invariant: the module is an observer/protector for
+host pressure, with admission before reservation as the target consumer boundary.
+Task 7 ownership proof is implemented as a read-only resolver: exact process
+start identity, process ancestry, and either a durable WorkOrder-linked launch
+or a consistent pane/WorkOrder/lease reservation must agree before a process is
+strongly attributed to the bot. Process names,
+commands, pane paths, and cwd are diagnostic hints only; they never establish
+bot ownership. Task 8 may reduce only revalidated bot-owned emergency load after
+durable background closure and supervisor reconciliation; observe, elevated, and
+critical pressure never signal processes. External, unknown, changed-instance,
+and still-active processes remain protected from signals.
+Task 9 dispatches at most one Resource Guardian repair only after a durable
+ten-minute healthy window, from an ended bot-owned incident with durable failed
+deterministic-cleanup evidence. Completed or skipped cleanup closes the incident
+without agent repair. It uses the global Repair Coordinator and the configured
+Runtime Guardian bot repository; queue intent is durable before delegation and
+pressure relapse, unknown attribution, cooldown, retry exhaustion, or an active
+repair blocks dispatch.
+Emergency observe mode persists a latest-evidence proposal only; it never starts
+reconciliation, cancellation, waits, or signals. Protect-mode action intent is
+durable before any destructive effect and its outcome restores the 30-second
+limit across restart. A failed resource action is recorded and notified as a
+resource-action failure without changing the pressure circuit.
+Task 10's operator surface is `tcb resource status|incidents|mode|profile`.
+Generic `tcb config set` permits only the Resource Guardian enabled and tick
+keys; dedicated mode/profile commands atomically persist the environment and
+write the matching live override through a durable recovery journal. Every
+Guardian tick resolves an interrupted two-file update before reading the live
+override. Protect mode blocks until the Guardian is enabled and running. The existing sysload
+diagnostic renders the Guardian view in CLI, Control, Telegram, and Lark without
+adding a protocol operation or chat button. Status and bounded incident output
+remain secret-free and tildeify paths.
+Observe-mode proposals never consume the protect-mode action rate limit. Every
+protect intent records only the revalidated process identity and durable
+WorkOrder/session/lease correlation, never its command, cwd, or path; all action
+failure evidence is redacted before it reaches durable incident records or
+notifications.
+Task 6 active consumer admission keeps active delegated task admission
+authoritative before project-path lookup, worktree preparation, supervisor
+reservation, WorkOrder, ledger, or worker-lease writes. Daily Task Audit,
+Runtime Guardian, and Project Recovery mark their delegations as background
+work. Loop Engineering gates each due target before any ledger, WorkOrder,
+worker lease, or scheduler fire anchor; a resource deferral remains transient
+and does not consume a retry or advance the schedule.
+Runtime Guardian readiness failures are also transient admission deferrals:
+they do not mark findings handled or start the repository repair cooldown. A
+durable repair whose Repair Coordinator backoff is due may retry even while the
+outer discovery cooldown is active.
+Runtime Guardian repair admission deferrals caused by quiet hours, resource
+pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
+not repeated WARN-level operator attention.
+System Self-Heal agent-sweep admission deferrals before WorkOrder creation use
+diagnostic logging while retaining a durable `failed/pending` ledger occurrence.
+Shared repair reconciliation owns subsequent queue admission. Do not hide a
+missed investigation as `not-needed`, or reserve a worker merely to record it.
+Daily Task Audit dashboard attention follows the same operator-attention
+boundary: current-window pending repairs caused only by transient admission
+deferrals remain visible in failed/repair-pending counts, but they do not create
+the Daily Task Audit attention card or make the domain unhealthy.
+Current-window pending repairs already owned by a non-terminal Repair Coordinator
+record follow the same boundary: dashboards must keep the repair-pending count
+visible for auditability, but must not label it as manual operator attention
+until the queue reaches a terminal blocker or loses its automation owner.
+Admission must select the current non-terminal queue record when an equivalent
+historical record is already terminal. A queued Runtime Guardian delegation
+persists both its WorkOrder id and delegated ledger task id on every claimed
+record so terminal WorkOrder and ledger reconciliation can close the queue.
+The coordinator and durable circuit are default disabled in observe mode, use the
+`resource-guardian` notification source, and start after notification senders
+are ready but before Runtime Guardian and Daily Task Audit. Observe mode must
+keep the circuit open; only protect mode may close Guardian-owned admission.
+
+Each role-scoped MCP server must advertise its canonical server identity during
+initialization. The Home profile is `tcb-home-operator`, never `tcb-observer`,
+while inherited Observer tools keep their read-only response roles.
+
+The Runtime Overview is the canonical health-first operational snapshot. CLI,
+Control, TUI, Telegram, Feishu/Lark, Observer MCP, and the Home operator skill
+must project that same neutral snapshot instead of deriving independent health
+rules. The full local CLI remains the administrative view; Observer MCP is the
+typed read-only AI interface; Home inherits Observer status and adds controlled
+send/delegation without defining another status tool. A failed collector degrades
+only its runtime domain, and every presentation keeps attention, active work, and
+recent outcomes bounded. Managed MCP profiles may be checked for readiness, but
+the overview must not inspect private global MCP client configuration.
+Terminal failed WorkOrders are current attention only while their linked daily
+task ledger repair state remains open. Once reconciliation marks the matching
+`autopilot:<workOrderId>` or `loop:<projectId>:<taskKind>:<scheduledAt>` ledger
+record `fixed`, `not-needed`, `blocked`, `superseded`, `not-reproducible`, or
+`dead-letter`, the Runtime Overview may retain the run as a recent outcome but
+must not keep projecting it as unresolved WorkOrder attention.
+Daily Task Audit summaries still expose non-zero terminal repair outcome counts
+so "failed, 0 repair pending" never hides that failures were blocked, fixed,
+superseded, completed, not needed, not reproducible, or dead-lettered.
+Direct non-loop ledger outcomes follow the same projection rule: after a failed,
+missing, or running-timeout task is reconciled to a closed non-blocking
+`repairStatus` such as `fixed`, `not-needed`, `superseded`, or
+`not-reproducible`, recent outcomes may keep the row for auditability but must
+render it as passed instead of a live failure.
+
+The Agent Capacity runtime domain is part of that same snapshot. Its durable
+record contains only agent kind, authentication category, normalized capacity
+state, percentages/reset timestamps already present in local usage telemetry,
+probe times, and autonomous lease/start counters. It never stores credentials,
+raw provider output, prompts, or personal paths. Exhausted and constrained states
+produce bounded operator attention; unknown capacity degrades only this domain.
+
+Loop schedule variation uses persisted occurrence identities and `notBefore`
+windows. An offset is drawn once, survives restart, and is not prompt randomization.
+Omitted scheduler settings enable a 60-minute default execution window; an
+explicit `scheduler.jitter.enabled: false` preserves fixed-time operation.
+Per-task `scheduleJitterMinutes` overrides the task-family maximum. A due item
+deferred by occurrence time, owner activity, capacity, quiet hours, or resource
+pressure does not create a WorkOrder/ledger/worker lease or consume its schedule
+anchor. Agent-backed execution revalidates admission after planning and before
+dispatch. User chat and user-confirmed Autopilot retain ordinary FIFO queueing;
+official exhausted-capacity evidence waits rather than bypassing the provider,
+but it still uses bounded lightweight probes before the known reset time so
+early capacity recovery is not missed.
+Bug-fix and PR-review workers treat async/task lifecycle edits as a mandatory
+risk lens: success, error, timeout, cancellation, replacement, and shutdown
+paths must be traced when touched code can continue work, spawn background
+tasks, hold locks, emit terminal state, or affect quota/billing from `finally`.
+The local administrative projection is `tcb automation capacity status/history`;
+the durable 30-day journal is bounded, secret-free, and records planning,
+supersession, deferral, admission, settlement, and capacity transitions.
+Capacity transition notifications translate internal telemetry reasons into
+operator-facing meaning: stale or unavailable local usage telemetry is reported
+as local uncertainty, not quota exhaustion, and recovery probes may refresh
+stale unknown telemetry before the normal next-probe timestamp.
+
+Promise-returning Runtime Domain collectors have a bounded wait and report a
+stable `errorKind` (`read-failed` or `timeout`) without exposing the original
+exception. Synchronous local stores are not falsely described as cancellable:
+the expensive WorkOrder, Task Ledger, and Runtime Guardian projections use a
+30-second in-memory cache so the two-second TUI refresh does not rescan disk each
+time; their underlying readers remain authoritative and side-effect free.
+Automation rows preserve dependency readiness and the latest durable outcome;
+Daily Task Ledger terminal evidence contributes to Recent Outcomes without
+duplicating Loop WorkOrder outcomes. Managed MCP profile evidence includes its
+role, exposure class, descriptor freshness, and tool count. Project-declared
+optional MCP counts stay in explicit project-scoped AI-tool diagnostics because
+the global Dashboard has no trusted project root and must never infer one from
+the process working directory.
+
+Dashboard adapter flags describe configured channel exposure, not live transport
+connectivity. The overview must not claim an adapter is healthy without durable,
+cross-process connection evidence. Prompt Library similarly reports configured or
+disabled today; degraded is reserved for a future authoritative failure signal and
+must never be inferred by spawning or probing the MCP server during refresh.
+
+Feishu/Lark initial connection failures that occur before the SDK exposes
+connection status must enter the existing network-probed, debounced keepalive
+recovery path. A still-pending initial connection remains untouched, and the
+failure must not crash the Telegram path or silently disable Lark until restart.
+
+Telegram and Lark Dashboard copy is localized through the message catalogs,
+including health, domain, attention, and fleet-count labels. The terminal-only CLI
+and TUI remain intentionally English operator surfaces; their copy is not a chat
+locale contract. Stable product names such as WorkOrder, Runtime Guardian, and MCP
+may remain untranslated in English locales, but chat must bind runtime domain codes
+to the selected channel catalog rather than rendering reader labels directly.
+
+Dashboard narrowing is one read-model operation: `--project`, `--problems`, and
+bounded limits apply equally to text and JSON. TUI refreshes order busy sessions,
+then stopped attention-relevant sessions, then healthy idle sessions, while
+preserving selection by session identity. Chat surfaces summarize healthy
+Automation Families and idle Project Sessions instead of enumerating them.
+
+Observer and Home MCP drill-downs for Loop reports, Daily Task Audit, and Runtime
+Guardian findings use read-only Control operations. MCP processes do not open the
+underlying ledgers, WorkOrder artifacts, or Guardian stores themselves. Bounded
+responses expose `total`, `limit`, and `truncated` whenever a collection may be
+cut off.
+
+Runtime Overview is diagnostic only. Follow-up mutation stays behind an existing
+dedicated command or control tool with its own authorization and safety policy.
+AI operators prefer `tcb.observer.status`, fall back to `tcb dashboard --json`,
+and never reconstruct status from state files or human-formatted output.
+
+When adding, renaming, removing, or changing a user-visible or automation-visible
+feature, review this matrix in the same slice:
+
+| Feature Area | Must Align |
+| --- | --- |
+| Chat command | `BOT_COMMANDS`, Telegram handler, Lark command/card action, help text, `docs/commands.md`, i18n catalogs, command tests. |
+| Control button/card action | Shared action registry when available, Telegram keyboard/callback parser, Lark card/action parser, TUI when applicable, dangerous-action confirmation, parity tests. |
+| CLI command | `src/cli.ts` composition plus `src/cli/*-commands.ts` family registrars, control protocol/client/server if socket-backed, `docs/cli-reference.md`, `docs/manual.md`, `docs/agents/usage-guide.md`, CLI tests. |
+| User personal configuration | Safe operator command surface such as `tcb config ...`, `tcb automation ...`, setup/dedicated commands for credentials, redacted reads, allowlisted non-secret writes, `.env.example`, `docs/manual.md`, `docs/agents/usage-guide.md`, and config/CLI tests. |
+| MCP tool or AI tool surface | Canonical server identity, role namespace, capability class, typed response contract, control/CLI backing path, actual enforcement layer for role/scope/permission, `docs/ai-tool-surface-governance.md`, docs/tests. |
+| External skill/tool dependency | Curated capability catalog, task-family dependency metadata, approved skill registry, install/update/status CLI, doctor check, prompt fallback wording, `docs/agents/skills.md`, docs/tests. |
+| Home/operator workspace | `<state-dir>/home` provisioning, `CLAUDE.md`, `AGENTS.md`, README/manifest, skill/MCP role names, control-service provenance checks, docs/tests. |
+| TUI action | TUI keymap/help text, control client protocol, user docs, tests. If intentionally unsupported, document the reason. |
+| Localized user-facing copy | `Messages` catalog, `SetupMessages` catalog, `UI_LANGS`, Telegram/Lark cards/keyboards/messages, CLI/TUI/help copy when user-facing, setup/onboarding copy, iconography terms, and i18n tests. |
+| Notification workflow | Notification event catalog when available, `NotificationGateway`, Telegram sender, Lark sender, project-bound Lark group routing, attachment behavior, delivery evidence, Daily Task Audit visibility, tests. |
+| Runtime logging and diagnosis | Shared structured logger, ingress trace context, process/session/run identifiers, secret redaction, bounded retention, retry-loop coalescing, `tcb logs` filters/summary, chat log projection, maintenance docs, logger/query tests. |
+| Loop task family | Config schema, task-family governance registry, scheduler, WorkOrder builder, supervisor prompt, execution worktree policy, conflict model, system gate, report/ledger, docs, tests. |
+| Workspace task | Project-level behavior plus workspace repository path policy, per-repo PR/branch policy, cross-repo verification, docs/tests proving the task is not architecture-only. |
+| Repository-wide PR review | `prReview.repositories` config, GitHub account binding, durable PR review queue, per-PR lease/retry/recovery, Draft/conflict takeover and ready/merge/close decision policy, repair policy, mergeability/CI checks, switch-back, docs/tests. |
+| Autopilot delegation | Chat command, control socket, Autopilot action registry, Telegram/Lark/TUI button, supervisor queue visibility, active-delegate cancellation boundaries, WorkOrder creation, conflict blocking, notification, opportunity completion when related, docs/tests. |
+| Opportunity Discovery | Read-only WorkOrder, dedupe/store, readable Telegram/Lark suggestions, per-item show/discuss/dismiss actions, batch actions, Autopilot handoff, project conflict blocking, docs/tests. |
+| Daily Task Audit | Active discovery, shared ledger merge including Autopilot delegation lifecycles, self-audit recursion, Repair Coordinator enqueue/consumption, final Telegram/Feishu notification, repair-status closure, docs/tests. |
+| Runtime Guardian | Runtime artifact detection, including terminal `system-gate.json` rejection, evidence threshold, source/isolated worktree policy, Repair Coordinator enqueue/consumption, clean-worktree gate, cooldown, docs/tests. |
+| Resource Guardian | Host pressure sampling, sustained policy, observer/protector mode, durable resource circuit, active Loop and delegated-work admission, background repair producer tagging, incident evidence, `resource-guardian` notifications, default disabled observe configuration, and startup after notification readiness. |
+| Repair Coordinator | Durable pending-repair migration, deterministic classification from ledger plus run-directory supervisor/gate evidence, configured-project recovery dispatch, project conflict gating, leases, bounded retry backoff, per-item terminal reconciliation, queue visibility, docs/tests. |
+| GitHub operations | Configured `githubAccount`, command-local `GH_TOKEN` from `gh auth token --user`, all `gh api/pr/run/repo` commands, security alert reads, native delete-on-merge, terminal Loop remote-branch reconciliation with exact-SHA/live-owner/durable-evidence gates, tests. |
+| Worktree/session isolation | Source path validation, isolated/source/auto policy, supervisor session, worker session, lease cleanup, ordinary chat blocking, logs/artifacts, tests. |
+| AI/eval behavior | Agent-backed/control-surface path only, no direct model-provider SDK/API calls, deterministic fallback, transient agent failure classification/retry boundaries, review/eval evidence, prompt governance metadata, docs/tests. |
+| Governed system prompt | Prompt registry metadata, task-family coverage, allowed-action scope, stop condition, active-agent-only boundary, deterministic contract tests, `docs/prompt-governance.md`. |
+
+GitHub account binding is mandatory for enabled project, workspace-repository,
+and repository-wide PR automation. Managed command construction refuses to
+create a bare `gh` command when `githubAccount` is absent, so a read-only
+operation cannot mask an account mismatch until a later push, merge, or close
+operation fails. Prompt and artifact text must keep token lookup as a literal
+shell command; the resolved token value must never be pasted into a worker pane,
+summary, log, or chat message.
+
+## Module Alignment Matrix
+
+Use this matrix when a change touches a whole module rather than one command or
+task family. It keeps the architecture map in
+`docs/intelligent-automation-architecture.md` and
+`docs/intelligent-automation-ascii-architecture.md` from drifting away from the
+surfaces, state, logs, and tests that actually enforce the system.
+
+| Module | Interface To Preserve | Must Align | Do Not Bypass |
+| --- | --- | --- | --- |
+| Operator surfaces | Telegram, Feishu/Lark, CLI, TUI, home/operator skill, `.claude` commands, and scheduler triggers are entry points into the same bot behavior. | Command/action handlers, shared action registries, control client/server paths, `BOT_COMMANDS`, i18n/help text, Home Operator workspace provisioning, `docs/manual.md`, `docs/commands.md`, `docs/tui.md`, `docs/agents/usage-guide.md`, `docs/automation-capability-matrix.md`, `docs/ai-tool-surface-governance.md`, and surface tests. | Do not create a feature that works only by injecting a private prompt or one-off script when an existing control path should own it. |
+| Control and routing | Requests enter command dispatch, the per-session queue, current-project resolution, confirmation gates, or the local control socket before reaching an agent. | `src/core/command/**`, adapter handlers, control protocol/client/server, TUI callers, dangerous-action confirmation, reply-target handling, and queue/control tests. | Do not let chat, CLI, TUI, or skills invent independent routing semantics for the same action. Do not replay Telegram/Feishu chat prompts after restart; only control/WorkOrder recovery may use persisted queue restore. |
+| Session runtime | Ordinary project sessions, Loop Supervisor sessions, Loop worker sessions, and Home Operator sessions have distinct responsibilities, visibility, and workspace rules. | Session naming, project/session catalog, role workspaces in `docs/agent-role-workspaces.md`, open/open-worker behavior, worker leases, idle cleanup, dashboard visibility, conflict blocking, docs, and lifecycle tests. | Do not run WorkOrders in ordinary user chat, expose reserved automation sessions as normal project choices, or start target-project workers from a generic bot-owned home that hides project-local instructions. |
+| Project, session, and group model | Projects, workspaces, regular sessions, independent sessions, current-project pointers, recent projects, and Feishu/Lark project groups are one domain model. | `docs/domain/project-session-model.md`, project/session catalog, summary view, recent-project logic, group bindings, current-project state, Telegram/Lark project lists, CLI/TUI project views, i18n copy, and project/session tests. | Do not invent adapter-local vocabulary or action availability rules for project/session/group behavior. |
+| Project intake and adoption | New project creation, directory browsing, recent project reopening, independent session creation, unmanaged-agent adoption, and worker opening all create or target sessions. | Path validation, directory browser, recent-project store, open/openPath/openWorker control operations, adopt service, session-path map, allowed-directory policy, docs, and adapter/CLI tests. | Do not trust callback payload paths, create sessions outside the project/session catalog, or bypass configured path and git-toplevel validation for worker/intake flows. |
+| Agent runtime and transcripts | Claude and Codex profiles, start/resume commands, flavor aliases, live process detection, activity status, usage snapshots, transcripts, history, inputs, and peek are one runtime model. | Agent profiles/registry, runner base, config resolver, Claude/Codex history readers, runtime records, status install, activity snapshot, dashboard/read views, adapter commands, CLI/TUI views, and runtime tests. | Do not add Claude-only or Codex-only behavior without declaring the intentional difference and updating status/history/resume surfaces. |
+| Intent modules | Loop Engineering, Autopilot, Opportunity Discovery, PR review, Daily Task Audit, Runtime Guardian, and Automation Governance Review materialize or inspect WorkOrders through the supervised platform. | Config schema, scheduler/tick logic, task-family governance registry, WorkOrder builder, task-specific supervisor policy, conflict model, notification route, report/ledger artifacts, business docs, and task-family tests. | Do not add side-channel prompts, alternate task ledgers, or feature-specific completion rules outside the WorkOrder/system-gate path. |
+| Resource Guardian | Host resource pressure observer/protector and durable admission circuit; active admission gates Loop due targets before durable reservation while allowing existing work reconciliation. Task 7 ownership proof is read-only; Task 8 performs one bounded revalidated emergency load-reduction pass; Task 9 dispatches one stable bot-owned repair through the global queue; Task 10 exposes safe local status, bounded incidents, and mode/profile controls. | Sustained pressure policy, lightweight sampler, operator override, current-state and incident stores, active delegated task admission, background admission inputs, exact process-instance/ancestry/WorkOrder/lease ownership evidence, supervisor reconciliation, cooperative resource-pressure cancellation, revalidated TERM/KILL escalation, stable-recovery eligibility, global Repair Coordinator queue intent, `resource-guardian` notification events, default-disabled observe configuration, `tcb resource status|incidents|mode|profile`, allowlisted enabled/tick config, existing CLI/Control/Telegram/Lark sysload rendering, startup after notification readiness and before repair producers, and coordinator/config/alignment tests. | Do not shortcut sustain windows, close admission in observe mode, bypass active delegated or Loop admission, treat resource deferral as failure or schedule/retry consumption, infer ownership from process names, commands, pane paths, or cwd, call model-provider APIs, signal external/unknown/active or changed-instance processes, dispatch repair during pressure, without durable intent, or outside the global queue, expose a resource force option, or add a new chat button/protocol operation for Guardian control. |
+| Host power and quiet hours | macOS owns the sleep decision; the bot owns an explicit keep-awake policy, one operator-installed fixed daily wake in scheduled mode, autonomous-work admission, and bounded historical evidence. | Host-power config and validated mode command, pure time policy, policy-timezone-to-host-clock conversion, explicit `tcb power` schedule management/status/history, typed low-frequency power-event journal, read-only macOS Sleep/DarkWake/Wake correlation, evidence-completeness semantics, runtime wake and power-source verification, Doctor mode diagnosis, protected-work drain, every autonomous producer's pre-reservation admission, deferred schedule semantics, service/laptop-sleep reconnect behavior, maintenance docs, and policy/producer/history contract tests. | Do not force sleep, infer historical success from current configuration, scan high-volume application logs or persist copied raw system logs for history, require policy and host timezone names to match, mutate `pmset` at runtime, overwrite a conflicting schedule, approximate a seasonally changing offset with one fixed event, add dynamic/frequent wakes, `wakeorpoweron`, root helpers, passwordless sudo, screen/HID presence emulation, prescribe permanent clamshell overrides, exit agents for sleep, consume retries/fire anchors on quiet deferral, or promise Feishu/Lark delivery while asleep. |
+| WorkOrder and system gate | WorkOrder is the narrow execution contract; `system-gate.json` is the final acceptance artifact; `handoff.json` / `handoff.md` are the resumable next-round state. | WorkOrder contract types, WorkOrder planning contract, final summary parser/schema, `planReview`, revision prompt contract, transient agent failure classification, verification profile, exact target-path and worktree/branch/PR/CI/merge checks, bounded dependency assessment, notification evidence, run artifact registry, report and handoff writing, eval contract/artifact helpers when needed, and gate tests. A normal checkout with a nested `.git/` may self-repair an accidental `core.bare=true`; genuine bare repositories and all other path failures stay blocked. | Do not accept completion based only on an agent message, PR existence, or a green local command without durable gate evidence. Do not make long-running work depend on chat context alone for recovery. Do not guess a repository, mutate a genuine bare repository, or run an unbounded dependency assessment. Do not duplicate native worker-agent subagent/planner/evaluator capabilities as bot-managed service roles when prompt guidance and final-summary evidence are enough. Eval contracts may be shared modules; evaluator execution must not become a separate service role without an enforced service-owned requirement. |
+| Prompt governance | Governed system prompts are repo-owned automation instructions with metadata, action scope, stop conditions, and eval expectations. | Prompt registry, Loop Supervisor prompt, task-family governance registry, task-family policy fragments, self-repair prompts, prompt contract tests, role-specific skill/tool boundaries, `docs/prompt-governance.md`, and `docs/ai-tool-surface-governance.md`. | Do not add prompt text that can edit code, create PRs, merge, or self-repair without registry metadata and deterministic coverage. |
+| Capability dependency registry | Curated external skills/tools are optional or required task-family dependencies, not hidden assumptions about the operator's local environment. | `src/core/capabilities/**`, `LOOP_TASK_FAMILY_GOVERNANCE.capabilities`, `src/core/skills/**`, `tcb capabilities ...`, `tcb loop skills ...`, doctor, governed prompt fallback wording, `docs/agents/skills.md`, and capability contract tests. | Do not let a task prompt depend on an undeclared local skill, silently install third-party code, or reference a missing capability as if it is guaranteed. |
+| Prompt library | User-managed prompt browsing, search, tags, retrieval, and send/discuss entry points are separate from governed automation prompts. | Prompt MCP config, promptlib client/parser/view, Telegram/Lark prompt browsers, short-id/tag resolution, disabled-state copy, `docs/manual.md`, `docs/commands.md`, and promptlib/adapter tests. | Do not treat external prompt-library content as governed repo prompt truth or mix prompt-library behavior with system-prompt eval policy. |
+| Input enhancement | Voice transcription, prompt translation, recent inputs, and editable rerun drafts improve owner input before it enters the queue without changing task semantics. | Voice support/install/lang, `voice_install`, `voice_lang`, prompt-translation config/install/status, `prompt_translate`, `translate_install`, localized picker/card copy, recent-input cache, Telegram/Lark/control preparation paths, docs, and adapter/i18n tests. | Do not add an input feature on one chat surface without a fallback or documented intentional difference on the other supported surfaces. Do not translate or rewrite a prompt without preserving original-input provenance. |
+| Attachments and media | User attachments, notification attachments, downloaded voice/media, cache paths, and validation rules share safety and routing expectations. | Attachment classifier/limits, Telegram/Lark media handlers, `tcb attach`, notification attachments, media cache, reply-target routing, docs, and attachment/media tests. | Do not send unvalidated local paths, bypass size/type checks, or make adapter-specific attachment semantics invisible to diagnostics. |
+| Evidence and observability | Runtime Overview, logs, reports, ledgers, runtime artifacts, notification evidence, and debug commands explain what happened without reopening a worker. | Canonical health-first Runtime Overview across CLI/Control/TUI/chat/Observer MCP/Home, per-domain degradation, bounded attention/active/outcome sections, structured log fields, `tcb logs` filters, bounded `tcb loop reports list`, loop run artifact registry, notification event catalog, task audit discovery, runtime guardian evidence, dashboard/task-report views, docs, and regression tests. | Do not derive adapter-local health rules, scan private MCP client configuration, expose personal absolute paths, write new automation state that current diagnostics cannot discover, or mix unrelated historical noise into current attention. |
+| Authorization and security policy | Owner allowlists, Feishu/Lark chat policy, group action policy, card signing, control socket permissions, GitHub identity, secret handling, managed-service environment isolation, agent tool hooks, and local command boundaries determine who may do what. | Telegram auth, Lark auth/chat-policy/card-signing, control socket hardening, GitHub account/token handling, the shared inherited-environment sanitizer and all launchd/systemd wrappers, Claude/Codex `PreToolUse` command guards, setup/doctor checks, security docs, and auth/security tests. | Do not add an action path that bypasses owner authorization, group policy, callback/card verification, configured GitHub identity, managed-service credential sanitization, or agent-level command interception. Do not use an empty environment allowlist that drops ordinary runtime context; trusted service paths are set after sanitization and managed configuration comes from dotenv. |
+| State and configuration | Source/docs define product behavior; state/config directories hold live user configuration and runtime truth. | `TCB_STATE_DIR`, `.env` loading, state migrations, app-home/state layout, config examples, project/session bindings, install/dev scripts, `tcb config ...`, `tcb automation ...`, docs, and state/config tests. Generic config writes are allowlisted, non-secret, domain-validated before persistence, and preserve opaque string values exactly. Routine CLI, automation, setup/onboarding, and chat-preference mutations share one cross-process writer. The `LOOP_SUPERVISOR_ENABLED` dependency is command-settable and surfaced by `tcb automation status`. | Do not hardcode live project lists, user paths, schedules, GitHub accounts, or local cleanup policy in source, tests, or maintained docs. Do not make operators hand-edit state/config files for routine inspection or day-to-day enable/disable flows when a safe command can own the behavior. |
+| Deployment and lifecycle | Managed prod, managed dev, foreground dev, setup/install, service controls, single-instance protection, doctor, and smoke checks keep one coherent runtime. | `install.sh`, service scripts, dev helpers, setup flows, managed `dist/` entrypoint, launchd/systemd docs, doctor/smoke checks, and lifecycle tests. | Do not add a process manager, state layout, or dev/prod mode that can run against the same state without instance and migration rules. |
+| Setup, install, and onboarding | First-run setup, reconfigure, Lark onboarding, managed install, service materialization, optional dependency install, and doctor are one onboarding lifecycle. | `.env.example`, setup scripts, Lark setup/onboarding wizard, install/service scripts, optional install commands, doctor checks, install docs, and setup/install tests. | Do not introduce a required runtime option without updating setup, `.env.example`, doctor, docs, and managed-install behavior. |
+| Localization and copy governance | Chat UI copy, card/button labels, setup/onboarding copy, language pickers, per-channel language settings, supported language list, fallback behavior, and catalog completeness are one product surface. | `src/core/i18n/index.ts`, `src/core/i18n/catalog/*`, `src/core/i18n/setup.ts`, `UI_LANGS`, Telegram/Lark adapters, setup scripts, CLI/TUI/help output when user-facing, `docs/domain/iconography.md`, `tests/core/i18n.test.ts`, and `tests/i18n-hardcoded-copy-contract.test.ts`. | Do not add user-visible copy in adapters, CLI/TUI, setup, cards, notifications, or docs examples without either routing through `Messages`/`SetupMessages` or documenting why it is intentionally nonlocalized. |
+| UI vocabulary and iconography | Product terms, semantic icons, tone labels, and shared visual meanings are user-facing domain contracts. | `docs/domain/iconography.md`, `src/shared/ui/icons.ts`, project summary view, action registries, i18n catalogs for localized labels, Telegram/Lark cards/keyboards, docs, and copy/icon tests. | Do not hardcode reusable icons or introduce competing terms such as free project vs independent session in adapters. |
+| Quality and release gates | Local and remote gates define when code-changing work is ready to trust. | `pnpm verify:local`, pre-push hook, CI workflows, typecheck, tests, coverage, dependency graph, lint, smoke, audit, docs-contract tests, and maintenance docs. | Do not weaken gates for unattended automation; if a gate is too noisy, fix the gate or document a bounded skip with evidence. |
+
+## Drift Audit Checklist
+
+Run this checklist before claiming an automation or cross-surface feature is
+complete:
+
+1. Name the canonical module and source of truth.
+2. List every user/control surface that should expose it: CLI, TUI, Telegram,
+   Feishu/Lark, control socket, home/operator skill, scheduled config.
+   Update `docs/automation-capability-matrix.md` when the support shape changes.
+3. State any intentional surface difference and the user-facing fallback.
+4. Confirm docs mention the feature in the right layer and do not duplicate a
+   stale older design.
+5. If the feature changes user personal configuration, confirm routine
+   inspection and mutation have a command-backed path, secrets are redacted on
+   read, generic writes are allowlisted and non-secret, and any unsupported
+   config change has a clear setup/dedicated-command fallback.
+6. Confirm new or changed user-facing copy is routed through the right
+   localization surface: `Messages` for chat/cards/buttons, `SetupMessages` for
+   setup/onboarding, docs for prose, or an explicit nonlocalized exception.
+7. Confirm generated or installed skills point to the current docs instead of
+   copying outdated behavior.
+8. Add or update a contract test for every mechanical alignment rule that can
+   drift.
+9. For governed system prompts, update `docs/prompt-governance.md`, prompt
+   metadata, and deterministic prompt contract tests in the same slice.
+10. For task-family prompts that mention native subagents, parallel exploration,
+   planner, or evaluator behavior, confirm that behavior stays worker-internal
+   and that the final artifact records synthesized evidence, uncertainty, and
+   verification in `reviewGate.evidence` rather than raw child-session state.
+11. For code-changing automation prompts, confirm they guide the worker through
+    Explore, Plan, Code, Verify, Review, and Record, including how failures
+    become regression tests, evals, monitors, traces, checklists, or docs when
+    applicable. Preserve WorkOrder acceptance targets as passed, blocked, or
+    deferred evidence, and keep capability evals non-blocking until they
+    graduate into stable regression gates.
+12. For code-changing automation, prove conflict handling, worktree/session
+    isolation, GitHub account binding, verification gates, final notification,
+    and audit visibility.
+13. For notification features, prove Telegram and Feishu/Lark capability parity,
+    prove Lark project-bound group routing when a session is known, and prove
+    durable per-channel suppression does not hide failed delivery or an
+    actionable state change. Bot-owned copy must remain concise; diagnostic
+    identifiers belong in structured evidence rather than routine chat text.
+14. For runtime logging, prove sensitive structured values are redacted, record
+    size and archive retention are bounded, polling noise stays at `DEBUG`, and
+    repeated transient failures preserve first-failure plus terminal/recovery
+    evidence without one WARN/ERROR per retry.
+15. Mark historical documents as historical when they no longer describe current
+    behavior.
+
+If an item cannot be aligned in the same slice, document the gap with an owner,
+reason, and follow-up test or issue. Do not leave silent drift.
+
+## Enforced Alignment Contracts
+
+The following lists are intentionally explicit because
+`tests/alignment-governance-contract.test.ts` treats them as documentation
+anchors. When source registries gain or remove an item, update the registry,
+docs, and focused contract tests in the same slice.
+
+WorkOrder task kinds:
+
+- `architecture`
+- `workspace-architecture`
+- `bug-fix`
+- `test-coverage`
+- `security-maintenance`
+- `harness-auto`
+- `opportunity-discovery`
+- `automation-governance-review`
+- `pull-request-review`
+- `repository-pull-request-review`
+- `active-delegated-task`
+
+Bot-owned notification sources:
+
+- `autopilot-delegate`
+- `daily-audit`
+- `daily-task-audit`
+- `long-task-monitor`
+- `loop-engineering`
+- `opportunity-discovery`
+- `resource-guardian`
+- `runtime-guardian`
+- `tmux-claude-bot`
+
+Autopilot completion notifications must distinguish a supervisor execution
+failure from a completed supervisor run rejected by a system acceptance gate.
+The latter must identify the acceptance failure and must not claim that the
+delegated work itself did not complete.
+
+Notification alignment invariant: interactive results and explicit operator
+notifications remain always-send; successful autonomous work and expected
+environment state remain in observability surfaces. Daily Task Audit all-clear,
+ordinary battery operation, Resource Guardian elevated/intermediate sampling,
+and domain-owned supervisor sessions are silent. Actionable power failures are
+bounded by quiet-cycle identity; critical/emergency resource pressure, terminal
+sampling safety loss, action failure, capacity exhaustion, and paired recovery
+use durable state-change delivery. One crash identity routes through one owner
+channel with fallback rather than independent adapter alerts.
+
+Live operator configuration examples must stay synthetic. Maintained docs and
+source must not contain real operator home paths, GitHub accounts, active
+project lists, cleanup policy, or schedule settings copied from a running local
+installation.
+
+## Known Alignment Gaps To Investigate
+
+### Active delegation checkpoint boundary
+
+Single-repository active delegation checkpoint instructions must remain identical
+across initial, revision and finalization prompts. The producer is the existing
+agent; consumers are the strict handoff reader and system acceptance gate. The
+artifact catalog owns `iteration-checkpoint.json`, `checkpoint-required.json`
+and `delegation-budget.json`; all are internal run state, not configuration.
+
+The full WorkOrder hash and complete acceptance-item list bind recovery context
+to its authorized task. Before existing Git/PR mutations, the system checks
+required item completion and independently reads repository toplevel, HEAD and
+cleanliness. Once observed, deleting a checkpoint cannot bypass acceptance.
+Reported test commands are never executed; behavioral evidence remains
+agent-reported and cannot claim system provenance. A fully reported checkpoint
+must also match a passed `system-command` verification artifact for the same
+WorkOrder, contract hash and repository revision before final checkpoint
+acceptance can pass. Active delegation must preserve the matched project's eval
+and assessment policies when it materializes the WorkOrder. A deterministic
+`eval.command` is the preferred verifier; when eval is agent-only, the system
+reruns `assessment.command` against the clean final revision and requires its
+finite score to meet `eval.minScore` or, when absent, the WorkOrder target.
+Durable verification readers require the complete command hash, output hash,
+exit status, failure list, score and timestamps, and the command hash must match
+the WorkOrder policy; a partial or foreign-command record fails closed. Agent
+output remains advisory and does not itself satisfy provenance. Workspace and
+other task-family rollouts need their own contract tests.
+
+The shared supervised runner owns durable deadline and revision reservations for
+both scheduled and recovered execution, including Autopilot callers. It writes
+before dispatch and never expands an established limit. Budget rejection disables
+final-summary transport recovery. Cancellation fences late responses before any
+finalization/retry. Existing WorkOrder serialization and session isolation remain
+the execution owners; state files do not introduce a separate scheduler or lease.
+
+`tests/loop/iteration-checkpoint.test.ts` covers prompt parity, partial progress,
+timeout handoff, invalid/foreign input, provenance, real-repository acceptance,
+system-command verification binding and deletion downgrade prevention.
+`tests/loop/work-order.test.ts` covers active-delegation inheritance of the
+configured project eval policy.
+`tests/loop/delegation-budget.test.ts` covers
+resumed deadlines, reset caller counters, corrupt state, final-summary bypass
+and late cancellation. Existing handoff and runner tests preserve compatibility
+for absent legacy checkpoints and other task families.
+
+Partial continuation runs inside the shared prompt sequence before finalization.
+It repeats the same prompt/session without another context reset only for a
+fresh, contract-valid checkpoint with pending work and no blocked items. All
+scheduled, readiness-retry, recovered-revision and Autopilot call sites must
+provide their existing Git adapter: the decision checks configured toplevel,
+HEAD and reported dirty state. No checkpoint command text is executable input.
+The budget persists `continuationsUsed` and `lastContinuationSequence` before
+dispatch, with zero defaults for old version-1 records. The cap is `maxRounds - 1`
+additional partial turns across initial/revision sequences, separate from gate
+revision attempts and sharing the same nonrenewable deadline. Consuming a
+checkpoint establishes sticky acceptance without overwriting invalid state.
+
+`tests/loop/delegation-continuation.test.ts` covers repeated prompt/session,
+no repeated reset, blocked/invalid/stale/unchanged progress, wrong repositories,
+missing adapters, cross-sequence budget exhaustion, replay after restoration,
+corrupt requirement records, cancellation, deadlines, legacy fallback and
+explicit terminal outcomes. Sequence advances remain agent-reported; independent
+behavioral verification for final checkpoint acceptance is bound to
+system-command artifacts; broader external-wait scheduling remains separate work.
+
+Freshness-aware summary parsing is shared by active delegation dispatch,
+revision, continuation/finalization and synchronous/asynchronous transport
+recovery. The runner captures the pre-dispatch file version and excludes it from
+that invocation's completion evidence. A current response or rewritten regular
+file still passes through the existing summary contract and system gates.
+`tests/loop/delegation-continuation.test.ts` covers old summaries during partial
+revision, failure/timeout recovery, identical atomic rewrite and invalid fresh
+artifacts.
+
+Managed active-delegation queue entries persist an attempt ID and append-only
+prepared/started/settled records. Both live and restored queue probes use the
+persisted freshness exclusion. Restoration validates the contract, prompt and
+session, claims prepared attempts once, retains started/invalid attempts for
+reconciliation and drops settled attempts from replay. Regression coverage lives
+in `tests/loop/delegation-attempt.test.ts`. Append-only `first.json`/`next.json`
+reservations serialize different attempt IDs before context reset or lease
+changes. Start and pre-start cancellation share an exclusive decision record;
+unclaimed restored callbacks cannot settle a started turn. Ownership failures
+must disable summary recovery through the shared runner. Cross-process tests
+cover initial/successor reservations and start/cancellation races. Records remain
+transport evidence; surviving-worker reconciliation, interrupted reservations,
+legacy-history migration, restored budgets, report-publication crash windows and
+other task families remain open in
+`docs/future/ralph-roadmap-progress.md`. This is not a completed crash-recovery
+protocol.
+
+For journaled delegations, restored queue callbacks must not directly publish
+reports or backlog entries. The shared reconciliation controller consumes the
+current settled attempt's frozen summary and invokes the normal system gate
+before publication. Registry classification retains unsettled/invalid ownership
+and recognizes settled stdout-only evidence, including recoverable failed state.
+Mutable final files cannot replace failed, cancelled or corrupt frozen evidence.
+`tests/loop/supervisor-reconcile.test.ts` covers this acceptance path, pending
+checkpoint rejection, lost callbacks and repeated reconciliation. Legacy queues
+without attempt IDs still require a separate rollout; publication transaction
+and concurrent acceptance ownership remain open.
+
+### Workspace recovery
+
+Workspace recovery remains a known integration gap: generic Project Recovery
+requires one Git toplevel and creates an active delegation, while a configured
+workspace may contain multiple repositories under a non-Git root. The workspace
+scheduler owns the safe multi-repository WorkOrder path. Recovery must use that
+same path before it can repair a missed workspace occurrence; do not bypass root
+verification or silently choose a member repository. The bot-owned recovery
+adapter needs a dedicated regression covering per-repository isolation and PR
+policies. Existing workspace schedules remain due through admission deferrals.
+
+When a new gap is found, add it here with the affected surfaces, why it cannot
+be completed in the current slice, and the test or runtime evidence needed to
+close it. Do not leave silent drift in source, docs, skills, commands, or chat
+surfaces.
+
+## Workspace Recovery Acceptance
+
+Project Recovery must validate every configured workspace member repository, not
+the workspace coordination root. Missing members fail closed. Recovery dispatch
+passes the configured workspace identity to Autopilot, which reloads and binds that
+identity to the recorded target root before creating a WorkOrder. The existing
+workspace builder owns per-repository agent, worktree isolation, branch and PR
+policies; the active-delegation requirement must preserve those policies and keep
+the coordination root read-only. Both admission checks and durable recovery links
+remain in the existing Autopilot path. Concurrent starts reserve the root and all
+member paths; conflicts include isolated members' source paths, while ordinary
+source-session chat retains its existing isolation exception.
+
+Verification must exercise two real Git repositories under a non-Git parent,
+invalid identity/root rejection, member verification failures, and preservation
+of repository policies in the generated supervisor prompt. A recovery is complete
+only after the ordinary supervisor and system gates accept its terminal evidence.
+
+Self-heal reconciliation evaluates source occurrences individually after queue
+deduplication. A completed investigation may close existing unresolved deferral
+backlog, including occurrences older than its log lookback, but never occurrences
+created after its scheduled start. Mixed queues retain newer occurrences as pending
+without reopening independently verified older repairs. Generic delegated-success
+closure must defer to this policy. If a historical delegation ledger entry expired,
+its retained, identity-matched WorkOrder and accepted completed system gate still
+allow reconciliation of linked automatic false closures. Another active delegation
+retains ownership of its queue.
+
+Missing schedule occurrences retain their retryable execution evidence even when a
+prior configuration check replaced their summary. The audit reconsiders the exact
+unavailable-target classification after configuration repair and validates the
+current target again. Explicit owner decisions, external waits, terminal recovery
+closures and retry exhaustion remain authoritative; missing status does not waive
+them. Tests cover the audit entry point and non-Git workspace parent recovery.
+System acceptance executes configured deterministic evaluation commands independently and records revision-bound evidence; supervisor summaries remain advisory for that gate. Each artifact includes command and output hashes for replay auditing.
+Post-command repository root, HEAD, and status observations must succeed before
+acceptance. Artifacts record the system verdict and failure reasons, including
+command exit errors and score rejection, rather than copying command-reported success.
+Partial continuation shares durable content-replay rejection across initial and
+revision execution. Sequence-only changes, reworded next actions and reordered
+evidence must not bypass it. Preserve consumed `continuation-evidence/` claims
+during restoration; an interrupted claim blocks replay without accepting a final
+summary. This report-level guard does not replace independent acceptance gates.
+Live and restored journaled supervisor completion probes both require a valid
+current summary. A bare completion marker or pre-attempt summary cannot finish
+the queue item; restoration retains the same attempt identity and freshness fence.

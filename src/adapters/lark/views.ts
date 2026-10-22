@@ -7,10 +7,18 @@ import { findAdoptableOrphans } from "../../core/agents/takeover-service.js";
 import { performStart } from "../../core/command/dispatch.js";
 import { buildQueueStatusLines } from "../../core/command/queue-status.js";
 import { buildDashboard } from "../../core/dashboard/dashboard.js";
-import { formatDashboardForChat } from "../../core/dashboard/dashboard-view.js";
+import {
+  dashboardLabelsForMessages,
+  formatDashboardForChat,
+} from "../../core/dashboard/dashboard-view.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages, resolveUiLang } from "../../core/i18n/index.js";
-import { defaultProbes, renderDoctorReport, runDoctorChecks } from "../../core/infra/doctor.js";
+import {
+  type DoctorProbes,
+  defaultProbes,
+  renderDoctorReport,
+  runDoctorChecks,
+} from "../../core/infra/doctor.js";
 import { type ForeignAction, runStatusInstall } from "../../core/infra/status-install.js";
 import {
   defaultSystemLoadProbes,
@@ -32,7 +40,10 @@ import {
   projectPickerRows,
   projectPickerRowsFromRecentRows,
 } from "../../core/projects/project-session-picker.js";
-import { formatCurrentProjectSummary } from "../../core/projects/project-summary-view.js";
+import {
+  formatCurrentProjectSummary,
+  formatProjectSummaryBlock,
+} from "../../core/projects/project-summary-view.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
@@ -44,7 +55,9 @@ import {
   aliveCount,
   recoverPreviewList,
 } from "../../core/recovery/recover-view.js";
+import { createResourceGuardianStore } from "../../core/resource-guardian/store.js";
 import { DEFAULT_PEEK_LINES, renderPeekPaneChunks } from "../../core/session/output.js";
+import { appStateDir } from "../../shared/state-dir.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import {
   browseCard,
@@ -104,8 +117,12 @@ export async function sendLangPicker(channel: LarkChannel, chatId: string): Prom
 }
 
 /** Run the install health checks and send the redacted report. */
-export async function sendDoctor(channel: LarkChannel, chatId: string): Promise<void> {
-  const report = await runDoctorChecks(defaultProbes());
+export async function sendDoctor(
+  channel: LarkChannel,
+  chatId: string,
+  probes: DoctorProbes = defaultProbes(),
+): Promise<void> {
+  const report = await runDoctorChecks(probes);
   await sendText(channel, chatId, renderDoctorReport(report, { redacted: true }));
 }
 
@@ -116,7 +133,11 @@ export async function sendDoctor(channel: LarkChannel, chatId: string): Promise<
  * create the project the way the Telegram `/add_project` handler does.
  */
 
-/** The alive-projects list as a tappable switch/remove card. */
+// Each row can contain three buttons, with nested column/text/hover elements.
+// Ten rows leave headroom below Feishu JSON 2.0's 200-element limit.
+const ALIVE_LIST_ROWS_PER_CARD = 10;
+
+/** The alive-projects list as bounded tappable switch/remove cards. */
 export async function sendAliveList(
   channel: LarkChannel,
   deps: HandlerDeps,
@@ -124,7 +145,21 @@ export async function sendAliveList(
 ): Promise<void> {
   try {
     const buttons = await projectPickerRows(deps, chatScope("lark", chatId), "project-sessions");
-    await sendCard(channel, chatId, projectListCard(buttons, isProjectGroup(chatId)));
+    const group = isProjectGroup(chatId);
+    for (let offset = 0; offset < Math.max(1, buttons.length); offset += ALIVE_LIST_ROWS_PER_CARD) {
+      const batch = buttons.slice(offset, offset + ALIVE_LIST_ROWS_PER_CARD);
+      const messageId = await sendCard(channel, chatId, projectListCard(batch, group));
+      if (!messageId) {
+        const m = messages("lark");
+        await sendText(
+          channel,
+          chatId,
+          batch.length
+            ? `${m.aliveListTitle(batch.length)}\n\n${formatProjectSummaryBlock(batch)}`
+            : m.aliveListEmpty,
+        );
+      }
+    }
   } catch (err) {
     await sendError(channel, chatId, err);
   }
@@ -345,12 +380,12 @@ export async function sendDashboard(
   chatId: string,
 ): Promise<void> {
   const snap = await buildDashboard(deps);
-  const body = formatDashboardForChat(snap, { maxChars: 3500 });
-  await sendCard(
-    channel,
-    chatId,
-    viewCard(messages("lark").dashboardTitle, body, isProjectGroup(chatId)),
-  );
+  const m = messages("lark");
+  const body = formatDashboardForChat(snap, {
+    maxChars: 3500,
+    labels: dashboardLabelsForMessages(m),
+  });
+  await sendCard(channel, chatId, viewCard(m.dashboardTitle, body, isProjectGroup(chatId)));
 }
 
 /** Machine load / thermal / top CPU / runaway-orphan shells. Mirrors /dashboard;
@@ -360,7 +395,14 @@ export async function sendSysload(channel: LarkChannel, chatId: string): Promise
   await sendCard(
     channel,
     chatId,
-    viewCard(messages("lark").sysloadTitle, renderSystemLoad(report), isProjectGroup(chatId)),
+    viewCard(
+      messages("lark").sysloadTitle,
+      renderSystemLoad(
+        report,
+        createResourceGuardianStore({ stateDir: appStateDir() }).readCurrentReadOnly().view,
+      ),
+      isProjectGroup(chatId),
+    ),
   );
 }
 
@@ -657,7 +699,7 @@ export async function sendSessionsList(
     m.sessionsTitle(sessions.length),
     ...sessions.map((s, i) => `${i + 1}. \`${s.sessionId.slice(0, 8)}\` (${formatAgo(s.mtime)})`),
     "",
-    "用 `/sessions <id前缀>` 恢复",
+    m.sessionsRestoreHint,
   ];
   await sendText(channel, chatId, lines.join("\n"));
 }

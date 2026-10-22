@@ -1,8 +1,8 @@
 import {
-  type LoopSupervisorFinalSummary,
-  type LoopWorkOrder,
-  parseSupervisorFinalSummaryFile,
-} from "./work-order.js";
+  type FinalSummaryFreshness,
+  readFreshSupervisorFinalSummary,
+} from "./final-summary-freshness.js";
+import type { LoopSupervisorFinalSummary, LoopWorkOrder } from "./work-order.js";
 
 type SupervisorRunStatus =
   | "completed"
@@ -11,7 +11,7 @@ type SupervisorRunStatus =
   | "supervisor-failed"
   | "supervisor-timeout";
 
-type SupervisorRunResult =
+type SupervisorRunResult = (
   | {
       status: SupervisorRunStatus;
       summary: LoopSupervisorFinalSummary;
@@ -21,7 +21,11 @@ type SupervisorRunResult =
       status: "dispatch-failed" | "dispatch-timeout" | "invalid-output";
       reason: string;
       output: string;
-    };
+    }
+) & { finalSummaryRecovery?: "disabled"; finalSummaryFreshness?: FinalSummaryFreshness };
+
+export const FINAL_SUMMARY_RECOVERY_TIMEOUT_MS = 2000;
+export const FINAL_SUMMARY_RECOVERY_INTERVAL_MS = 100;
 
 export function supervisorFinalStatusToRunStatus(
   status: LoopSupervisorFinalSummary["status"],
@@ -35,8 +39,9 @@ export function recoverInvalidOutputFromFinalSummary(
   workOrder: LoopWorkOrder,
   result: SupervisorRunResult,
 ): SupervisorRunResult {
-  if (result.status !== "invalid-output") return result;
-  const parsed = parseSupervisorFinalSummaryFile(workOrder);
+  if (result.finalSummaryRecovery === "disabled" || !isRecoverableTransportFailure(result.status))
+    return result;
+  const parsed = readFreshSupervisorFinalSummary(workOrder, result.finalSummaryFreshness);
   if (!parsed.ok) return result;
   return {
     status: supervisorFinalStatusToRunStatus(parsed.summary.status),
@@ -48,4 +53,27 @@ export function recoverInvalidOutputFromFinalSummary(
       .filter(Boolean)
       .join("\n"),
   };
+}
+
+export async function recoverInvalidOutputFromFinalSummaryAsync(
+  workOrder: LoopWorkOrder,
+  result: SupervisorRunResult,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<SupervisorRunResult> {
+  if (result.finalSummaryRecovery === "disabled" || !isRecoverableTransportFailure(result.status))
+    return result;
+  const deadline = Date.now() + (options.timeoutMs ?? FINAL_SUMMARY_RECOVERY_TIMEOUT_MS);
+  const intervalMs = options.intervalMs ?? FINAL_SUMMARY_RECOVERY_INTERVAL_MS;
+  let recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  while (isRecoverableTransportFailure(recovered.status) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    recovered = recoverInvalidOutputFromFinalSummary(workOrder, result);
+  }
+  return recovered;
+}
+
+function isRecoverableTransportFailure(status: SupervisorRunResult["status"]): boolean {
+  return (
+    status === "dispatch-failed" || status === "dispatch-timeout" || status === "invalid-output"
+  );
 }

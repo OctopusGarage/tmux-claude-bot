@@ -14,6 +14,24 @@ import type { TmuxBridge } from "../src/core/session/tmux.js";
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const ready = fs.readFileSync(join(FIXTURES, "codex-ready-pane.txt"), "utf8");
 const busy = fs.readFileSync(join(FIXTURES, "codex-busy-pane.txt"), "utf8");
+const completedGoalPane = [
+  "◦ Working (2s • esc to interrupt)",
+  "",
+  "› Find and fix a bug in @filename",
+  "",
+  "main · Context 14% left · weekly 9% left · Goal achieved (19m)",
+].join("\n");
+const completedTurnPane = [
+  "◦ Working (46s • esc to interrupt)",
+  "",
+  "• [LOOP_SUPERVISOR_DONE:run-1]",
+  "",
+  "─ Worked for 9m 03s ─",
+  "",
+  "› Write tests for @filename",
+  "",
+  "main · Context 53% left · weekly 6% left",
+].join("\n");
 
 describe("codex pane heuristics", () => {
   it("ready when no 'esc to interrupt' spinner is present", () => {
@@ -22,6 +40,30 @@ describe("codex pane heuristics", () => {
 
   it("not ready while codex is working", () => {
     expect(paneLooksReady(busy)).toBe(false);
+  });
+
+  it("is ready when a completed goal footer supersedes a stale working marker", () => {
+    expect(paneLooksReady(completedGoalPane)).toBe(true);
+  });
+
+  it("is ready when the current Codex completion banner supersedes a stale working marker", () => {
+    expect(paneLooksReady(completedTurnPane)).toBe(true);
+  });
+
+  it("does not mistake ordinary worked-for prose for a Codex completion banner", () => {
+    expect(
+      paneLooksReady(
+        "› Summarize the history\n- Worked for 2h on the migration\n• Working (1s • esc to interrupt)\n- Worked for 3h",
+      ),
+    ).toBe(false);
+  });
+
+  it("is not ready when a new working marker follows an earlier completed goal", () => {
+    expect(
+      paneLooksReady(
+        `${completedGoalPane}\n› Start another task\n• Working (1s • esc to interrupt)`,
+      ),
+    ).toBe(false);
   });
 
   it("not ready on a booting / not-yet-rendered pane (no composer)", () => {
@@ -50,6 +92,32 @@ describe("codex pane heuristics", () => {
     const bypass =
       "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel";
     expect(paneConfirmAction(bypass)).toEqual({ sendRawKeys: ["Down", "Enter"] });
+  });
+
+  it("skips the Codex update prompt instead of confirming the default update action", () => {
+    const updatePrompt = [
+      "  Update available! 0.150.1 -> 0.151.0",
+      "› 1. Update now (runs `npm install -g @openai/codex`)",
+      "  2. Skip",
+      "  3. Skip until next version",
+      "Press enter to continue",
+    ].join("\n");
+
+    expect(paneNeedsConfirm(updatePrompt)).toBe(true);
+    expect(paneConfirmAction(updatePrompt)).toEqual({ sendRawKeys: ["Down", "Enter"] });
+  });
+
+  it("does not treat a stale Codex update prompt above a shell prompt as active", () => {
+    const staleUpdatePrompt = [
+      "  Update available! 0.150.1 -> 0.151.0",
+      "› 1. Update now (runs `npm install -g @openai/codex`)",
+      "  2. Skip",
+      "  3. Skip until next version",
+      "Press enter to continue",
+      "(base) user@host:~/repo|main ⇒",
+    ].join("\n");
+
+    expect(paneNeedsConfirm(staleUpdatePrompt)).toBe(false);
   });
 
   it("does not treat stale confirm text above a shell prompt as an active gate", () => {
@@ -112,7 +180,8 @@ describe("CodexRunner.start", () => {
 
     await runner.start("sess");
 
-    expect(sent[0]).toBe("keys:codex --yolo"); // launched first
+    expect(sent[0]).toBe("raw:C-u"); // clear stale shell input before launch
+    expect(sent[1]).toBe("keys:codex --yolo"); // then launch
     expect(sent).toContain("raw:Enter"); // trust gate auto-accepted
   });
 
@@ -141,6 +210,40 @@ describe("CodexRunner.start", () => {
     await runner.start("sess");
 
     expect(sent).toEqual([]);
+  });
+
+  it("serializes concurrent starts for the same session so the launch command is typed once", async () => {
+    let running = false;
+    const sent: string[] = [];
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => "› type here\n  gpt-5.5 · /proj",
+      sendKeys: async (t: string) => {
+        sent.push(`keys:${t}`);
+        if (t === "codex --yolo") running = true;
+      },
+      sendRawKey: async (k: string) => {
+        sent.push(`raw:${k}`);
+      },
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => running,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: {} as unknown as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 50,
+      maxWaitDoneMs: 50,
+    });
+
+    await Promise.all([runner.start("sess"), runner.start("sess")]);
+
+    expect(sent.filter((entry) => entry === "raw:C-u")).toHaveLength(1);
+    expect(sent.filter((entry) => entry === "keys:codex --yolo")).toHaveLength(1);
   });
 });
 
@@ -181,12 +284,35 @@ describe("CodexRunner.startWithResume", () => {
 
     await runner.startWithResume("sess", "uuid-9");
 
-    expect(sent[0]).toBe("keys:codex --yolo resume uuid-9"); // resume typed first
+    expect(sent[0]).toBe("raw:C-u"); // clear stale shell input before resume
+    expect(sent[1]).toBe("keys:codex --yolo resume uuid-9"); // then resume
     expect(sent).toContain("raw:Enter"); // trust gate auto-accepted
   });
 });
 
 describe("CodexRunner.waitUntilDone", () => {
+  it("reports done immediately after the current Codex completion banner", async () => {
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => completedTurnPane,
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 5,
+      maxWaitDoneMs: 5,
+    });
+
+    await expect(runner.waitUntilDone("sess")).resolves.toMatchObject({ done: true });
+  });
+
   it("does not report done while the stable pane still has the active-turn marker", async () => {
     const bridge = {
       resolveSessionName: async (s?: string) => s ?? "sess",
@@ -254,6 +380,28 @@ describe("CodexRunner.waitUntilDone", () => {
 });
 
 describe("CodexRunner.waitUntilInputReady", () => {
+  it("accepts input after a completed goal even when the old working line remains visible", async () => {
+    const bridge = {
+      resolveSessionName: async (s?: string) => s ?? "sess",
+      capturePane: async () => completedGoalPane,
+    } as unknown as TmuxBridge;
+    const configResolver = {
+      isCodexRunning: async () => true,
+    } as unknown as ConfigResolver;
+    const runner = new CodexRunner({
+      bridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 5,
+      maxWaitDoneMs: 5,
+    });
+
+    await expect(runner.waitUntilInputReady("sess")).resolves.toBeUndefined();
+  });
+
   it("does not auto-confirm a gate while waiting to send normal text", async () => {
     const sent: string[] = [];
     const bridge = {

@@ -32,6 +32,30 @@ describe("docs contract", () => {
     }
   });
 
+  it("keeps automation examples aligned with executable contracts", () => {
+    const commands = read("docs/commands.md");
+    expect(commands).toContain("src/core/command/action-registry.ts");
+    expect(commands).not.toContain("src/core/action-registry.ts");
+
+    const manual = read("docs/manual.md");
+    const projectExample = manual.split("Example workspace:")[0] ?? manual;
+    expect(projectExample).toContain("targetScore: 95");
+    expect(projectExample).toContain("branch: loop/datavibe-backend/bug-fix");
+    expect(projectExample).not.toContain("branch: loop/tmux-claude-bot/bug-fix");
+    expect(projectExample).toContain("riskAssessment:");
+    expect(projectExample).toContain("actionThreshold: 70");
+    expect(projectExample).toContain("criticalThreshold: 90");
+
+    const automation = read("docs/intelligent-automation.md");
+    expect(automation).toContain("riskScore");
+    expect(automation).toContain("suggestedBotImprovements");
+    expect(automation).toContain("retry-wait");
+    expect(automation).toContain("dead-letter");
+    expect(automation).toContain("Terminal repair outcomes");
+
+    expect(read("docs/examples/loop-skills-catalog.example.yml")).toContain("targetScore: 95");
+  });
+
   it(".env.example documents every supported config key", () => {
     // Legacy aliases are read as fallbacks but intentionally undocumented.
     const LEGACY = new Set([
@@ -112,6 +136,17 @@ describe("docs contract", () => {
     expect(agentRules).toContain("explicit, reviewable slices");
   });
 
+  it("keeps legacy command wrappers on the canonical verification and docs surfaces", () => {
+    const release = read(".claude/commands/release.md");
+    const dev = read(".claude/commands/dev.md");
+
+    expect(release).toContain("pnpm verify:local");
+    expect(dev).toContain("pnpm verify:local");
+    expect(release).toContain("docs/cli-reference.md");
+    expect(release).toContain("docs/automation-capability-matrix.md");
+    expect(release).not.toContain("command tables in `CLAUDE.md`");
+  });
+
   it("keeps project-owned AI behavior off direct model provider clients", () => {
     const forbidden = [
       /from\s+["']openai["']/,
@@ -186,49 +221,220 @@ describe("docs contract", () => {
       expect(declared, `${pkg} must not be declared as a project dependency`).not.toContain(pkg);
     }
 
-    const lock = readJson<{
-      packages?: Record<string, unknown>;
-      dependencies?: Record<string, unknown>;
-    }>("package-lock.json");
-    const locked = new Set([
-      ...Object.keys(lock.dependencies ?? {}),
-      ...Object.keys(lock.packages ?? {}).map((pkgPath) => pkgPath.replace(/^node_modules\//, "")),
-    ]);
+    const locked = read("pnpm-lock.yaml");
     for (const pkg of forbiddenPackages) {
-      expect(locked, `${pkg} must not be present in package-lock.json`).not.toContain(pkg);
+      expect(locked, `${pkg} must not be present in pnpm-lock.yaml`).not.toContain(pkg);
     }
   });
 
-  it("docs/manual.md documents every CLI command (tcb …)", () => {
+  it("docs/cli-reference.md documents every CLI command and long option (tcb …)", () => {
     // Source-derived: a `.command("x")` added to the CLI without a mention in the
-    // manual fails here, keeping the user manual in sync with the runtime surface.
+    // CLI reference fails here, keeping docs in sync with the runtime surface.
     const cli = read("src/cli.ts");
     // Capture just the command NAME (the token before any `<arg>` / space).
     const commands = new Set(
       [...cli.matchAll(/\.command\("([^"\s<]+)/g)].map((m) => m[1] as string),
     );
-    const manual = read("docs/manual.md");
+    const reference = read("docs/cli-reference.md");
     for (const cmd of commands) {
-      expect(manual, `missing \`${cmd}\` in docs/manual.md`).toMatch(new RegExp(`\\b${cmd}\\b`));
+      expect(reference, `missing \`${cmd}\` in docs/cli-reference.md`).toMatch(
+        new RegExp(`\\b${cmd}\\b`),
+      );
+    }
+
+    const cliSurface = [
+      cli,
+      ...walkFiles("src/cli")
+        .filter((file) => file.endsWith(".ts"))
+        .map(read),
+    ].join("\n");
+    const longOptions = new Set(
+      [...cliSurface.matchAll(/\.(?:requiredOption|option)\("([^"]+)"/g)]
+        .flatMap((m) => [...(m[1] ?? "").matchAll(/--[a-z0-9-]+/g)])
+        .map((m) => m[0]),
+    );
+    const optionReference = reference.split("## Options")[1]?.split("## Notes")[0] ?? "";
+    for (const option of longOptions) {
+      expect(optionReference, `missing \`${option}\` in docs/cli-reference.md options`).toContain(
+        option,
+      );
     }
   });
 
   it("docs/manual.md links the detailed references", () => {
     const manual = read("docs/manual.md");
     expect(manual).toContain("commands.md"); // full chat-command table
+    expect(manual).toContain("cli-reference.md"); // full CLI command/option table
     expect(manual).toContain("tui.md"); // terminal-UI guide
   });
 
   it("llms.txt points agents and documentation indexers at the primary docs", () => {
     const llms = read("llms.txt");
     for (const doc of [
+      "docs/README.md",
       "docs/manual.md",
+      "docs/cli-reference.md",
       "docs/commands.md",
       "docs/tui.md",
       "docs/agents/usage-guide.md",
+      "docs/automation-alignment.md",
+      "docs/automation-capability-matrix.md",
+      "docs/agent-maintenance-guidelines.md",
+      "docs/intelligent-automation.md",
+      "docs/intelligent-automation-architecture.md",
+      "docs/intelligent-automation-ascii-architecture.md",
       "docs/TESTING.md",
     ]) {
       expect(llms, `missing ${doc} in llms.txt`).toContain(doc);
+    }
+    expect(llms).toContain("Resource Guardian");
+    expect(llms).toContain("Runtime Guardian");
+    expect(llms).toMatch(/Automation capability matrix[^\n]*MCP/);
+  });
+
+  it("keeps the documentation map complete for Guardian and MCP surfaces", () => {
+    const map = read("docs/README.md");
+
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Resource Guardian/);
+    expect(map).toMatch(/intelligent-automation\.md[^\n]*Runtime Guardian/);
+    expect(map).toMatch(/automation-capability-matrix\.md[^\n]*MCP/);
+  });
+
+  it("documents one canonical Runtime Overview across human and AI entry points", () => {
+    const usage = read("docs/agents/usage-guide.md");
+    const alignment = read("docs/automation-alignment.md");
+    const matrix = read("docs/automation-capability-matrix.md");
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+    const llms = read("llms.txt");
+
+    for (const doc of [usage, alignment, matrix, llms]) {
+      expect(doc).toContain("Runtime Overview");
+    }
+    for (const doc of [usage, skill]) {
+      expect(doc).toContain("tcb.observer.status");
+      expect(doc).toContain("tcb dashboard --json");
+    }
+    expect(alignment).toContain("same neutral snapshot");
+    expect(alignment).toContain("must not inspect private global MCP client configuration");
+    expect(alignment).toContain("diagnostic only");
+    expect(matrix).toContain("no overview surface mutates state");
+  });
+
+  it("keeps maintained docs in English", () => {
+    for (const file of walkFiles("docs")) {
+      expect(read(file), `${file} should be written in English`).not.toMatch(/\p{Script=Han}/u);
+    }
+  });
+
+  it("keeps Autopilot docs on current supervisor-backed delegation semantics", () => {
+    const manual = read("docs/manual.md");
+    const cliReference = read("docs/cli-reference.md");
+    const usageGuide = read("docs/agents/usage-guide.md");
+    const skill = read("skills/tcb-home-operator/SKILL.md");
+    const iconography = read("docs/domain/iconography.md");
+    const icons = read("src/shared/ui/icons.ts");
+    const operatorHome = read("src/core/projects/operator-home.ts");
+
+    for (const doc of [manual, cliReference, usageGuide, skill]) {
+      expect(doc).toContain("tcb autopilot <project>");
+    }
+    expect(operatorHome).toContain("tcb autopilot <name> [requirement]");
+    expect(manual).not.toContain("autopilot status across all sessions");
+    expect(iconography).toContain("Supervisor-backed Autopilot delegation");
+    expect(iconography).not.toContain("hands-free agent loop");
+    expect(icons).toContain("supervisor-backed Autopilot delegation");
+    expect(icons).not.toContain("hands-free agent loop");
+  });
+
+  it("documents cross-surface automation alignment governance", () => {
+    const alignment = read("docs/automation-alignment.md");
+    const matrix = read("docs/automation-capability-matrix.md");
+    const maintenance = read("docs/agent-maintenance-guidelines.md");
+    const architecture = read("docs/intelligent-automation-architecture.md");
+    const projectRules = read("CLAUDE.md");
+    const agentRules = read("AGENTS.md");
+
+    for (const phrase of [
+      "Rule Placement",
+      "Alignment Matrix",
+      "Drift Audit Checklist",
+      "Known Alignment Gaps To Investigate",
+      "Memory and instruction files are context, not a policy engine",
+      "enforced, add a schema check, contract test, hook, runtime gate",
+      "CI/local",
+      "Telegram and Feishu/Lark capability parity",
+      "Lark project-bound group routing",
+      "command-local `GH_TOKEN` from `gh auth token --user`",
+      "Agent-backed/control-surface path only",
+      "docs/automation-capability-matrix.md",
+    ]) {
+      expect(alignment, `missing alignment guidance: ${phrase}`).toContain(phrase);
+    }
+
+    const automation = read("docs/intelligent-automation.md");
+    for (const phrase of [
+      "Draft is a review state, not an exclusion",
+      "gh pr ready",
+      "gh pr close",
+      "Same-repository conflicting PRs",
+      "Every open PR must be inspected",
+      "durable queue",
+      "retry-wait",
+      "expired leases",
+    ]) {
+      expect(automation, `missing PR decision guidance: ${phrase}`).toContain(phrase);
+    }
+
+    for (const phrase of [
+      "Automation Capability Matrix",
+      "CLI",
+      "Telegram",
+      "Feishu/Lark",
+      "TUI",
+      "Home/operator skill",
+      "Autopilot active delegation",
+      "Opportunity Discovery suggestions",
+      "Daily Task Audit",
+      "Repository-wide PR review",
+      "No keep-alive, goal-cycle, enable/disable, or old human gate UI",
+    ]) {
+      expect(matrix, `missing capability matrix guidance: ${phrase}`).toContain(phrase);
+    }
+
+    expect(projectRules).toContain("docs/automation-alignment.md");
+    expect(projectRules).toContain("Alignment Governance");
+    expect(projectRules).toContain("docs/agent-maintenance-guidelines.md");
+    expect(agentRules).toContain("docs/automation-alignment.md");
+    expect(agentRules).toContain("Alignment Governance");
+    expect(agentRules).toContain("docs/agent-maintenance-guidelines.md");
+
+    for (const phrase of [
+      "Service And Runtime Management",
+      "Supervisor And System Gates",
+      "Conflict And Isolation Rules",
+      "Notifications",
+      "GitHub Automation",
+      "Documentation And Skills",
+    ]) {
+      expect(maintenance, `missing maintenance guidance: ${phrase}`).toContain(phrase);
+    }
+
+    for (const phrase of [
+      "System Role",
+      "Session Model",
+      "Core Execution Pipeline",
+      "Task Families",
+      "Isolation And Conflict Control",
+      "Evidence And Acceptance",
+      "Notification Model",
+      "GitHub Identity",
+      "AI Boundary",
+      "Drift Risks And Controls",
+      "Prevent",
+      "Detect",
+      "Recover",
+    ]) {
+      expect(architecture, `missing architecture guidance: ${phrase}`).toContain(phrase);
     }
   });
 
@@ -242,19 +448,18 @@ describe("docs contract", () => {
 
     expect(config.projectTitle).toBe("tmux-claude-bot");
     expect(config.folders).toEqual(expect.arrayContaining(["docs", "skills"]));
-    expect(config.excludeFolders).toEqual(
-      expect.arrayContaining(["docs/superpowers", "docs/research"]),
-    );
+    expect(config.excludeFolders).toEqual(expect.arrayContaining(["docs/future"]));
+    expect(config.excludeFolders).not.toContain("docs/superpowers");
     expect(config.rules?.join("\n")).toContain("docs/agents/usage-guide.md");
   });
 
   it("README documents the operational entry points", () => {
     const readme = read("README.md");
     for (const phrase of [
-      "npm run setup:lark",
-      "npm run doctor",
-      "npm run service:install",
-      "npm run service:uninstall",
+      "pnpm setup:lark",
+      "pnpm doctor",
+      "pnpm service:install",
+      "pnpm service:uninstall",
     ]) {
       expect(readme, `missing "${phrase}" in README.md`).toContain(phrase);
     }

@@ -31,15 +31,11 @@ const blankTolerantNonNegativeInt = (def: number): z.ZodType<number> =>
 const blankTolerantString = (def: string): z.ZodType<string> =>
   z.preprocess((v) => (v === "" ? undefined : v), z.string().min(1).default(def));
 
-const optionalRawEnv = z.preprocess((v) => (v === undefined ? "" : v), z.string().default(""));
-
-function preferredEnvInt(
-  preferredRaw: string,
-  legacyValue: number,
-  preferredSchema: z.ZodType<number>,
-): number {
-  return preferredRaw.trim() === "" ? legacyValue : preferredSchema.parse(preferredRaw);
-}
+const worktreeIsolationSchema = (def: "isolated" | "source" | "auto") =>
+  z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["isolated", "source", "auto"]).default(def),
+  );
 
 // Exported so the docs contract test can assert every supported key is
 // documented in .env.example (legacy aliases excepted).
@@ -89,6 +85,10 @@ export const envSchema = z.object({
   SESSION_IDLE_REAPER_TICK_MS: blankTolerantNonNegativeInt(3_600_000),
   // Close agents unused for this long. Default 3 days. 0 disables.
   SESSION_IDLE_REAPER_MAX_IDLE_MS: blankTolerantNonNegativeInt(259_200_000),
+  // Loop workers are automation infrastructure, not user chat context. Keep the
+  // ordinary project-agent threshold conservative, but reclaim idle workers much
+  // sooner so scheduled automation cannot accumulate dozens of tmux sessions.
+  SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS: blankTolerantNonNegativeInt(21_600_000),
   // Automatically run reboot recovery on boot (no /recover needed). Idempotent —
   // a no-op when tmux survived a mere bot restart (everything's already alive),
   // does real work only after a machine reboot. Set to false/0 to disable.
@@ -96,6 +96,26 @@ export const envSchema = z.object({
   // macOS: keep the Mac awake on AC power while the bot runs so a plugged-in
   // laptop stays reachable from the phone. Opt-in; set by the setup wizard.
   TCB_KEEP_AWAKE: z.string().default("0"),
+  TCB_KEEP_AWAKE_MODE: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.enum(["off", "always", "scheduled"]).optional(),
+  ),
+  TCB_QUIET_HOURS_TIMEZONE: blankTolerantString("Asia/Singapore").refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, "invalid IANA timezone"),
+  TCB_QUIET_HOURS_START: blankTolerantString("02:00").refine(
+    (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value),
+    "expected HH:mm",
+  ),
+  TCB_QUIET_HOURS_END: blankTolerantString("09:30").refine(
+    (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value),
+    "expected HH:mm",
+  ),
   LARK_ENABLED: z.string().default("false"),
   LARK_APP_ID: z.string().default(""),
   LARK_APP_SECRET: z.string().default(""),
@@ -130,47 +150,35 @@ export const envSchema = z.object({
   LARK_VOICE_TRANSLATE_FROM: z.string().default(""),
   LARK_VOICE_TRANSLATE_TO: z.string().default(""),
   ARGOS_TRANSLATE_PYTHON: z.string().default(""),
-  // --- Legacy autopilot keep-alive / goal cycle. Active delegation uses Loop
-  // Supervisor work orders; do not route new scheduled automation through this. ---
-  AUTOPILOT_TICK_MS: blankTolerantNonNegativeInt(8000),
-  AUTOPILOT_IDLE_GRACE_MS: blankTolerantPositiveInt(20000),
-  AUTOPILOT_COOLDOWN_MS: blankTolerantPositiveInt(30000),
-  AUTOPILOT_MAX_ITERATIONS: blankTolerantPositiveInt(30),
-  AUTOPILOT_MAX_WALLCLOCK_MS: blankTolerantPositiveInt(3600000),
-  AUTOPILOT_IDLE_PROMPT_TEXT: blankTolerantString("请继续完成当前任务"),
-  // A distinct, clearer recovery prompt for transient API errors — so the agent
-  // retries the interrupted step rather than reading a bare "继续" as a new task.
-  AUTOPILOT_API_ERROR_PROMPT_TEXT: blankTolerantString(
-    "刚才因 API 错误中断,请重试并继续当前任务,不要开始新任务",
+  // --- Resource guardian. Observes host pressure and optionally protects
+  // background admission. Existing installations remain disabled by default. ---
+  RESOURCE_GUARDIAN_ENABLED: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["true", "false"]).default("false"),
   ),
-  AUTOPILOT_MAX_RECOVERY_ATTEMPTS: blankTolerantPositiveInt(5),
-  AUTOPILOT_RETRY_MAX: blankTolerantPositiveInt(5),
-  AUTOPILOT_RETRY_BASE_MS: blankTolerantPositiveInt(30000),
-  AUTOPILOT_RETRY_FACTOR: blankTolerantPositiveInt(2),
-  AUTOPILOT_RETRY_MAX_MS: blankTolerantPositiveInt(120000),
-  AUTOPILOT_RETRY_JITTER: z.string().default("true"),
-  // Server-busy / overload / rate-limit errors get a much slower backoff curve.
-  AUTOPILOT_RETRY_BUSY_BASE_MS: blankTolerantPositiveInt(180000),
-  AUTOPILOT_RETRY_BUSY_MAX_MS: blankTolerantPositiveInt(600000),
-  AUTOPILOT_GOALS_DIR: z.string().default(""),
-  AUTOPILOT_USAGE_PAUSE_PCT: blankTolerantNonNegativeInt(0),
-  AUTOPILOT_KEEPALIVE_DONE_MARKER: blankTolerantString("TASK_DONE"),
-  AUTOPILOT_KEEPALIVE_DONE_PROMPT: blankTolerantString(
-    "全部完成后请单独回复一行 [TASK_DONE] 表示整个任务已完成。",
+  RESOURCE_GUARDIAN_MODE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["observe", "protect"]).default("observe"),
   ),
-  AUTOPILOT_MAX_ROUNDS: blankTolerantPositiveInt(10),
-  AUTOPILOT_BETWEEN_GOALS: z.preprocess(
-    (v) => (v === "" ? "compact" : v),
-    z.enum(["none", "compact", "clear"]).catch("compact"),
+  RESOURCE_GUARDIAN_PROFILE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["balanced", "conservative"]).default("balanced"),
   ),
-  // --- Batch scheduler. BATCH_SCHEDULER_TICK_MS=0 disables the loop.
-  // AUTOPILOT_SCHEDULER_* are legacy aliases kept for existing installs. ---
-  BATCH_SCHEDULER_TICK_MS: optionalRawEnv,
-  BATCH_SCHEDULER_QUOTA_PCT: optionalRawEnv,
-  BATCH_SCHEDULER_REPROBE_MS: optionalRawEnv,
-  AUTOPILOT_SCHEDULER_TICK_MS: blankTolerantNonNegativeInt(8000),
-  AUTOPILOT_SCHEDULER_QUOTA_PCT: blankTolerantPositiveInt(99),
-  AUTOPILOT_SCHEDULER_REPROBE_MS: blankTolerantPositiveInt(1_800_000),
+  RESOURCE_GUARDIAN_TICK_MS: blankTolerantNonNegativeInt(15_000),
+  // --- Runtime guardian. Watches bot-owned automation artifacts while the bot
+  // is running and can delegate narrow self-repair for confirmed system issues. ---
+  RUNTIME_GUARDIAN_ENABLED: blankTolerantString("false"),
+  RUNTIME_GUARDIAN_MODE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["observe", "fast-heal"]).default("fast-heal"),
+  ),
+  RUNTIME_GUARDIAN_WORKTREE_ISOLATION: worktreeIsolationSchema("auto"),
+  RUNTIME_GUARDIAN_TICK_MS: blankTolerantNonNegativeInt(120000),
+  RUNTIME_GUARDIAN_LOOKBACK_MS: blankTolerantNonNegativeInt(86_400_000),
+  RUNTIME_GUARDIAN_COOLDOWN_MS: blankTolerantNonNegativeInt(1_800_000),
+  RUNTIME_GUARDIAN_REPO_PATH: z.string().default(""),
+  RUNTIME_GUARDIAN_REPAIR_BRANCH: blankTolerantString("dev"),
+  RUNTIME_GUARDIAN_MAX_FINDINGS_PER_TICK: blankTolerantPositiveInt(3),
   // --- Daily scheduled task audit. TASK_AUDIT_TICK_MS=0 disables the loop. ---
   TASK_AUDIT_ENABLED: blankTolerantString("false"),
   TASK_AUDIT_SCHEDULE: blankTolerantString("0 2 * * *"),
@@ -180,7 +188,14 @@ export const envSchema = z.object({
     z.enum(["telegram", "lark", "both"]).default("both"),
   ),
   TASK_AUDIT_AUTO_REPAIR: blankTolerantString("false"),
+  TASK_AUDIT_REPO_PATH: z.string().default(""),
   TASK_AUDIT_REPAIR_BRANCH: blankTolerantString("dev"),
+  TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: worktreeIsolationSchema("isolated"),
+  // --- Hourly system self-heal. Runs deterministic cross-ledger reconciliation
+  // and consumes existing repair queues without creating daily-audit noise. ---
+  SYSTEM_SELF_HEAL_ENABLED: blankTolerantString("true"),
+  SYSTEM_SELF_HEAL_TICK_MS: blankTolerantNonNegativeInt(3_600_000),
+  SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: blankTolerantString("true"),
   // --- Loop Engineering. Blank config file or tick 0 disables the managed loop. ---
   LOOP_ENGINEERING_CONFIG_FILE: z.string().default(""),
   LOOP_ENGINEERING_TICK_MS: blankTolerantNonNegativeInt(300000),
@@ -195,6 +210,7 @@ export const envSchema = z.object({
     (v) => (v === "" ? undefined : v),
     z.enum(["none", "compact", "clear"]).default("clear"),
   ),
+  LOOP_SUPERVISOR_WORKTREE_ISOLATION: worktreeIsolationSchema("isolated"),
   // --- Home operator session ---
   HOME_OPERATOR_ENABLED: blankTolerantString("false"),
   HOME_OPERATOR_DIR: z.string().default(""),
@@ -287,7 +303,7 @@ export function parseStartCommands(env: NodeJS.ProcessEnv, primary: string): Sta
 }
 
 /**
- * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `npm run dev` can borrow
+ * Load `.env` into process.env. Honors `TCB_ENV_FILE` so `pnpm dev` can borrow
  * the deployed (prod) config — develop against the real token/proxy/Feishu with
  * hot reload, with no second `.env` to drift. Otherwise `.env` lives in the state
  * dir (alongside the other state files, written there by `env-store`/the setup
@@ -303,7 +319,10 @@ function loadEnvFile(): void {
   // `tcb dashboard --json` / `tcb logs --json` (it would break `| jq`).
   const explicit = process.env.TCB_ENV_FILE;
   if (explicit) {
-    loadEnv({ path: explicit, quiet: true });
+    // An explicitly selected environment file is the operator's source of
+    // truth. Override inherited launch-shell values so dev and service starts
+    // cannot silently use a stale supervisor pool size or schedule.
+    loadEnv({ path: explicit, quiet: true, override: true });
     return;
   }
   loadEnv({ path: appStateFile(".env"), quiet: true });
@@ -340,6 +359,19 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
         }
       : undefined;
 
+  const legacyKeepAwake = parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true";
+  const hostPowerMode = parsed.TCB_KEEP_AWAKE_MODE ?? (legacyKeepAwake ? "always" : "off");
+  const quietMinutes = (value: string): number => {
+    const [hour, minute] = value.split(":").map(Number);
+    return (hour ?? 0) * 60 + (minute ?? 0);
+  };
+  const quietDuration =
+    (quietMinutes(parsed.TCB_QUIET_HOURS_END) - quietMinutes(parsed.TCB_QUIET_HOURS_START) + 1440) %
+    1440;
+  if (quietDuration <= 15) {
+    throw new Error("quiet-hours window must be longer than the 15-minute wake warmup");
+  }
+
   return {
     telegramBotToken,
     claudeStartCommand: parsed.CLAUDE_START_COMMAND,
@@ -372,56 +404,33 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
     sessionIdleReaper: {
       tickMs: parsed.SESSION_IDLE_REAPER_TICK_MS,
       maxIdleMs: parsed.SESSION_IDLE_REAPER_MAX_IDLE_MS,
+      loopWorkerMaxIdleMs: parsed.SESSION_IDLE_REAPER_LOOP_WORKER_MAX_IDLE_MS,
     },
     autoRecover: parsed.AUTO_RECOVER !== "false" && parsed.AUTO_RECOVER !== "0",
-    keepAwake: parsed.TCB_KEEP_AWAKE === "1" || parsed.TCB_KEEP_AWAKE === "true",
-    lark,
-    autopilot: {
-      tickMs: parsed.AUTOPILOT_TICK_MS,
-      idleGraceMs: parsed.AUTOPILOT_IDLE_GRACE_MS,
-      cooldownMs: parsed.AUTOPILOT_COOLDOWN_MS,
-      maxIterations: parsed.AUTOPILOT_MAX_ITERATIONS,
-      maxWallClockMs: parsed.AUTOPILOT_MAX_WALLCLOCK_MS,
-      idlePromptText: parsed.AUTOPILOT_IDLE_PROMPT_TEXT,
-      apiErrorPromptText: parsed.AUTOPILOT_API_ERROR_PROMPT_TEXT,
-      maxRecoveryAttempts: parsed.AUTOPILOT_MAX_RECOVERY_ATTEMPTS,
-      retry: {
-        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
-        baseDelayMs: parsed.AUTOPILOT_RETRY_BASE_MS,
-        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
-        maxDelayMs: parsed.AUTOPILOT_RETRY_MAX_MS,
-        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
-      },
-      retryBusy: {
-        maxRetries: parsed.AUTOPILOT_RETRY_MAX,
-        baseDelayMs: parsed.AUTOPILOT_RETRY_BUSY_BASE_MS,
-        backoffFactor: parsed.AUTOPILOT_RETRY_FACTOR,
-        maxDelayMs: parsed.AUTOPILOT_RETRY_BUSY_MAX_MS,
-        jitter: parsed.AUTOPILOT_RETRY_JITTER !== "false" && parsed.AUTOPILOT_RETRY_JITTER !== "0",
-      },
-      goalsDir: parsed.AUTOPILOT_GOALS_DIR,
-      usagePausePct: parsed.AUTOPILOT_USAGE_PAUSE_PCT,
-      keepAliveDoneMarker: parsed.AUTOPILOT_KEEPALIVE_DONE_MARKER,
-      keepAliveDonePrompt: parsed.AUTOPILOT_KEEPALIVE_DONE_PROMPT,
-      maxRounds: parsed.AUTOPILOT_MAX_ROUNDS,
-      betweenGoals: parsed.AUTOPILOT_BETWEEN_GOALS,
+    hostPower: {
+      mode: hostPowerMode,
+      timezone: parsed.TCB_QUIET_HOURS_TIMEZONE,
+      quietStart: parsed.TCB_QUIET_HOURS_START,
+      quietEnd: parsed.TCB_QUIET_HOURS_END,
     },
-    scheduler: {
-      tickMs: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_TICK_MS,
-        parsed.AUTOPILOT_SCHEDULER_TICK_MS,
-        blankTolerantNonNegativeInt(parsed.AUTOPILOT_SCHEDULER_TICK_MS),
-      ),
-      quotaPct: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_QUOTA_PCT,
-        parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT,
-        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_QUOTA_PCT),
-      ),
-      reprobeMs: preferredEnvInt(
-        parsed.BATCH_SCHEDULER_REPROBE_MS,
-        parsed.AUTOPILOT_SCHEDULER_REPROBE_MS,
-        blankTolerantPositiveInt(parsed.AUTOPILOT_SCHEDULER_REPROBE_MS),
-      ),
+    lark,
+    resourceGuardian: {
+      enabled: parsed.RESOURCE_GUARDIAN_ENABLED === "true",
+      mode: parsed.RESOURCE_GUARDIAN_MODE,
+      profile: parsed.RESOURCE_GUARDIAN_PROFILE,
+      tickMs: parsed.RESOURCE_GUARDIAN_TICK_MS,
+    },
+    runtimeGuardian: {
+      enabled:
+        parsed.RUNTIME_GUARDIAN_ENABLED !== "false" && parsed.RUNTIME_GUARDIAN_ENABLED !== "0",
+      mode: parsed.RUNTIME_GUARDIAN_MODE,
+      worktreeIsolation: parsed.RUNTIME_GUARDIAN_WORKTREE_ISOLATION,
+      tickMs: parsed.RUNTIME_GUARDIAN_TICK_MS,
+      lookbackMs: parsed.RUNTIME_GUARDIAN_LOOKBACK_MS,
+      cooldownMs: parsed.RUNTIME_GUARDIAN_COOLDOWN_MS,
+      repoPath: parsed.RUNTIME_GUARDIAN_REPO_PATH.trim(),
+      repairBranch: parsed.RUNTIME_GUARDIAN_REPAIR_BRANCH,
+      maxFindingsPerTick: parsed.RUNTIME_GUARDIAN_MAX_FINDINGS_PER_TICK,
     },
     taskAudit: {
       enabled: parsed.TASK_AUDIT_ENABLED !== "false" && parsed.TASK_AUDIT_ENABLED !== "0",
@@ -430,7 +439,17 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
       channel: parsed.TASK_AUDIT_CHANNEL,
       autoRepair:
         parsed.TASK_AUDIT_AUTO_REPAIR !== "false" && parsed.TASK_AUDIT_AUTO_REPAIR !== "0",
+      repoPath: parsed.TASK_AUDIT_REPO_PATH.trim(),
       repairBranch: parsed.TASK_AUDIT_REPAIR_BRANCH,
+      repairWorktreeIsolation: parsed.TASK_AUDIT_REPAIR_WORKTREE_ISOLATION,
+    },
+    systemSelfHeal: {
+      enabled:
+        parsed.SYSTEM_SELF_HEAL_ENABLED !== "false" && parsed.SYSTEM_SELF_HEAL_ENABLED !== "0",
+      tickMs: parsed.SYSTEM_SELF_HEAL_TICK_MS,
+      agentSweepEnabled:
+        parsed.SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED !== "false" &&
+        parsed.SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED !== "0",
     },
     loopEngineering: {
       configFile: parsed.LOOP_ENGINEERING_CONFIG_FILE.trim(),
@@ -442,6 +461,7 @@ export function loadConfig(env?: NodeJS.ProcessEnv): AppConfig {
         agent: parsed.LOOP_SUPERVISOR_AGENT,
         poolSize: parsed.LOOP_SUPERVISOR_POOL_SIZE,
         resetBeforeWorkOrder: parsed.LOOP_SUPERVISOR_RESET_BEFORE_WORK_ORDER,
+        worktreeIsolation: parsed.LOOP_SUPERVISOR_WORKTREE_ISOLATION,
       },
     },
     homeOperator: {

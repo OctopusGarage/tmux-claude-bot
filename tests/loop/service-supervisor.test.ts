@@ -1,23 +1,57 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AutomationOccurrenceStore } from "../../src/core/automation/occurrence-window.js";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
+import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import type { LoopRunCommandInvocation } from "../../src/core/loop/run.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
+  deferReadyRepositoryReviewsForAdmission,
   reconcileLoopSupervisorWorkOrders,
-  runLoopServiceTickAsync,
+  repositoryReviewAdmissionBackoffUntil,
+  resolveSystemGateGitExecutable,
+  runGitCommand,
+  runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
+  runSupervisedSystemGateOutcome,
   startLoopEngineering,
+  supervisorRevisionFailures,
+  syncMergedPullRequestSourceBeforeVerification,
+  writeSupervisedSystemGateArtifact,
 } from "../../src/core/loop/service.js";
-import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
-import { buildRepositoryPullRequestReviewWorkOrder } from "../../src/core/loop/work-order.js";
+import { readActiveLoopSupervisorResources } from "../../src/core/loop/supervisor-active-resources.js";
+import {
+  readLoopSupervisorWorkerLeaseState,
+  reserveLoopSupervisorSessions,
+  writeLoopSupervisorWorkerLeaseState,
+} from "../../src/core/loop/supervisor-pool.js";
+import {
+  listUnfinishedLoopSupervisorWorkOrders,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
+import {
+  buildRepositoryPullRequestReviewWorkOrder,
+  type LoopWorkOrder,
+} from "../../src/core/loop/work-order.js";
 import { NotificationGateway } from "../../src/core/notifications/gateway.js";
 import { sessionNameFromPath } from "../../src/core/projects/sessionPathMap.js";
+import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
 import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
+
+const runLoopServiceTickAsync = async (
+  input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
+) => {
+  const configText = readFileSync(input.configFile, "utf8");
+  if (!/^scheduler:/m.test(configText)) {
+    writeFileSync(input.configFile, `scheduler:\n  jitter:\n    enabled: false\n${configText}`);
+  }
+  return runLoopServiceTickAsyncProduction(input);
+};
 
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
@@ -29,12 +63,16 @@ function writeLoopConfig(input: {
   schedule?: string;
   projectPath: string;
   projectExtra?: string;
+  assessmentCommand?: string;
 }): string {
   const dir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-"));
   const file = join(dir, "loop.yml");
   writeFileSync(
     file,
     `
+scheduler:
+  jitter:
+    enabled: false
 projects:
   - id: hub
     name: Hub
@@ -47,7 +85,7 @@ ${input.projectExtra ?? ""}
     maxRounds: 1
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: ${JSON.stringify(input.assessmentCommand ?? "pnpm assess")}
     execution:
       agent: true
     allowedActions: [tests]
@@ -56,11 +94,31 @@ ${input.projectExtra ?? ""}
   return file;
 }
 
+function mockArchitectureAssessment(invocation: LoopRunCommandInvocation) {
+  if (invocation.kind !== "assessment") return undefined;
+  return {
+    status: 0,
+    stdout: JSON.stringify({ score: 50, findings: [], suggestedBotImprovements: [] }),
+    stderr: "",
+  };
+}
+
+function discoverGitExecutable(): string {
+  const result = spawnSync("/bin/sh", ["-lc", "command -v git"], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  const git = result.stdout.trim();
+  expect(git).not.toBe("");
+  return git;
+}
+
 function writeRepositoryPrReviewConfig(input: { repoOne: string; repoTwo: string }): string {
   const file = join(input.repoOne, "loop.yml");
   writeFileSync(
     file,
     `
+scheduler:
+  jitter:
+    enabled: false
 projects:
   - id: placeholder
     name: Placeholder
@@ -112,7 +170,3121 @@ function finalMarkerFromPrompt(prompt: string): string {
   return marker;
 }
 
+function resourceClosedState() {
+  return {
+    circuit: {
+      schemaVersion: 1 as const,
+      pressure: "critical" as const,
+      incidentId: "incident-resource-closed",
+      admission: "background-closed" as const,
+      reason: "critical host pressure",
+      changedAt: 1000,
+      lastSampleAt: 1000,
+      owner: "resource-guardian" as const,
+    },
+    view: {
+      enabled: true,
+      mode: "protect" as const,
+      profile: "balanced" as const,
+      pressure: "critical" as const,
+      circuit: "background-closed" as const,
+      incidentId: "incident-resource-closed",
+      reason: "critical host pressure",
+      attribution: "unknown" as const,
+      latestSample: null,
+      stableSince: null,
+      sampling: {
+        degraded: false,
+        consecutiveFailures: 0,
+        lastFailureAt: null,
+        lastError: null,
+        notifiedPhase: null,
+        overlapSkippedTicks: 0,
+      },
+    },
+  };
+}
+
 describe("runLoopServiceTickAsync supervised routing", () => {
+  it("syncs an already-merged WorkOrder PR before running independent verification", () => {
+    const commands: string[] = [];
+    const gitCalls: string[] = [];
+    const events: string[] = [];
+    const workOrder = {
+      id: "run-merged",
+      scheduledAt: 1_000,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: "/repo/hub-isolated",
+      agent: "codex",
+      goal: "Repair the automation gap.",
+      maxRounds: 1,
+      targetScore: 100,
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "pnpm assess" },
+      eval: { command: "pnpm assess", minScore: 100 },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/hub/active-delegate/run-merged",
+      },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash",
+        githubAccount: "example-owner",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/hub-isolated",
+        sourceWorktree: "/repo/hub",
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:run-merged]",
+      finalSummaryPath: join(
+        mkdtempSync(join(tmpdir(), "tcb-loop-merged-adoption-")),
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: workOrder.projectPath,
+        commit: workOrder.commitPolicy,
+        pullRequest: workOrder.pullRequestPolicy,
+      },
+      workOrder,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired the source adoption gap"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        commands.push(`${invocation.kind}:${invocation.command}`);
+        events.push(`command:${invocation.kind}:${invocation.command}`);
+        if (invocation.kind === "eval") {
+          return { status: 0, stdout: '{"passed":true,"score":100}', stderr: "" };
+        }
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "MERGED",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+            body: "## Summary\n- Repair the automation gap.",
+            files: [{ path: "src/index.ts" }],
+            commits: [{ oid: "abc123" }],
+            mergeCommit: { oid: "def456" },
+          }),
+          stderr: "",
+        };
+      },
+      runGit: (invocation) => {
+        gitCalls.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        events.push(`git:${invocation.cwd}:${invocation.args.join(" ")}`);
+        if (invocation.cwd === "/repo/hub" && invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub" &&
+          invocation.args.join(" ") === "branch --show-current"
+        ) {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "show --format= --name-only abc123"
+        ) {
+          return { status: 0, stdout: "src/index.ts\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "rev-parse --show-toplevel"
+        ) {
+          return { status: 0, stdout: "/repo/hub-isolated\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "rev-parse HEAD"
+        ) {
+          return { status: 0, stdout: "abc123\n", stderr: "" };
+        }
+        if (
+          invocation.cwd === "/repo/hub-isolated" &&
+          invocation.args.join(" ") === "branch --show-current"
+        ) {
+          return { status: 0, stdout: `${workOrder.commitPolicy.branch}\n`, stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain(
+      "already-merged pull request source branch synced before independent verification",
+    );
+    expect(commands).toContain("eval:pnpm assess");
+    expect(gitCalls.slice(3, 9)).toEqual([
+      "/repo/hub-isolated: show --format= --name-only abc123",
+      "/repo/hub: status --porcelain",
+      "/repo/hub: branch --show-current",
+      "/repo/hub: fetch origin dev",
+      "/repo/hub: switch dev",
+      "/repo/hub: merge --ff-only FETCH_HEAD",
+    ]);
+    expect(events.indexOf("git:/repo/hub-isolated:rev-parse --show-toplevel")).toBeLessThan(
+      events.indexOf("git:/repo/hub:merge --ff-only FETCH_HEAD"),
+    );
+    expect(events.indexOf("git:/repo/hub:merge --ff-only FETCH_HEAD")).toBeLessThan(
+      events.indexOf("command:eval:pnpm assess"),
+    );
+  });
+
+  it("leaves durable evidence instead of syncing an already-merged PR into a dirty source", () => {
+    const workOrder = {
+      id: "run-merged-dirty",
+      scheduledAt: 1_000,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: "/repo/hub-isolated",
+      agent: "codex",
+      goal: "Repair the automation gap.",
+      maxRounds: 1,
+      targetScore: 100,
+      runner: { kind: "agent-supervised", requireConfirmation: false },
+      allowedActions: [],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "pnpm assess" },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: {
+        enabled: true,
+        perRound: false,
+        branch: "loop/hub/active-delegate/run-merged-dirty",
+      },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: true,
+        mergeMethod: "squash",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: "/repo/hub-isolated",
+        sourceWorktree: "/repo/hub",
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        preparedBy: "system-git-worktree",
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:run-merged-dirty]",
+    } satisfies LoopWorkOrder;
+    const gitCalls: string[] = [];
+
+    const outcome = syncMergedPullRequestSourceBeforeVerification({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: workOrder.projectPath,
+        commit: workOrder.commitPolicy,
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder,
+      commits: ["abc123"],
+      runCommand: (invocation) =>
+        invocation.command.includes("viewerPermission")
+          ? { status: 0, stdout: '{"viewerPermission":"ADMIN"}', stderr: "" }
+          : {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "MERGED",
+                statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+                body: "Verified repair.",
+                files: [{ path: "src/index.ts" }],
+                commits: [{ oid: "abc123" }],
+              }),
+              stderr: "",
+            },
+      runGit: (invocation) => {
+        gitCalls.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        if (invocation.cwd === "/repo/hub-isolated") {
+          return { status: 0, stdout: "src/index.ts\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: " M local-notes.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(outcome).toEqual({
+      synced: false,
+      evidence: ["already-merged pull request source sync blocked: source worktree is dirty"],
+    });
+    expect(gitCalls).toEqual([
+      "/repo/hub-isolated: show --format= --name-only abc123",
+      "/repo/hub: status --porcelain",
+    ]);
+  });
+
+  it("backs off the independent repository review tick after global admission closure", () => {
+    const now = Date.parse("2026-08-27T04:50:00Z");
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: "incident-resource-closed",
+          reason: "critical resource pressure; background-closed admission protection is active",
+        },
+      }),
+    ).toBe(now + 300_000);
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: null,
+          reason: "occurrence-not-before",
+          retryAt: now + 60_000,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("backs off repository reviews to the next capacity probe rather than the quota reset", () => {
+    const now = Date.parse("2026-08-27T04:50:00Z");
+
+    expect(
+      repositoryReviewAdmissionBackoffUntil({
+        now,
+        tickMs: 300_000,
+        admission: {
+          allowed: false,
+          incidentId: null,
+          reason: "capacity-exhausted",
+          retryAt: now + 15 * 60 * 1000,
+        },
+      }),
+    ).toBe(now + 15 * 60 * 1000);
+  });
+
+  it("moves ready repository reviews to an admission retry time without consuming attempts", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-repository-admission-deferral-"),
+    );
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const queue = new RepositoryReviewQueue();
+    const first = queue.enqueue({
+      repositoryId: "repo-one-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const second = queue.enqueue({
+      repositoryId: "repo-two-prs",
+      scheduledAt: now + 1,
+      priority: 1000,
+      now,
+    });
+
+    expect(
+      deferReadyRepositoryReviewsForAdmission({
+        queue,
+        now,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        reason: "recent-owner-activity",
+      }),
+    ).toBe(2);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: first.id,
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: recent-owner-activity",
+      }),
+      expect.objectContaining({
+        id: second.id,
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: recent-owner-activity",
+      }),
+    ]);
+  });
+
+  it("coalesces repository retries that become due during a global admission closure", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-repository-admission-window-"),
+    );
+    const now = Date.parse("2026-07-16T18:18:00Z");
+    const retryAt = Date.parse("2026-07-17T01:30:00Z");
+    const queue = new RepositoryReviewQueue();
+    const duringClosure = queue.enqueue({
+      repositoryId: "repo-during-closure",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const afterClosure = queue.enqueue({
+      repositoryId: "repo-after-closure",
+      scheduledAt: now + 1,
+      priority: 1000,
+      now,
+    });
+    queue.deferReady(
+      duringClosure.id,
+      now,
+      now + 10 * 60_000,
+      "recovered supervisor work order result: invalid-output",
+    );
+    queue.deferReady(
+      afterClosure.id,
+      now,
+      retryAt + 10 * 60_000,
+      "recovered supervisor work order result: invalid-output",
+    );
+
+    expect(
+      deferReadyRepositoryReviewsForAdmission({
+        queue,
+        now,
+        nextAttemptAt: retryAt,
+        reason: "quiet-hours",
+      }),
+    ).toBe(1);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        id: duringClosure.id,
+        nextAttemptAt: retryAt,
+        lastError: "automation admission deferred: quiet-hours",
+      }),
+      expect.objectContaining({
+        id: afterClosure.id,
+        nextAttemptAt: retryAt + 10 * 60_000,
+        lastError: "recovered supervisor work order result: invalid-output",
+      }),
+    ]);
+  });
+
+  it("reconciles remote Loop branches at startup and on a bounded maintenance cadence", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-branch-maintenance-state-"));
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-branch-maintenance-project-"));
+      const file = writeLoopConfig({ projectPath: projectDir });
+      vi.setSystemTime(new Date("2026-07-16T10:10:00Z"));
+      const reconcile = vi.fn(async () => ({
+        scanned: 0,
+        eligible: 0,
+        deleted: 0,
+        skipped: 0,
+        failed: 0,
+      }));
+
+      const stop = await startLoopEngineering(
+        {
+          config: {
+            projectSessionPrefix: "tmux_proj_",
+            maxWaitDoneTotalMs: 60_000,
+            loopEngineering: {
+              configFile: file,
+              tickMs: 60_000,
+              supervisor: { enabled: false, dir: "", agent: "codex" },
+            },
+          },
+          bridge: { hasSession: vi.fn(async () => true) },
+          queue: {
+            enqueue: vi.fn(() => "queued" as const),
+            cancelQueued: vi.fn(() => false),
+            loadPersisted: vi.fn(() => []),
+            keepPersistedCarryover: vi.fn(),
+          },
+        } as never,
+        { configFile: file, tickMs: 60_000 },
+        { remoteBranchMaintenance: { reconcile } },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(29 * 60 * 1000);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("defers a due supervised target before any ledger, lease, WorkOrder, or scheduler reservation", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-state-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const schedulerStore = new LoopSchedulerStore();
+    const runSupervisorTask = vi.fn();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+
+    const result = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ checked: 1, due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(listUnfinishedLoopSupervisorWorkOrders()).toEqual([]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(schedulerStore.getLastFired()).toEqual({});
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+
+    const retry = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-resource-gated-retry-project-")),
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(retry).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(schedulerStore.getLastFired()).toEqual({});
+  });
+
+  it("closes the ledger repair status when a supervised target is accepted as blocked", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-blocked-ledger-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-blocked-ledger-project-"));
+    const runSupervisorTask = vi.fn(async (request) => {
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n${JSON.stringify({
+          status: "blocked",
+          projectId: "hub",
+          actionsTaken: ["confirmed deterministic gate remains blocked"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          reviewGate: {
+            preMutationReview: ["Confirmed the blocker from durable gate evidence."],
+            postMutationReview: ["No mutation was safe for this blocker."],
+            aiReview: "not-run",
+            deterministicGates: [
+              {
+                name: "assessment target",
+                result: "failed",
+                evidence: "score 93 against target 95",
+              },
+            ],
+            decision: "block",
+            notes: ["Owner-owned prerequisite remains unmet."],
+            evidence: [
+              {
+                questionInvestigated: "Can the blocked gate be repaired automatically?",
+                conclusion: "No. The prerequisite is owner-owned.",
+                evidence: ["system-gate.json"],
+                uncertainty: "Low.",
+                recommendedNextStep: "Wait for owner prerequisite.",
+              },
+            ],
+          },
+          commits: [],
+          followUps: ["Wait for owner prerequisite."],
+        })}`,
+        stderr: "",
+      };
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: writeLoopConfig({
+        projectPath: projectDir,
+        runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      }),
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 1, failed: 1 });
+    expect(new DailyTaskLedger().listAll()).toContainEqual(
+      expect.objectContaining({
+        taskId: expect.stringMatching(/^loop:hub:\d+$/),
+        status: "failed",
+        repairStatus: "blocked",
+        summary: "confirmed deterministic gate remains blocked",
+      }),
+    );
+  });
+
+  it("reads active worker leases as supervisor capacity reservations", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-active-resources-"));
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "active-work",
+          projectId: "hub",
+          projectPath: "/repo/hub",
+          status: "active",
+          leasedAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const active = readActiveLoopSupervisorResources();
+
+    expect(active.supervisorSessions).toEqual(new Set(["tmux_proj_loop-supervisor"]));
+    expect(active.resourcePaths).toEqual(new Set(["/repo/hub"]));
+  });
+
+  it("settles planned occurrence windows for task keys disabled in the current config", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-disabled-occurrence-"));
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-disabled-workspace-"));
+    const backend = join(root, "backend");
+    const frontend = join(root, "frontend");
+    mkdirSync(backend);
+    mkdirSync(frontend);
+    const configFile = join(root, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+workspaces:
+  - id: geo
+    name: Geo
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: backend
+        name: Backend
+        path: ${backend}
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: false
+      schedule: "0 7 * * *"
+      goal: Keep the workspace architecture healthy.
+      maxRounds: 1
+      targetScore: 95
+      runner:
+        kind: agent-supervised
+        requireConfirmation: false
+`,
+    );
+    const store = new AutomationOccurrenceStore({ randomOffset: () => 0 });
+    const occurrence = store.plan({
+      key: "workspace:geo:architecture:workspace-architecture",
+      scheduledAt: 1_000,
+      windowMs: 0,
+      now: 1_000,
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: 2_000,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+    });
+
+    expect(result).toMatchObject({ due: 0, ran: 0, failed: 0 });
+    expect(new AutomationOccurrenceStore().get(occurrence.id)).toMatchObject({
+      status: "settled",
+      updatedAt: 2_000,
+    });
+  });
+
+  it("keeps a repository review pending when every configured supervisor has an active lease", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: "active-other-work",
+          projectId: "other",
+          projectPath: "/repo/other",
+          status: "active",
+          leasedAt: 1_000,
+          updatedAt: 1_000,
+        },
+      ],
+    });
+    let dispatched = false;
+
+    await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async () => {
+        dispatched = true;
+        return { status: 1, stdout: "", stderr: "must not dispatch" };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      repositoryReviewOnly: true,
+    });
+
+    expect(dispatched).toBe(false);
+    expect(new RepositoryReviewQueue().list()).toEqual([
+      expect.objectContaining({ repositoryId: "fluent-frame-all-prs", status: "pending" }),
+    ]);
+  });
+
+  it("holds the supervisor worker lease before dispatching a repository review", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+
+    let leaseWasHeld = false;
+    await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: async (request) => {
+        leaseWasHeld = readLoopSupervisorWorkerLeaseState().leases.some(
+          (lease) =>
+            lease.workerSession === "tmux_proj_loop-supervisor" &&
+            lease.workOrderId === request.workOrder.id &&
+            lease.status === "active",
+        );
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "fluent-frame-all-prs",
+            actionsTaken: ["reviewed pull requests"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+            pullRequestDecisions: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(leaseWasHeld).toBe(true);
+  });
+
+  it("keeps a ready repository review claimable when Resource Guardian closes admission", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-gated-"));
+    const stateDir = process.env.TCB_STATE_DIR;
+    const resourceStore = createResourceGuardianStore({ stateDir });
+    resourceStore.writeCurrent(resourceClosedState());
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-resource-project-"));
+    const configFile = join(projectDir, "loop.yml");
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: fluent-frame-all-prs
+      name: Fluent Frame PRs
+      path: ${projectDir}
+      repo: OctopusGarage/fluent-frame
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const queue = new RepositoryReviewQueue();
+    queue.enqueue({
+      repositoryId: "fluent-frame-all-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now,
+    });
+    const runSupervisorTask = vi.fn(async (request) => {
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n${JSON.stringify({
+          status: "completed",
+          projectId: "fluent-frame-all-prs",
+          actionsTaken: ["reviewed pull requests"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+          pullRequestDecisions: [],
+        })}`,
+        stderr: "",
+      };
+    });
+    const input = {
+      configFile,
+      now,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository review should not run system commands");
+      },
+      runGit: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      repositoryReviewOnly: true,
+    };
+
+    await runLoopServiceTickAsync(input);
+
+    expect(queue.list({ all: true })).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        attempt: 0,
+        nextAttemptAt: now + 15 * 60 * 1000,
+        lastError: "automation admission deferred: critical host pressure",
+      }),
+    ]);
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+
+    const closed = resourceClosedState();
+    resourceStore.writeCurrent({
+      circuit: { ...closed.circuit, admission: "open" },
+      view: { ...closed.view, circuit: "open" },
+    });
+    await runLoopServiceTickAsync({
+      ...input,
+      now: now + 15 * 60 * 1000,
+    });
+
+    expect(runSupervisorTask).toHaveBeenCalled();
+  });
+
+  it("does not reuse a supervisor reserved by a concurrent service tick", async () => {
+    const reservations = new Set(["tmux_proj_loop-supervisor-1"]);
+
+    expect(
+      reserveLoopSupervisorSessions(
+        ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+        new Set(),
+        reservations,
+      ),
+    ).toEqual(["tmux_proj_loop-supervisor-2"]);
+    expect(reservations).toEqual(
+      new Set(["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"]),
+    );
+  });
+
+  it("returns explicit system gate evidence for accepted report-only work", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("no mutating git or PR gate required");
+  });
+
+  it("publishes a missing supervised PR before applying the acceptance gate", () => {
+    const branch = "loop/hub/active-delegate/run-1";
+    const prCommands: string[] = [];
+    const gitCommands: Array<{ cwd: string; args: string[] }> = [];
+    let prLookups = 0;
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-worktree",
+        commit: { enabled: true, perRound: false, branch },
+        pullRequest: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-worktree",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, branch },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-worktree",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          sourceWorktree: "/tmp/hub-source",
+          cleanup: { success: "release-worker", failure: "retain-for-ttl" },
+          preparedBy: "system-git-worktree",
+        },
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "hub",
+          requirement: "Repair the confirmed runtime issue.",
+          requireReview: true,
+          requireTests: true,
+          requireCoverageReview: true,
+          allowAiEval: true,
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["fixed the runtime issue"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh pr create")) {
+          return { status: 0, stdout: "https://github.com/acme/hub/pull/1\n", stderr: "" };
+        }
+        if (
+          invocation.command === `gh pr list --state all --head '${branch}' --json number --limit 1`
+        ) {
+          return { status: 0, stdout: "[]", stderr: "" };
+        }
+        prLookups += 1;
+        if (prLookups === 1) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: `no pull requests found for branch "${branch}"`,
+          };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "OPEN",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "Automated supervised repair.",
+            files: [{ path: "src/runtime.ts" }],
+            commits: [{ oid: "abc123" }],
+          }),
+          stderr: "",
+        };
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation);
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === "/tmp/hub-source" ? "main\n" : `${branch}\n`,
+            stderr: "",
+          };
+        }
+        if (command === `push -u origin ${branch}`) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "1\n", stderr: "" };
+        }
+        if (command === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "src/runtime.ts\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("published missing supervised pull request");
+    expect(gitCommands).toContainEqual({
+      cwd: "/tmp/hub-worktree",
+      args: ["push", "-u", "origin", branch],
+    });
+    expect(prCommands).toEqual([
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+      `gh pr list --state all --head '${branch}' --json number --limit 1`,
+      expect.stringContaining(`gh pr create --base 'main' --head '${branch}'`),
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+    ]);
+  });
+
+  it("accepts no-delta recovery when supervisor summary retains old commit refs", () => {
+    const branch = "loop/hub/active-delegate/run-1";
+    const prCommands: string[] = [];
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-worktree",
+        commit: { enabled: true, perRound: false, branch },
+        pullRequest: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-worktree",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, branch },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-worktree",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          sourceWorktree: "/tmp/hub-source",
+          cleanup: { success: "release-worker", failure: "retain-for-ttl" },
+          preparedBy: "system-git-worktree",
+        },
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "hub",
+          requirement: "Repair the confirmed runtime issue.",
+          requireReview: true,
+          requireTests: true,
+          requireCoverageReview: true,
+          allowAiEval: true,
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["confirmed existing merged PR already fixed the issue"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123 fix: old merged repair"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified no current delta"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: ["successful no-delta recovery"],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        prCommands.push(invocation.command);
+        if (
+          invocation.command === `gh pr list --state all --head '${branch}' --json number --limit 1`
+        ) {
+          return { status: 0, stdout: "[]", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr create")) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "PR creation should not run for no-delta recovery",
+          };
+        }
+        return {
+          status: 1,
+          stdout: "",
+          stderr: `no pull requests found for branch "${branch}"`,
+        };
+      },
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === "/tmp/hub-source" ? "main\n" : `${branch}\n`,
+            stderr: "",
+          };
+        }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "0\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain(
+      `PR gate skipped because WorkOrder branch ${branch} has no commits over origin/main`,
+    );
+    expect(prCommands).toEqual([
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+      `gh pr list --state all --head '${branch}' --json number --limit 1`,
+    ]);
+  });
+
+  it("does not recreate a deleted remote branch when an all-state PR lookup finds the merged PR", () => {
+    const branch = "loop/hub/active-delegate/run-1";
+    const prCommands: string[] = [];
+    const gitCommands: Array<{ cwd: string; args: string[] }> = [];
+
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-worktree",
+        commit: { enabled: true, perRound: false, branch },
+        pullRequest: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-worktree",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, branch },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-worktree",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          sourceWorktree: "/tmp/hub-source",
+          cleanup: { success: "release-worker", failure: "retain-for-ttl" },
+          preparedBy: "system-git-worktree",
+        },
+        task: {
+          kind: "active-delegated-task",
+          sourceSession: "hub",
+          requirement: "Repair the confirmed runtime issue.",
+          requireReview: true,
+          requireTests: true,
+          requireCoverageReview: true,
+          allowAiEval: true,
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["fixed the runtime issue"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: ["abc123"],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed"],
+            postMutationReview: ["verified"],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) => {
+        prCommands.push(invocation.command);
+        if (
+          invocation.command ===
+          `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`
+        ) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: `no pull requests found for branch "${branch}"`,
+          };
+        }
+        if (
+          invocation.command === `gh pr list --state all --head '${branch}' --json number --limit 1`
+        ) {
+          return { status: 0, stdout: JSON.stringify([{ number: 167 }]), stderr: "" };
+        }
+        if (
+          invocation.command ===
+          "gh pr view '167' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit"
+        ) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/167",
+              state: "MERGED",
+              mergeable: "UNKNOWN",
+              statusCheckRollup: [],
+              body: "Automated supervised repair.",
+              files: [{ path: "src/runtime.ts" }],
+              commits: [{ oid: "abc123" }],
+              mergeCommit: { oid: "def456" },
+            }),
+            stderr: "",
+          };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation);
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === "/tmp/hub-source" ? "main\n" : `${branch}\n`,
+            stderr: "",
+          };
+        }
+        if (command === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "src/runtime.ts\n", stderr: "" };
+        }
+        if (command === `rev-list --count origin/main..${branch}`) {
+          return { status: 0, stdout: "1\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${command}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).not.toContain("published missing supervised pull request");
+    expect(gitCommands).not.toContainEqual({
+      cwd: "/tmp/hub-worktree",
+      args: ["push", "-u", "origin", branch],
+    });
+    expect(prCommands).toEqual([
+      `gh pr view '${branch}' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit`,
+      `gh pr list --state all --head '${branch}' --json number --limit 1`,
+      "gh pr view '167' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+    ]);
+  });
+
+  it("rejects completed automation governance results without a structured review gate", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        task: {
+          kind: "automation-governance-review",
+          targetScore: 90,
+          maxFindings: 5,
+          allowRepairPr: true,
+          requireAiEval: true,
+        },
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toContain(
+      "supervisor reviewGate is required for automation governance review",
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("rejects completed planned work orders without a plan review", () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        planning: {
+          required: true,
+          source: "task-family",
+          requireOwnerConfirmation: false,
+          rubric: ["plan before review"],
+          acceptanceCriteria: ["planReview must be present"],
+          stopConditions: ["missing evidence"],
+          nonGoals: ["unplanned acceptance"],
+        },
+        task: {
+          kind: "automation-governance-review",
+          targetScore: 90,
+          maxFindings: 5,
+          allowRepairPr: true,
+          requireAiEval: true,
+        },
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "passed",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toContain("planReview is required for planned work orders");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("rejects completed supervisor results when the review gate blocks", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["issue evidence was incomplete"],
+            postMutationReview: [],
+            aiReview: "failed",
+            deterministicGates: [],
+            decision: "block",
+            notes: ["do not accept without proof"],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toContain("supervisor reviewGate decision is block");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("rejects completed opportunity discovery when its report is missing or invalid", () => {
+    const reportPath = join(
+      mkdtempSync(join(tmpdir(), "tcb-invalid-opportunity-report-")),
+      "opportunities.json",
+    );
+    writeFileSync(reportPath, JSON.stringify({ projectId: "hub", generatedAt: Date.now() }));
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        task: {
+          kind: "opportunity-discovery",
+          maxRounds: 1,
+          maxSuggestions: 3,
+          minConfidence: "medium",
+          categories: [],
+          cooldownDays: 14,
+          requireEvidence: true,
+        },
+        agent: "codex",
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+        opportunityReportPath: reportPath,
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["wrote the opportunity report"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "not-applicable",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: () => ({
+        kind: "system",
+        command: "",
+        cwd: "/tmp/hub",
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
+
+    expect(outcome.failures).toContain("opportunity discovery report is missing or invalid");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("rejects completed supervisor results when eval outcome fails", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "architecture" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: [],
+            postMutationReview: [],
+            aiReview: "passed",
+            deterministicGates: [
+              {
+                name: "local verify",
+                result: "failed",
+                evidence: "lint failed",
+              },
+            ],
+            decision: "pass",
+            notes: [],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toContain("eval outcome is failed: deterministic-gate-failed");
+    expect(outcome.evidence).toContain("eval outcome=failed");
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("accepts completed supervisor results when a failed preflight was repaired before final verification", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired local dependencies"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["local Node tools were initially missing"],
+            postMutationReview: [
+              "pnpm install --frozen-lockfile restored local tooling and final checks passed",
+            ],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "preflight-before-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
+                result: "failed",
+                evidence: "node_modules and tool binaries were absent",
+              },
+              {
+                name: "environment-repair",
+                command: "pnpm install --frozen-lockfile",
+                result: "passed",
+                evidence: "installed dependencies without tracked changes",
+              },
+              {
+                name: "preflight-after-repair",
+                command: "test -d node_modules && test -x node_modules/.bin/tsc",
+                result: "passed",
+                evidence: "required tool binaries are executable",
+              },
+              {
+                name: "typecheck",
+                command: "pnpm lint:types",
+                result: "passed",
+                evidence: "tsc --noEmit exited 0",
+              },
+            ],
+            decision: "pass",
+            notes: ["The failed preflight was repaired before final verification."],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("eval outcome=passed");
+    expect(outcome.result.status).toBe("completed");
+  });
+
+  it("accepts completed supervisor results when initial preflight failure is followed by environment repair", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: false,
+          base: "main",
+          switchBack: "main",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        skills: [],
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: ["repaired local dependencies"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          reviewGate: {
+            preMutationReview: ["local tools were initially missing"],
+            postMutationReview: ["environment repair restored tooling and final checks passed"],
+            aiReview: "not-applicable",
+            deterministicGates: [
+              {
+                name: "initial-preflight",
+                command: "test -x .venv/bin/ruff && test -x .venv/bin/mypy",
+                result: "failed",
+                evidence: "All target executables were initially missing.",
+              },
+              {
+                name: "environment-repair",
+                command: "uv sync",
+                result: "passed",
+                evidence: "created .venv and installed required tool binaries",
+              },
+              {
+                name: "post-repair-preflight",
+                command: "test -x .venv/bin/ruff && test -x .venv/bin/mypy",
+                result: "passed",
+                evidence: "ruff and mypy executables are present",
+              },
+              {
+                name: "final-clean-worktree",
+                command: "git status --short",
+                result: "passed",
+                evidence: "status --short returned no output",
+              },
+            ],
+            decision: "pass",
+            notes: ["The failed initial preflight was repaired before final verification."],
+          },
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          kind: "system",
+          command: "",
+          cwd: "/tmp/hub",
+          status: 0,
+          stdout: "",
+          stderr: "",
+        },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.evidence).toContain("eval outcome=passed");
+    expect(outcome.result.status).toBe("completed");
+  });
+
+  it("rejects a dirty isolated worker that checked out the shared switch-back branch", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "M src/index.ts\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toContain(
+      "worktree is dirty after supervisor completion: M src/index.ts",
+    );
+    expect(outcome.failures).toContain(
+      'isolated worktree is on "dev", expected WorkOrder branch "loop/hub/run-1"',
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("does not reject isolated completion when concurrent user edits make the source worktree dirty", () => {
+    const invocations: Array<{ cwd: string; args: string[] }> = [];
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "alcove-all-prs",
+        name: "Alcove PRs",
+        path: "/tmp/alcove-isolated",
+        commit: { enabled: false, perRound: false },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "alcove-all-prs",
+        projectName: "Alcove PRs",
+        projectPath: "/tmp/alcove-isolated",
+        agent: "codex",
+        task: { kind: "repository-pull-request-review", repo: "OctopusGarage/alcove" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/alcove-isolated",
+          sourceWorktree: "/tmp/alcove-source",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+          preparedBy: "system-git-worktree",
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: false, perRound: false },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "alcove-all-prs",
+          actionsTaken: ["reviewed all open PRs"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+          reviewGate: {
+            preMutationReview: ["confirmed PR review scope"],
+            postMutationReview: ["verified merged PR state"],
+            aiReview: "not-run",
+            deterministicGates: [],
+            decision: "pass",
+            notes: [],
+          },
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        invocations.push(invocation);
+        if (invocation.cwd === "/tmp/alcove-isolated") {
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "fetch origin dev") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "switch --detach FETCH_HEAD") {
+            return { status: 0, stdout: "HEAD is now at abc123\n", stderr: "" };
+          }
+        }
+        if (invocation.cwd === "/tmp/alcove-source") {
+          if (invocation.args.join(" ") === "status --porcelain") {
+            return { status: 0, stdout: "M src/user-edit.ts\n", stderr: "" };
+          }
+          if (invocation.args.join(" ") === "branch --show-current") {
+            return { status: 0, stdout: "dev\n", stderr: "" };
+          }
+        }
+        throw new Error(
+          `unexpected git invocation: ${invocation.cwd} ${invocation.args.join(" ")}`,
+        );
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(invocations).toEqual([
+      { cwd: "/tmp/alcove-isolated", args: ["status", "--porcelain"] },
+      { cwd: "/tmp/alcove-source", args: ["branch", "--show-current"] },
+      { cwd: "/tmp/alcove-isolated", args: ["fetch", "origin", "dev"] },
+      { cwd: "/tmp/alcove-isolated", args: ["switch", "--detach", "FETCH_HEAD"] },
+    ]);
+    expect(outcome.evidence).toContain("isolated repository review synced to origin/dev");
+  });
+
+  it("does not request a supervisor revision for terminal pull request state", () => {
+    expect(supervisorRevisionFailures(["PR state is CLOSED"])).toEqual([]);
+    expect(supervisorRevisionFailures(["PR state is MERGED"])).toEqual([]);
+  });
+
+  it("does not request a supervisor revision for system-owned git gate failures", () => {
+    expect(
+      supervisorRevisionFailures(["git status failed: spawnSync /usr/bin/git ENOENT"]),
+    ).toEqual([]);
+    expect(
+      supervisorRevisionFailures([
+        "git fetch origin main failed: Connection closed by 198.18.0.28 port 443",
+      ]),
+    ).toEqual([]);
+    expect(
+      supervisorRevisionFailures(["isolated worktree branch check failed: spawnSync git ENOENT"]),
+    ).toEqual([]);
+  });
+
+  it("still requests a supervisor revision for agent-correctable summary failures", () => {
+    const failure = "supervisor summary commits did not include valid commit ids";
+
+    expect(supervisorRevisionFailures([failure])).toEqual([failure]);
+  });
+
+  it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {
+    const invocations: string[] = [];
+    let currentBranch = "dev";
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        invocations.push(`${invocation.cwd}: ${invocation.args.join(" ")}`);
+        if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+        }
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          if (invocation.cwd === "/tmp/hub") {
+            return { status: 0, stdout: "dev\n", stderr: "" };
+          }
+          return { status: 0, stdout: `${currentBranch}\n`, stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch loop/hub/run-1") {
+          currentBranch = "loop/hub/run-1";
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.result.status).toBe("completed");
+    expect(outcome.evidence).toContain(
+      "restored isolated worktree to WorkOrder branch loop/hub/run-1",
+    );
+    expect(invocations).toContain("/tmp/hub-isolated: switch loop/hub/run-1");
+  });
+
+  it("accepts clean isolated worker git checks when PATH is empty but git has an absolute fallback", async () => {
+    const git = discoverGitExecutable();
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-empty-path-"));
+    const branch = "loop/hub/run-1";
+    const init = spawnSync(git, ["init", "-b", branch], { cwd: dir, encoding: "utf8" });
+    expect(init.status).toBe(0);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const outcome = runSupervisedSystemGateOutcome({
+        project: {
+          id: "hub",
+          name: "Hub",
+          path: dir,
+          commit: { enabled: true, perRound: false, branch },
+          pullRequest: {
+            enabled: false,
+            base: "dev",
+            switchBack: "dev",
+            autoMerge: false,
+            mergeMethod: "squash",
+          },
+        },
+        workOrder: {
+          id: "run-1",
+          projectId: "hub",
+          projectName: "Hub",
+          projectPath: dir,
+          agent: "codex",
+          task: { kind: "active-delegated-task" },
+          executionIsolation: {
+            mode: "supervised-worker",
+            expectedWorktree: dir,
+            sourceWorktree: "/tmp/hub",
+            worktreeIsolation: "isolated",
+            contextReset: "compact",
+            cleanup: {
+              success: "release-worker",
+              failure: "retain-for-ttl",
+              retainFailureForHours: 72,
+            },
+          },
+          allowedActions: [],
+          blockedActions: [],
+          verificationCommands: [],
+          commitPolicy: { enabled: true, perRound: false, branch },
+          pullRequestPolicy: {
+            enabled: false,
+            base: "dev",
+            switchBack: "dev",
+            autoMerge: false,
+            mergeMethod: "squash",
+          },
+        } as never,
+        result: {
+          status: "completed",
+          output: "",
+          summary: {
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: [],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: [],
+              postMutationReview: [],
+              aiReview: "passed",
+              deterministicGates: [],
+              decision: "pass",
+              notes: [],
+            },
+            commits: [],
+            followUps: [],
+          },
+        },
+        runCommand: (invocation) =>
+          mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+        runGit: runGitCommand,
+      });
+
+      expect(outcome.failures).toEqual([]);
+      expect(outcome.result.status).toBe("completed");
+      expect(outcome.evidence).toContain("target worktree clean");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("resolves git from absolute fallback paths when PATH is empty", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: (candidate) => candidate === "/usr/local/bin/git",
+        spawn: () => ({ status: 1, stdout: "", stderr: "" }) as never,
+      },
+    );
+
+    expect(git).toBe("/usr/local/bin/git");
+  });
+
+  it("discovers git from service-safe default paths when the launch PATH is empty", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: (candidate) => candidate === "/run/current-system/sw/bin/git",
+        spawn: ((...args: unknown[]) => {
+          const options = args[2] as { env?: NodeJS.ProcessEnv } | undefined;
+          const path = options?.env?.PATH ?? "";
+          return {
+            status: path.split(":").includes("/run/current-system/sw/bin") ? 0 : 1,
+            stdout: path.split(":").includes("/run/current-system/sw/bin")
+              ? "/run/current-system/sw/bin/git\n"
+              : "",
+            stderr: "",
+          } as never;
+        }) as typeof spawnSync,
+      },
+    );
+
+    expect(git).toBe("/run/current-system/sw/bin/git");
+  });
+
+  it("falls back to git by name when no absolute executable exists", async () => {
+    const git = resolveSystemGateGitExecutable(
+      { PATH: "" },
+      {
+        exists: () => false,
+        spawn: () => ({ status: 1, stdout: "", stderr: "" }) as never,
+      },
+    );
+
+    expect(git).toBe("git");
+  });
+
+  it("reports branch-check failures before restoring an isolated worker branch", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 1, stdout: "", stderr: "fatal: branch unavailable" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toContain(
+      "isolated worktree branch check failed: fatal: branch unavailable",
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("does not restore an isolated worker branch when the final worktree status check fails", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 1, stdout: "", stderr: "fatal: status unavailable" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toContain("git status failed: fatal: status unavailable");
+    expect(outcome.failures).toContain(
+      'isolated worktree is on "dev", expected WorkOrder branch "loop/hub/run-1"',
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("reports restore failures when an isolated worker cannot switch to the WorkOrder branch", async () => {
+    const outcome = runSupervisedSystemGateOutcome({
+      project: {
+        id: "hub",
+        name: "Hub",
+        path: "/tmp/hub-isolated",
+        commit: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequest: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      },
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        projectName: "Hub",
+        projectPath: "/tmp/hub-isolated",
+        agent: "codex",
+        task: { kind: "active-delegated-task" },
+        executionIsolation: {
+          mode: "supervised-worker",
+          expectedWorktree: "/tmp/hub-isolated",
+          sourceWorktree: "/tmp/hub",
+          worktreeIsolation: "isolated",
+          contextReset: "compact",
+          cleanup: {
+            success: "release-worker",
+            failure: "retain-for-ttl",
+            retainFailureForHours: 72,
+          },
+        },
+        allowedActions: [],
+        blockedActions: [],
+        verificationCommands: [],
+        commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+        pullRequestPolicy: {
+          enabled: false,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: false,
+          mergeMethod: "squash",
+        },
+      } as never,
+      result: {
+        status: "completed",
+        output: "",
+        summary: {
+          status: "completed",
+          projectId: "hub",
+          actionsTaken: [],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        },
+      },
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch loop/hub/run-1") {
+          return { status: 1, stdout: "", stderr: "fatal: invalid reference" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+    });
+
+    expect(outcome.failures).toContain(
+      "isolated worktree branch restore failed: fatal: invalid reference",
+    );
+    expect(outcome.failures).toContain(
+      'isolated worktree is on "dev", expected WorkOrder branch "loop/hub/run-1"',
+    );
+    expect(outcome.result.status).toBe("supervisor-failed");
+  });
+
+  it("marks system gate artifacts unaccepted when the supervisor result is not completed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "dispatch-failed" as const,
+      reason: "worker was already leased",
+      output: "worker was already leased",
+      repairDisposition: "bot-repairable" as const,
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor result was dispatch-failed; system acceptance gate skipped"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "dispatch-failed",
+      accepted: false,
+      repairDisposition: "bot-repairable",
+      findings: [
+        {
+          code: "dispatch-failed",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: ["supervisor result was dispatch-failed; system acceptance gate skipped"],
+          display: "worker was already leased",
+        },
+      ],
+    });
+  });
+
+  it("accepts valid blocked supervisor summaries when system-gate checks find no failures", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "supervisor reported a concrete blocker",
+      summary: {
+        status: "blocked" as const,
+        projectId: "hub",
+        actionsTaken: ["confirmed worker prompt delivery failed after recovery"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        reviewGate: {
+          preMutationReview: [
+            "Confirmed the supervisor final summary is parseable and reports status=blocked.",
+          ],
+          postMutationReview: [
+            "No source mutation was made because worker prompt delivery remained blocked.",
+          ],
+          aiReview: "not-run" as const,
+          deterministicGates: [
+            {
+              name: "worker-prompt-delivery",
+              result: "failed" as const,
+              evidence: "Dedicated worker remained idle and could not consume prompts.",
+            },
+          ],
+          decision: "block" as const,
+          notes: ["This is an authoritative blocked outcome, not invalid output."],
+          evidence: [
+            {
+              questionInvestigated: "Did the supervisor provide a valid terminal summary?",
+              conclusion: "The final summary parsed and reported the concrete blocker.",
+              evidence: ["supervisor-final-summary.json"],
+              uncertainty: "None for output parsing.",
+              recommendedNextStep: "Repair worker prompt delivery before retrying.",
+            },
+          ],
+        },
+        commits: [],
+        followUps: ["Repair worker prompt delivery before retrying."],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-blocked",
+        projectId: "hub",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor reviewGate decision=block"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "blocked",
+      accepted: true,
+      evalReport: {
+        outcome: {
+          status: "failed",
+          finalVerification: "failed",
+          reviewDecision: "block",
+          reason: "deterministic-gate-failed",
+        },
+      },
+      failures: [],
+      findings: [],
+    });
+  });
+
+  it("persists a blocked summary's structured bot-repairable finding", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "the loaded runtime has not adopted the current source revision",
+      summary: {
+        status: "blocked" as const,
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        repairFinding: {
+          code: "stale-runtime-source-adoption" as const,
+          repairDisposition: "bot-repairable" as const,
+          retry: "automatic" as const,
+          evidence: ["loaded=old", "source=new"],
+        },
+        commits: [],
+        followUps: ["Adopt the current source revision, then retry."],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dir, "supervisor-summary.json") } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["supervisor reviewGate decision=block"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: true,
+      resultStatus: "blocked",
+      repairDisposition: "bot-repairable",
+      findings: [
+        {
+          code: "stale-runtime-source-adoption",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: ["loaded=old", "source=new"],
+        },
+      ],
+    });
+  });
+
+  it("preserves deterministic external blockers over a supervisor repair finding", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "blocked" as const,
+      output: "the loaded runtime has not adopted the current source revision",
+      summary: {
+        status: "blocked" as const,
+        projectId: "tmux-claude-bot",
+        actionsTaken: ["compared loaded and source revisions"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        repairFinding: {
+          code: "stale-runtime-source-adoption" as const,
+          repairDisposition: "bot-repairable" as const,
+          retry: "automatic" as const,
+          evidence: ["loaded=old", "source=new"],
+        },
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime-with-external-blocker",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dir, "supervisor-summary.json") } as never,
+      gate: {
+        result,
+        failures: ["source worktree is dirty after supervisor completion: modified.ts"],
+        evidence: ["git status --porcelain returned modified.ts"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-target-or-external-blocker",
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+          evidence: ["source worktree is dirty after supervisor completion: modified.ts"],
+        }),
+      ],
+    });
+
+    const dispositionDir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const externalResult = {
+      ...result,
+      repairDisposition: "target-or-external-blocker" as const,
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-stale-runtime-with-external-disposition",
+        projectId: "tmux-claude-bot",
+        task: { kind: "active-delegated-task" },
+      } as never,
+      report: { summaryPath: join(dispositionDir, "supervisor-summary.json") } as never,
+      gate: {
+        result: externalResult,
+        failures: [],
+        evidence: ["owner action is required"],
+      },
+      result: externalResult,
+      writtenAt: 124,
+    });
+
+    expect(
+      JSON.parse(readFileSync(join(dispositionDir, "system-gate.json"), "utf8")),
+    ).toMatchObject({
+      accepted: true,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+        }),
+      ],
+    });
+  });
+
+  it("classifies non-revisionable PR and GitHub system-gate failures as external blockers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "geo-backend",
+        actionsTaken: ["opened PR"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: ["abc123"],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-geo",
+        projectId: "geo-backend",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [
+          "GitHub account permission check timed out",
+          'CI check "build" is IN_PROGRESS after waiting for completion',
+          "PR lookup failed: GraphQL: could not resolve to a PullRequest",
+          "PR is missing supervisor commit abc123",
+        ],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "target-or-external-blocker",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-target-or-external-blocker",
+          repairDisposition: "target-or-external-blocker",
+          retry: "manual",
+          evidence: expect.arrayContaining([
+            "GitHub account permission check timed out",
+            'CI check "build" is IN_PROGRESS after waiting for completion',
+            "PR lookup failed: GraphQL: could not resolve to a PullRequest",
+            "PR is missing supervisor commit abc123",
+          ]),
+        }),
+      ],
+    });
+  });
+
+  it("classifies missing system git executable gate failures as bot repairable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "geo-backend",
+        actionsTaken: ["verified project checks before the gate"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-geo",
+        projectId: "geo-backend",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [
+          "git status failed: spawnSync /usr/bin/git ENOENT",
+          "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+        ],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      accepted: false,
+      repairDisposition: "bot-repairable",
+      findings: [
+        expect.objectContaining({
+          code: "system-gate-bot-repairable",
+          repairDisposition: "bot-repairable",
+          retry: "automatic",
+          evidence: expect.arrayContaining([
+            "git status failed: spawnSync /usr/bin/git ENOENT",
+            "isolated worktree branch check failed: spawnSync /usr/bin/git ENOENT",
+          ]),
+        }),
+      ],
+    });
+  });
+
+  it("leaves recoverable system-gate revision failures without terminal blocker disposition", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "supervisor-failed" as const,
+      output: "supervised system gate failed",
+      summary: {
+        status: "failed" as const,
+        projectId: "hub",
+        actionsTaken: ["left worktree dirty"],
+        delegatedTasks: [],
+        finalVerification: "failed" as const,
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-hub",
+        projectId: "hub",
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: ["worktree is dirty after supervisor completion: M src/index.ts"],
+        evidence: ["supervisor reviewGate decision=pass, aiReview=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    const artifact = JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"));
+    expect(artifact).toMatchObject({
+      accepted: false,
+      recoverableFailures: ["worktree is dirty after supervisor completion: M src/index.ts"],
+    });
+    expect(artifact).not.toHaveProperty("repairDisposition");
+    expect(artifact.findings).toEqual([]);
+  });
+
+  it("writes eval outcome into system gate artifacts when final summary exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-system-gate-artifact-"));
+    const result = {
+      status: "completed" as const,
+      output: "",
+      summary: {
+        status: "completed" as const,
+        projectId: "hub",
+        actionsTaken: [],
+        delegatedTasks: [],
+        finalVerification: "passed" as const,
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: [],
+          aiReview: "passed" as const,
+          deterministicGates: ["smoke passed"],
+          decision: "pass" as const,
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      },
+    };
+    writeSupervisedSystemGateArtifact({
+      workOrder: {
+        id: "run-1",
+        projectId: "hub",
+        task: { kind: "architecture" },
+      } as never,
+      report: {
+        summaryPath: join(dir, "supervisor-summary.json"),
+      } as never,
+      gate: {
+        result,
+        failures: [],
+        evidence: ["eval outcome=passed"],
+      },
+      result,
+      writtenAt: 123,
+    });
+
+    expect(JSON.parse(readFileSync(join(dir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "completed",
+      accepted: true,
+      evalReport: {
+        outcome: {
+          status: "passed",
+          finalVerification: "passed",
+          reviewDecision: "pass",
+        },
+        deterministicGates: [{ name: "smoke passed", result: "passed" }],
+      },
+    });
+  });
+
   it("dispatches opportunity discovery work orders and sends new suggestions", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-opportunity-project-"));
@@ -145,7 +3317,8 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       configFile,
       now: Date.parse("2026-07-16T09:20:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
       runSupervisorTask: async (request) => {
         if (request.workOrder.opportunityReportPath === undefined) {
           throw new Error("expected opportunity report path");
@@ -204,10 +3377,10 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(larkSessions).toEqual([sessionNameFromPath(projectDir, "tmux_proj_")]);
     expect(larkMessages.join("\n")).toContain("Opportunity suggestions: Hub");
     expect(larkMessages.join("\n")).toContain("Add guided setup verification");
-    expect(larkMessages.join("\n")).toContain("/opportunity delegate");
+    expect(larkMessages.join("\n")).toContain("Continue via supervisor");
   });
 
-  it("dispatches supervised test-coverage work orders with the coverage branch", async () => {
+  it("does not clean a planned worker session that was never opened", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-test-coverage-"));
     const configFile = writeLoopConfig({
@@ -231,6 +3404,7 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       ].join("\n"),
     });
     const dispatched: Array<{ projectId: string; branch: string | undefined; prompt: string }> = [];
+    const cleanupCompletedWorkerSession = vi.fn(async () => {});
 
     const result = await runLoopServiceTickAsync({
       configFile,
@@ -240,15 +3414,36 @@ describe("runLoopServiceTickAsync supervised routing", () => {
         throw new Error("no PR lookup is needed when no commits are reported");
       },
       runGit: (invocation) => {
-        if (invocation.args.join(" ") === "status --porcelain") {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
         }
-        if (invocation.args.join(" ") === "branch --show-current") {
+        if (command === "branch --show-current") {
           return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
       },
       runSupervisorTask: async (request) => {
+        writeLoopSupervisorWorkerLeaseState({
+          leases: [
+            {
+              workerSession: request.session,
+              workOrderId: request.workOrder.id,
+              projectId: request.workOrder.projectId,
+              projectPath: request.workOrder.projectPath,
+              status: "active",
+              leasedAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+        });
         dispatched.push({
           projectId: request.workOrder.projectId,
           branch: request.workOrder.commitPolicy.branch,
@@ -271,6 +3466,9 @@ describe("runLoopServiceTickAsync supervised routing", () => {
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
       resetSupervisorBeforeWorkOrder: "compact",
+      projectSessionPrefix: "tmux_proj_",
+      cleanupCompletedWorkerSession,
+      workerSessionExists: async () => false,
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
@@ -284,6 +3482,73 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     expect(dispatched[0]?.prompt).toContain(
       "compact --yes before each delegated test-coverage round",
     );
+    expect(cleanupCompletedWorkerSession).not.toHaveBeenCalled();
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+  });
+
+  it("cleans supervised worker sessions when terminal work orders fail", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-test-coverage-"));
+    const configFile = writeLoopConfig({
+      projectPath: projectDir,
+      schedule: "0 0 * * *",
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    testCoverage:",
+        "      enabled: true",
+        '      schedule: "20 14 * * *"',
+        "      targetCoverage: 80",
+      ].join("\n"),
+    });
+    const cleanupCompletedWorkerSession = vi.fn(async () => {});
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T14:25:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (command === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        writeLoopSupervisorWorkerLeaseState({
+          leases: [
+            {
+              workerSession: request.session,
+              workOrderId: request.workOrder.id,
+              projectId: request.workOrder.projectId,
+              projectPath: request.workOrder.projectPath,
+              status: "active",
+              leasedAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+        });
+        return { status: 1, stdout: "", stderr: "worker failed" };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
+      projectSessionPrefix: "tmux_proj_",
+      cleanupCompletedWorkerSession,
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(cleanupCompletedWorkerSession).toHaveBeenCalledWith(
+      "tmux_proj_loop-worker-hub-1784211600000-hub-test-coverage",
+    );
   });
 
   it("dispatches one workspace architecture work order and gates every repository", async () => {
@@ -291,6 +3556,25 @@ describe("runLoopServiceTickAsync supervised routing", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-"));
     const backend = join(root, "geo-backend");
     const frontend = join(root, "geo-frontend");
+    mkdirSync(backend, { recursive: true });
+    mkdirSync(frontend, { recursive: true });
+    mkdirSync(join(backend, ".git"));
+    mkdirSync(join(frontend, ".git"));
+    const expectedRunId = "1784196600000-geo-workspace";
+    const backendWorktree = join(
+      process.env.TCB_STATE_DIR,
+      "loop-worktrees",
+      "geo",
+      expectedRunId,
+      "geo-backend",
+    );
+    const frontendWorktree = join(
+      process.env.TCB_STATE_DIR,
+      "loop-worktrees",
+      "geo",
+      expectedRunId,
+      "geo-frontend",
+    );
     const configFile = join(root, "loop.yml");
     writeFileSync(
       configFile,
@@ -350,19 +3634,64 @@ workspaces:
       },
       runGit: (invocation) => {
         gitCalls.push(invocation);
+        const command = invocation.args.join(" ");
+        if (invocation.cwd === backend && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${backend}\n`, stderr: "" };
+        }
+        if (invocation.cwd === frontend && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${frontend}\n`, stderr: "" };
+        }
+        if (invocation.cwd === backendWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (invocation.cwd === frontendWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (
+          invocation.cwd === backend &&
+          command === `worktree add --detach ${backendWorktree} origin/main`
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === frontend &&
+          command === `worktree add --detach ${frontendWorktree} origin/main`
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
         }
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "main\n", stderr: "" };
         }
+        if (
+          command === "fetch origin main" ||
+          command === "switch main" ||
+          command === "pull --rebase origin main"
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
       },
       runSupervisorTask: async (request) => {
         dispatchedProjectIds.push(request.workOrder.projectId);
+        expect(request.workOrder.preDispatchAssessment).toMatchObject({
+          score: 50,
+          targetScore: 95,
+          decision: "run",
+        });
+        expect(request.workOrder.workspace?.repositories).toMatchObject([
+          { id: "geo-backend", path: backendWorktree, sourcePath: backend },
+          { id: "geo-frontend", path: frontendWorktree, sourcePath: frontend },
+        ]);
         expect(request.prompt).toContain("Workspace architecture task.");
-        expect(request.prompt).toContain("open geo-backend --agent codex");
-        expect(request.prompt).toContain("open geo-frontend --agent codex");
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-backend-");
+        expect(request.prompt).toContain(`'${backendWorktree}' --agent codex`);
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-geo-frontend-");
+        expect(request.prompt).toContain(`'${frontendWorktree}' --agent codex`);
+        expect(request.prompt).toContain(`Original workspace repository geo-backend: ${backend}`);
+        expect(request.prompt).toContain(`Original workspace repository geo-frontend: ${frontend}`);
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
           status: 0,
@@ -380,16 +3709,23 @@ workspaces:
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
       resetSupervisorBeforeWorkOrder: "compact",
+      projectSessionPrefix: "tmux_proj_",
     });
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
     expect(dispatchedProjectIds).toEqual(["geo"]);
-    expect(gitCalls).toEqual([
-      { cwd: backend, args: ["status", "--porcelain"] },
-      { cwd: backend, args: ["branch", "--show-current"] },
-      { cwd: frontend, args: ["status", "--porcelain"] },
-      { cwd: frontend, args: ["branch", "--show-current"] },
-    ]);
+    expect(gitCalls).toContainEqual({
+      cwd: backend,
+      args: ["worktree", "add", "--detach", backendWorktree, "origin/main"],
+    });
+    expect(gitCalls).toContainEqual({
+      cwd: frontend,
+      args: ["worktree", "add", "--detach", frontendWorktree, "origin/main"],
+    });
+    expect(gitCalls).toContainEqual({ cwd: backendWorktree, args: ["status", "--porcelain"] });
+    expect(gitCalls).toContainEqual({ cwd: frontendWorktree, args: ["status", "--porcelain"] });
+    expect(gitCalls).toContainEqual({ cwd: backend, args: ["branch", "--show-current"] });
+    expect(gitCalls).toContainEqual({ cwd: frontend, args: ["branch", "--show-current"] });
   });
 
   it("dispatches independent supervised targets across the supervisor pool with a clear reset", async () => {
@@ -474,12 +3810,13 @@ prReview:
             finalVerification: "passed",
             commits: ["No merge needed"],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
       },
       supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
-      resetSupervisorBeforeWorkOrder: "clear",
+      resetSupervisorBeforeWorkOrder: "compact",
     });
 
     expect(result).toMatchObject({ ran: 2, failed: 0 });
@@ -530,7 +3867,8 @@ projects:
       configFile,
       now: Date.parse("2026-07-16T10:15:00Z"),
       schedulerStore,
-      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
       runSupervisorTask: async (request) => {
         dispatchedKinds.push(request.workOrder.task?.kind ?? "architecture");
         const marker = finalMarkerFromPrompt(request.prompt);
@@ -571,6 +3909,8 @@ projects:
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-conflict-"));
     const backend = join(root, "geo-backend");
     const frontend = join(root, "geo-frontend");
+    mkdirSync(backend, { recursive: true });
+    mkdirSync(frontend, { recursive: true });
     const configFile = join(root, "loop.yml");
     const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
     writeFileSync(
@@ -623,8 +3963,12 @@ workspaces:
       configFile,
       now: Date.parse("2026-07-16T10:15:00Z"),
       schedulerStore,
-      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
       runGit: (invocation) => {
+        if (invocation.args.join(" ") === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+        }
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
         }
@@ -659,6 +4003,239 @@ workspaces:
       "workspace:geo:architecture": scheduledAt,
     });
     expect(schedulerStore.getLastFired()).not.toHaveProperty("geo-backend:bug-fix");
+  });
+
+  it("skips workspace Architecture before dispatch when the pre-score reaches the target", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-score-skip-state-"));
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-score-skip-"));
+    const backend = join(root, "backend");
+    const frontend = join(root, "frontend");
+    mkdirSync(backend, { recursive: true });
+    mkdirSync(frontend, { recursive: true });
+    const configFile = join(root, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: backend
+        name: Backend
+        path: ${backend}
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "*/5 * * * *"
+      goal: Keep the workspace healthy.
+      targetScore: 50
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const runSupervisorTask = vi.fn();
+    const schedulerStore = new LoopSchedulerStore();
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: ({ cwd, args }) =>
+        args[0] === "rev-parse"
+          ? { status: 0, stdout: `${cwd}\n`, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
+    });
+
+    expect(result).toMatchObject({ ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listAll()).toContainEqual(
+      expect.objectContaining({
+        taskId: expect.stringContaining("workspace:geo:architecture"),
+        status: "skipped",
+        repairStatus: "not-needed",
+      }),
+    );
+  });
+
+  it("blocks workspace Architecture before dispatch when pre-scoring cannot validate a repository", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-workspace-score-block-state-"),
+    );
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-score-block-"));
+    const backend = join(root, "backend");
+    const missingFrontend = join(root, "missing-frontend");
+    mkdirSync(backend, { recursive: true });
+    const configFile = join(root, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: backend
+        name: Backend
+        path: ${backend}
+        role: backend
+      - id: frontend
+        name: Frontend
+        path: ${missingFrontend}
+        role: frontend
+    architecture:
+      enabled: true
+      schedule: "*/5 * * * *"
+      goal: Keep the workspace healthy.
+      targetScore: 95
+      runner:
+        kind: agent-supervised
+`,
+    );
+    const runSupervisorTask = vi.fn();
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: ({ cwd, args }) =>
+        args[0] === "rev-parse"
+          ? { status: 0, stdout: `${cwd}\n`, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1"],
+    });
+
+    expect(result).toMatchObject({ ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listAll()).toContainEqual(
+      expect.objectContaining({
+        taskId: expect.stringContaining("workspace:geo:architecture"),
+        status: "failed",
+        repairStatus: "blocked",
+      }),
+    );
+  });
+
+  it("lets workspace harness-auto consume covered child-project subtasks in the same tick", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(
+      join(tmpdir(), "tcb-loop-workspace-harness-conflict-state-"),
+    );
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-workspace-harness-conflict-"));
+    const backend = join(root, "geo-backend");
+    const frontend = join(root, "geo-frontend");
+    const configFile = join(root, "loop.yml");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: geo-backend
+    name: Geo Backend
+    path: ${backend}
+    agent: codex
+    goal: Fix backend bugs.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    runner:
+      kind: agent-supervised
+    execution:
+      agent: true
+    allowedActions: [tests]
+    bugFix:
+      enabled: true
+      schedule: "10 10 * * *"
+workspaces:
+  - id: geo
+    name: Geo Workspace
+    root: ${root}
+    agent: codex
+    repositories:
+      - id: geo-backend
+        name: Geo Backend
+        path: ${backend}
+        role: backend
+      - id: geo-frontend
+        name: Geo Frontend
+        path: ${frontend}
+        role: frontend
+    architecture:
+      enabled: false
+      goal: Improve frontend/backend architecture together.
+    runner:
+      kind: agent-supervised
+    harnessAuto:
+      enabled: true
+      schedule: "10 10 * * *"
+      tasks:
+        - kind: bug-fix
+          enabled: true
+          weight: 1
+`,
+    );
+    const schedulerStore = new LoopSchedulerStore();
+    const dispatchedKinds: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      now: Date.parse("2026-07-16T10:15:00Z"),
+      schedulerStore,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        dispatchedKinds.push(request.workOrder.task?.kind ?? "architecture");
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["workspace harness-auto checked child bug-fix scope"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(dispatchedKinds).toEqual(["harness-auto"]);
+    expect(schedulerStore.getLastFired()).toMatchObject({
+      "workspace:geo:harness-auto": scheduledAt,
+      "geo-backend:bug-fix": scheduledAt,
+    });
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toContainEqual(
+      expect.objectContaining({
+        taskId: `loop:geo-backend:bug-fix:${scheduledAt}`,
+        status: "skipped",
+        summary: "workspace:geo:harness-auto harness-auto covers bug-fix",
+      }),
+    );
   });
 
   it("does not dispatch new work to active supervisor sessions or active project paths", async () => {
@@ -712,6 +4289,7 @@ workspaces:
             finalVerification: "passed",
             commits: [],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
@@ -759,6 +4337,7 @@ workspaces:
             finalVerification: "passed",
             commits: [],
             followUps: [],
+            pullRequestDecisions: [],
           })}`,
           stderr: "",
         };
@@ -772,7 +4351,7 @@ workspaces:
     expect(sessions).toEqual(["tmux_proj_loop-supervisor-2", "tmux_proj_loop-supervisor-2"]);
   });
 
-  it("recovers interrupted repository PR review work orders from their final summary", () => {
+  it("recovers interrupted repository PR review work orders from their final summary", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
     const configText = `
@@ -832,6 +4411,17 @@ prReview:
         finalVerification: "not-run",
         commits: [],
         followUps: [],
+        pullRequestDecisions: [
+          {
+            number: 17,
+            repository: "OctopusGarage/mesh-talk",
+            outcome: "manual-review",
+            evidence: [
+              "synthetic project requires a repository ownership decision before recreation",
+            ],
+            nextStep: "owner must decide whether to recreate the repository",
+          },
+        ],
       })}\n`,
     );
     const ledgerTaskId = `loop:pr-review:mesh-talk-all-prs:${scheduledAt}`;
@@ -844,7 +4434,7 @@ prReview:
     });
     ledger.start(ledgerTaskId, scheduledAt + 1_000);
 
-    const result = reconcileLoopSupervisorWorkOrders({
+    const result = await reconcileLoopSupervisorWorkOrders({
       configFile,
       now: scheduledAt + 2_000,
       runCommand: () => {
@@ -860,7 +4450,566 @@ prReview:
       taskId: ledgerTaskId,
       status: "failed",
       error: "blocked",
+      repairStatus: "blocked",
     });
+  });
+
+  it("revises a recoverable final summary after restart before terminal settlement", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const configFile = writeLoopConfig({ projectPath: projectDir });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const runId = `${scheduledAt}-hub-active-delegate`;
+    const finalSummaryPath = join(
+      process.env.TCB_STATE_DIR,
+      "loop-runs",
+      "hub",
+      runId,
+      "supervisor-final-summary.json",
+    );
+    const workOrder = {
+      id: runId,
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: projectDir,
+      agent: "codex",
+      task: {
+        kind: "active-delegated-task",
+        sourceSession: "hub",
+        requirement: "Repair the confirmed runtime issue.",
+        requireReview: true,
+        requireTests: true,
+        requireCoverageReview: true,
+        allowAiEval: true,
+      },
+      goal: "Repair the confirmed runtime issue.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: true, dirtyWorktree: true, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+      finalSummaryPath,
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt + 1_000,
+    });
+    mkdirSync(dirname(finalSummaryPath), { recursive: true });
+    writeFileSync(
+      finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["fixed the runtime issue"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed",
+          deterministicGates: [
+            { name: "local verify", result: "failed", evidence: "stale first attempt" },
+          ],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+    const runSupervisorRevision = vi.fn(async () => ({
+      status: "completed" as const,
+      output: "revised final summary",
+      summary: {
+        status: "completed" as const,
+        projectId: "hub",
+        actionsTaken: ["corrected final acceptance evidence"],
+        delegatedTasks: [],
+        finalVerification: "passed" as const,
+        reviewGate: {
+          preMutationReview: ["confirmed"],
+          postMutationReview: ["verified"],
+          aiReview: "passed" as const,
+          deterministicGates: [{ name: "local verify rerun", result: "passed" as const }],
+          decision: "pass" as const,
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      },
+    }));
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 2_000,
+      runCommand: () => {
+        throw new Error("report-only recovery should not run shell gates");
+      },
+      runSupervisorRevision,
+    });
+
+    expect(runSupervisorRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workOrder,
+        supervisorSession: "tmux_proj_loop-supervisor",
+        attempt: 1,
+        failures: ["eval outcome is failed: deterministic-gate-failed"],
+      }),
+    );
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "work-order-state.json"), "utf8")),
+    ).toMatchObject({ status: "completed", resultStatus: "completed" });
+    expect(
+      JSON.parse(readFileSync(join(dirname(finalSummaryPath), "system-gate.json"), "utf8")),
+    ).toMatchObject({ accepted: true, resultStatus: "completed" });
+  });
+
+  it("reconciles active worker leases left behind by terminal completed work orders", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configText = `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+prReview:
+  repositories:
+    - id: mesh-talk-all-prs
+      name: Mesh Talk PRs
+      path: ${projectDir}
+      repo: OctopusGarage/mesh-talk
+      agent: codex
+      schedule: "*/5 * * * *"
+      base: dev
+      switchBack: dev
+      autoMerge: true
+      runner:
+        kind: agent-supervised
+`;
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(configFile, configText);
+    const config = parseLoopConfigYaml(configText);
+    const repository = config.prReview.repositories[0];
+    if (repository === undefined) throw new Error("expected repository review config");
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const workOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config,
+      repository,
+      scheduledAt,
+      runId: `${scheduledAt}-mesh-talk-all-prs-repo-pr-review`,
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "completed",
+      now: scheduledAt + 1_000,
+      resultStatus: "completed",
+    });
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          projectPath: workOrder.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt + 1_000,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 2_000,
+      runCommand: () => {
+        throw new Error("terminal lease reconciliation should not run shell gates");
+      },
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+  });
+
+  it("reconciles active worker leases left behind by abandoned invalid-output work orders", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repo-pr-review-"));
+    const configFile = join(projectDir, "loop.yml");
+    writeFileSync(
+      configFile,
+      `
+projects:
+  - id: hub
+    name: Hub
+    path: ${projectDir}
+    agent: codex
+    goal: Keep the placeholder project valid.
+    maxRounds: 1
+    targetScore: 90
+    assessment:
+      command: "true"
+    execution:
+      agent: true
+    allowedActions: [tests]
+`,
+    );
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const workOrder = {
+      id: `${scheduledAt}-hub-active-delegate`,
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: projectDir,
+      agent: "codex",
+      goal: "Keep the placeholder project valid.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${scheduledAt}-hub-active-delegate]`,
+      finalSummaryPath: join(
+        process.env.TCB_STATE_DIR,
+        "loop-runs",
+        "hub",
+        `${scheduledAt}-hub-active-delegate`,
+        "supervisor-final-summary.json",
+      ),
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt,
+    });
+    writeFileSync(workOrder.finalSummaryPath, '{"status":"completed"}\n');
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-supervisor",
+          workOrderId: workOrder.id,
+          projectId: workOrder.projectId,
+          projectPath: workOrder.projectPath,
+          status: "active",
+          leasedAt: scheduledAt,
+          updatedAt: scheduledAt,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 10 * 60 * 1000,
+      runCommand: () => {
+        throw new Error("abandoned lease reconciliation should not run shell gates");
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 0, failed: 1 });
+    expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([
+      expect.objectContaining({
+        workOrderId: workOrder.id,
+        status: "retained",
+      }),
+    ]);
+  });
+
+  it("recovers isolated WorkOrders using the persisted worker path for branch gates", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const sourceDir = mkdtempSync(join(tmpdir(), "tcb-loop-source-project-"));
+    const workerDir = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+    mkdirSync(workerDir, { recursive: true });
+    const configFile = writeLoopConfig({
+      projectPath: sourceDir,
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/run-1",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const runDir = join(stateDir, "loop-runs", "hub", "1784196600000-hub");
+    const workOrder = {
+      id: "1784196600000-hub",
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: workerDir,
+      agent: "codex",
+      scheduledAt,
+      task: { kind: "architecture" },
+      goal: "Repair delegated work.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: true, perRound: false, branch: "loop/hub/run-1" },
+      pullRequestPolicy: {
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+        autoMerge: false,
+        mergeMethod: "squash",
+      },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: workerDir,
+        sourceWorktree: sourceDir,
+        worktreeIsolation: "isolated",
+        contextReset: "compact",
+        cleanup: {
+          success: "release-worker",
+          failure: "retain-for-ttl",
+          retainFailureForHours: 72,
+        },
+        preparedBy: "system-git-worktree",
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:1784196600000-hub]",
+      finalSummaryPath: join(runDir, "supervisor-final-summary.json"),
+    } satisfies LoopWorkOrder;
+    mkdirSync(dirname(workOrder.finalSummaryPath), { recursive: true });
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "in-flight",
+      now: scheduledAt,
+    });
+    writeFileSync(
+      workOrder.finalSummaryPath,
+      `${JSON.stringify({
+        status: "completed",
+        projectId: "hub",
+        actionsTaken: ["verified delegated repair"],
+        delegatedTasks: [],
+        finalVerification: "passed",
+        reviewGate: {
+          preMutationReview: [],
+          postMutationReview: ["isolated worker stayed on the WorkOrder branch"],
+          aiReview: "passed",
+          deterministicGates: [],
+          decision: "pass",
+          notes: [],
+        },
+        commits: [],
+        followUps: [],
+      })}\n`,
+    );
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: scheduledAt + 10 * 60 * 1000,
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        const args = invocation.args.join(" ");
+        if (args === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (args === "branch --show-current" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "loop/hub/run-1\n", stderr: "" };
+        }
+        if (args === "branch --show-current" && invocation.cwd === sourceDir) {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (args === "rev-parse --show-toplevel" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: `${workerDir}\n`, stderr: "" };
+        }
+        if (args === "rev-parse --show-toplevel" && invocation.cwd === sourceDir) {
+          return { status: 0, stdout: `${sourceDir}\n`, stderr: "" };
+        }
+        if (args === "rev-parse --verify HEAD" && invocation.cwd === workerDir) {
+          return { status: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+        }
+        if (args === `switch --detach ${"a".repeat(40)}` && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (args === "worktree list --porcelain" && invocation.cwd === sourceDir) {
+          return {
+            status: 0,
+            stdout: `worktree ${sourceDir}\nbranch refs/heads/dev\n`,
+            stderr: "",
+          };
+        }
+        if (
+          args === "show-ref --verify --hash refs/heads/loop/hub/run-1" &&
+          invocation.cwd === sourceDir
+        ) {
+          return { status: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+        }
+        if (
+          args === `update-ref -d refs/heads/loop/hub/run-1 ${"a".repeat(40)}` &&
+          invocation.cwd === sourceDir
+        ) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (args === `worktree remove --force ${workerDir}` && invocation.cwd === workerDir) {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git invocation: ${invocation.cwd} ${args}`);
+      },
+    });
+
+    expect(result).toEqual({ checked: 1, recovered: 1, failed: 0 });
+    expect(JSON.parse(readFileSync(join(runDir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "completed",
+      accepted: true,
+    });
+  });
+
+  it("removes expired retained isolated worktrees and releases their leases", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-expired-worktree-repo-"));
+    const configFile = writeLoopConfig({ projectPath: projectDir });
+    const worktree = join(stateDir, "loop-worktrees", "hub", "expired-run");
+    mkdirSync(worktree, { recursive: true });
+    const gitCalls: string[] = [];
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [
+        {
+          workerSession: "tmux_proj_loop-worker-hub-expired-run",
+          workOrderId: "expired-run",
+          projectId: "hub",
+          projectPath: worktree,
+          status: "retained",
+          leasedAt: 1_000,
+          updatedAt: 2_000,
+          retainUntil: 3_000,
+        },
+      ],
+    });
+
+    const result = await reconcileLoopSupervisorWorkOrders({
+      configFile,
+      now: 4_000,
+      runCommand: () => {
+        throw new Error("expired worktree cleanup must not run system gates");
+      },
+      runGit: (invocation) => {
+        gitCalls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+        if (invocation.args[0] === "rev-parse") {
+          return { status: 0, stdout: `${worktree}\n`, stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result).toEqual({ checked: 0, recovered: 0, failed: 0 });
+    expect(gitCalls).toEqual([
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:worktree remove --force ${worktree}`,
+    ]);
+    expect(readLoopSupervisorWorkerLeaseState()).toEqual({ leases: [] });
+  });
+
+  it("cleans terminal isolated worktrees even when the lease record is already gone", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-terminal-worktree-repo-"));
+    const configFile = writeLoopConfig({ projectPath: projectDir });
+    const worktree = join(stateDir, "loop-worktrees", "hub", "orphaned-run");
+    mkdirSync(worktree, { recursive: true });
+    const scheduledAt = 1_000;
+    const workOrder = {
+      id: "orphaned-run",
+      scheduledAt,
+      projectId: "hub",
+      projectName: "Hub",
+      projectPath: worktree,
+      agent: "codex",
+      goal: "Clean up the isolated run.",
+      maxRounds: 1,
+      targetScore: 90,
+      runner: { kind: "agent-supervised", timeoutMs: 1_000, requireConfirmation: false },
+      allowedActions: ["tests"],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [], repair: { agent: false } },
+      assessment: { command: "true" },
+      execution: { agent: true },
+      recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+      commitPolicy: { enabled: false, perRound: false },
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: worktree,
+        sourceWorktree: projectDir,
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: { success: "release-worker", failure: "retain-for-ttl", retainFailureForHours: 1 },
+      },
+      requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:orphaned-run]",
+    } satisfies LoopWorkOrder;
+    writeLoopSupervisorWorkOrderState({
+      workOrder,
+      supervisorSession: "tmux_proj_loop-supervisor",
+      status: "failed",
+      now: scheduledAt,
+      resultStatus: "supervisor-failed",
+    });
+    const gitCalls: string[] = [];
+
+    const reconcile = () =>
+      reconcileLoopSupervisorWorkOrders({
+        configFile,
+        now: scheduledAt + 2 * 60 * 60 * 1000,
+        runCommand: () => {
+          throw new Error("terminal cleanup must not run system gates");
+        },
+        runGit: (invocation) => {
+          gitCalls.push(`${invocation.cwd}:${invocation.args.join(" ")}`);
+          if (invocation.args[0] === "rev-parse") {
+            return { status: 0, stdout: `${invocation.cwd}\n`, stderr: "" };
+          }
+          if (invocation.args.join(" ") === "worktree list --porcelain") {
+            return { status: 0, stdout: `worktree ${projectDir}\n`, stderr: "" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+    await reconcile();
+    rmSync(worktree, { recursive: true, force: true });
+    await reconcile();
+    await reconcile();
+
+    expect(gitCalls).toEqual([
+      `${worktree}:rev-parse --show-toplevel`,
+      `${worktree}:worktree remove --force ${worktree}`,
+    ]);
   });
 
   it("does not require a loop commit branch for completed repository PR review merges", async () => {
@@ -915,7 +5064,13 @@ prReview:
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "dev\n", stderr: "" };
         }
-        if (invocation.args.join(" ") === "pull --ff-only origin dev") {
+        if (invocation.args.join(" ") === "fetch origin dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "merge --ff-only FETCH_HEAD") {
           return { status: 0, stdout: "Already up to date.\n", stderr: "" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
@@ -932,6 +5087,23 @@ prReview:
             finalVerification: "passed",
             commits: ["PR #24 merged into dev at abc123"],
             followUps: ["PR #23 remains conflicted"],
+            pullRequestDecisions: [
+              {
+                number: 24,
+                repository: "OctopusGarage/net-auto-switch",
+                outcome: "merged",
+                evidence: ["required checks passed"],
+                nextStep: "none",
+              },
+              {
+                number: 23,
+                repository: "OctopusGarage/net-auto-switch",
+                outcome: "closed",
+                reason: "obsolete",
+                evidence: ["conflict is superseded by the merged replacement"],
+                nextStep: "none",
+              },
+            ],
           })}`,
           stderr: "",
         };
@@ -943,7 +5115,9 @@ prReview:
     expect(gitInvocations).toEqual([
       "status --porcelain",
       "branch --show-current",
-      "pull --ff-only origin dev",
+      "fetch origin dev",
+      "switch dev",
+      "merge --ff-only FETCH_HEAD",
     ]);
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
       taskId: `loop:pr-review:net-auto-switch-all-prs:${Date.parse("2026-07-16T10:10:00Z")}`,
@@ -1001,7 +5175,13 @@ prReview:
         if (invocation.args.join(" ") === "branch --show-current") {
           return { status: 0, stdout: "dev\n", stderr: "" };
         }
-        if (invocation.args.join(" ") === "pull --ff-only origin dev") {
+        if (invocation.args.join(" ") === "fetch origin dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch dev") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "merge --ff-only FETCH_HEAD") {
           return { status: 1, stdout: "", stderr: "fatal: Not possible to fast-forward" };
         }
         throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
@@ -1018,6 +5198,15 @@ prReview:
             finalVerification: "passed",
             commits: ["PR #17 merged into dev"],
             followUps: [],
+            pullRequestDecisions: [
+              {
+                number: 17,
+                repository: "OctopusGarage/mesh-talk",
+                outcome: "merged",
+                evidence: ["required checks passed"],
+                nextStep: "none",
+              },
+            ],
           })}`,
           stderr: "",
         };
@@ -1030,7 +5219,7 @@ prReview:
       supervisorSummaryPath(process.env.TCB_STATE_DIR, "mesh-talk-all-prs"),
       "utf8",
     );
-    expect(summary).toContain("git pull --ff-only origin dev failed");
+    expect(summary).toContain("git merge --ff-only FETCH_HEAD failed");
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
       taskId: `loop:pr-review:mesh-talk-all-prs:${Date.parse("2026-07-16T10:10:00Z")}`,
       status: "failed",
@@ -1050,7 +5239,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => {
@@ -1069,43 +5260,65 @@ prReview:
     expect(ensureSupervisorSession).toHaveBeenCalledWith("tmux_proj_loop-supervisor");
   });
 
-  it("re-ensures and retries once when supervisor dispatch fails readiness", async () => {
-    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
-    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
-    const file = writeLoopConfig({
-      projectPath: projectDir,
-      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
-    });
-    const ensureSupervisorSession = vi.fn(async () => true);
-    const dispatches: string[] = [];
+  it.each([
+    { status: 1, output: "Codex did not become ready in time", recovery: "ensure" },
+    {
+      status: 0,
+      output:
+        "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      recovery: "restart",
+    },
+    {
+      status: 0,
+      output:
+        "unexpected status 401 Unauthorized: Incorrect API key provided: <redacted>, url: https://chatgpt.com/backend-api/codex/responses",
+      recovery: "restart",
+    },
+  ])(
+    "re-ensures and retries once when supervisor dispatch fails startup: $output",
+    async ({ status, output, recovery }) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+      const file = writeLoopConfig({
+        projectPath: projectDir,
+        runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      });
+      const ensureSupervisorSession = vi.fn(async () => true);
+      const restartSupervisorSession = vi.fn(async () => true);
+      const dispatches: string[] = [];
 
-    const result = await runLoopServiceTickAsync({
-      configFile: file,
-      now: Date.parse("2026-07-16T10:10:00Z"),
-      schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
-        throw new Error("system runner should not run");
-      },
-      runSupervisorTask: async (request) => {
-        dispatches.push(request.session);
-        if (dispatches.length === 1) {
-          return { status: 1, stdout: "", stderr: "Codex did not become ready in time" };
-        }
-        const marker = finalMarkerFromPrompt(request.prompt);
-        return {
-          status: 0,
-          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["retried supervisor dispatch"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
-          stderr: "",
-        };
-      },
-      supervisorSessionName: "tmux_proj_loop-supervisor",
-      ensureSupervisorSession,
-    });
+      const result = await runLoopServiceTickAsync({
+        configFile: file,
+        now: Date.parse("2026-07-16T10:10:00Z"),
+        schedulerStore: new LoopSchedulerStore(),
+        runCommand: (invocation) => {
+          const assessment = mockArchitectureAssessment(invocation);
+          if (assessment !== undefined) return assessment;
+          throw new Error("system runner should not run");
+        },
+        runSupervisorTask: async (request) => {
+          dispatches.push(request.session);
+          if (dispatches.length === 1) {
+            return { status, stdout: output, stderr: "" };
+          }
+          const marker = finalMarkerFromPrompt(request.prompt);
+          return {
+            status: 0,
+            stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["retried supervisor dispatch"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
+            stderr: "",
+          };
+        },
+        supervisorSessionName: "tmux_proj_loop-supervisor",
+        ensureSupervisorSession,
+        restartSupervisorSession,
+      });
 
-    expect(result).toMatchObject({ ran: 1, failed: 0 });
-    expect(dispatches).toEqual(["tmux_proj_loop-supervisor", "tmux_proj_loop-supervisor"]);
-    expect(ensureSupervisorSession).toHaveBeenCalledTimes(2);
-  });
+      expect(result).toMatchObject({ ran: 1, failed: 0 });
+      expect(dispatches).toEqual(["tmux_proj_loop-supervisor", "tmux_proj_loop-supervisor"]);
+      expect(ensureSupervisorSession).toHaveBeenCalledTimes(recovery === "ensure" ? 2 : 1);
+      expect(restartSupervisorSession).toHaveBeenCalledTimes(recovery === "restart" ? 1 : 0);
+    },
+  );
 
   it("dispatches agent-supervised projects to the supervisor runner without running system commands", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
@@ -1120,7 +5333,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => {
@@ -1141,14 +5356,250 @@ prReview:
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]).toContain("Loop Supervisor");
     expect(dispatched[0]).toContain('"projectId": "hub"');
-    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
-      '"status": "completed"',
+    const summaryPath = supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub");
+    expect(readFileSync(summaryPath, "utf8")).toContain('"status": "completed"');
+    expect(
+      JSON.parse(readFileSync(join(dirname(summaryPath), "system-gate.json"), "utf8")),
+    ).toEqual(
+      expect.objectContaining({
+        workOrderId: `${Date.parse("2026-07-16T10:10:00Z")}-hub`,
+        projectId: "hub",
+        resultStatus: "completed",
+        accepted: true,
+        evidence: expect.arrayContaining(["no mutating git or PR gate required"]),
+        failures: [],
+      }),
     );
     expect(
       new DailyTaskLedger()
         .listForWindow(singaporeDayWindow("2026-07-16"))
         .map((record) => [record.taskId, record.status, record.source]),
     ).toEqual([[`loop:hub:${Date.parse("2026-07-16T10:10:00Z")}`, "success", "loop-engineering"]]);
+  });
+
+  it("skips supervised project Architecture when the pre-score reaches target", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const file = writeLoopConfig({
+      projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-project-")),
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+    });
+    const runSupervisorTask = vi.fn();
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? { status: 0, stdout: JSON.stringify({ score: 95 }), stderr: "" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({ status: "skipped", repairStatus: "not-needed" }),
+    ]);
+  });
+
+  it("skips project Security Maintenance when risk is below the action threshold", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      riskAssessment:",
+        "        command: security-assess",
+        "        actionThreshold: 70",
+        "        criticalThreshold: 90",
+      ].join("\n"),
+    });
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const schedulerStore = new LoopSchedulerStore();
+    schedulerStore.setLastFired("hub", now);
+    const runSupervisorTask = vi.fn();
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? { status: 0, stdout: JSON.stringify({ riskScore: 39 }), stderr: "" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({ status: "skipped", repairStatus: "not-needed" }),
+    ]);
+  });
+
+  it("dispatches project Security Maintenance only after an actionable risk score", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      riskAssessment:",
+        "        command: security-assess",
+        "        actionThreshold: 70",
+        "        criticalThreshold: 90",
+      ].join("\n"),
+    });
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const schedulerStore = new LoopSchedulerStore();
+    schedulerStore.setLastFired("hub", now);
+    const runSupervisorTask = vi.fn(async (request) => {
+      expect(request.workOrder.preDispatchAssessment).toMatchObject({
+        score: 72,
+        targetScore: 70,
+        decision: "run",
+      });
+      const marker = finalMarkerFromPrompt(request.prompt);
+      return {
+        status: 0,
+        stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["verified security risk"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
+        stderr: "",
+      };
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? { status: 0, stdout: JSON.stringify({ riskScore: 72 }), stderr: "" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 1, failed: 0 });
+    expect(runSupervisorTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks project Security Maintenance when risk assessment evidence is invalid", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      riskAssessment:",
+        "        command: security-assess",
+      ].join("\n"),
+    });
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const schedulerStore = new LoopSchedulerStore();
+    schedulerStore.setLastFired("hub", now);
+    const runSupervisorTask = vi.fn();
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? { status: 1, stdout: "", stderr: "scanner failed" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({ status: "failed", repairStatus: "blocked" }),
+    ]);
+  });
+
+  it("keeps transient dependency-audit unavailability pending for recovery", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+      projectExtra: [
+        "    securityMaintenance:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      riskAssessment:",
+        "        command: security-assess",
+      ].join("\n"),
+    });
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    const schedulerStore = new LoopSchedulerStore();
+    schedulerStore.setLastFired("hub", now);
+
+    const result = await runLoopServiceTickAsyncProduction({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? {
+              status: 2,
+              stdout: JSON.stringify({
+                failureKind: "dependency-audit-unavailable",
+                retryable: true,
+                findings: [],
+              }),
+              stderr: "registry unavailable",
+            }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask: vi.fn(),
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        failureKind: "dependency-audit-unavailable",
+        repairStatus: "pending",
+      }),
+    ]);
+  });
+
+  it("blocks supervised project Architecture when the pre-score is invalid", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const file = writeLoopConfig({
+      projectPath: mkdtempSync(join(tmpdir(), "tcb-loop-project-")),
+      runner: ["    runner:", "      kind: agent-supervised"].join("\n"),
+    });
+    const runSupervisorTask = vi.fn();
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        invocation.kind === "assessment"
+          ? { status: 1, stdout: "", stderr: "assessment failed" }
+          : { status: 0, stdout: "", stderr: "" },
+      runSupervisorTask,
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+    expect(result).toMatchObject({ due: 1, ran: 0, failed: 0 });
+    expect(runSupervisorTask).not.toHaveBeenCalled();
+    expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))).toEqual([
+      expect.objectContaining({ status: "failed", repairStatus: "blocked" }),
+    ]);
   });
 
   it("dispatches scheduled bug-fix jobs as bug-fix work orders", async () => {
@@ -1173,7 +5624,9 @@ prReview:
       configFile: file,
       now,
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => {
@@ -1271,6 +5724,91 @@ prReview:
     expect(schedulerStore.getLastFired()).toHaveProperty("hub:pull-request-review", now);
   });
 
+  it("syncs the switch-back branch after project pull-request-review auto-merge", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: main",
+        "      switchBack: main",
+        "      autoMerge: true",
+        "    pullRequestReview:",
+        "      enabled: true",
+        '      schedule: "*/5 * * * *"',
+        "      consecutivePasses: 2",
+        "      autoMerge: true",
+      ].join("\n"),
+    });
+    const schedulerStore = new LoopSchedulerStore();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    schedulerStore.setLastFired("hub", now);
+    const gitInvocations: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now,
+      schedulerStore,
+      runCommand: (invocation) => {
+        throw new Error(
+          `project PR review should not look up a loop-created PR: ${invocation.command}`,
+        );
+      },
+      runGit: (invocation) => {
+        gitInvocations.push(invocation.args.join(" "));
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "fetch origin main") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "switch main") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "merge --ff-only FETCH_HEAD") {
+          return { status: 0, stdout: "Already up to date.\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        expect(request.workOrder.task).toMatchObject({ kind: "pull-request-review" });
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: ["reviewed and merged eligible loop-created PRs"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: ["abc1234 merge reviewed PR"],
+            followUps: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ checked: 2, due: 1, ran: 1, failed: 0 });
+    expect(gitInvocations).toEqual([
+      "status --porcelain",
+      "branch --show-current",
+      "fetch origin main",
+      "switch main",
+      "merge --ff-only FETCH_HEAD",
+    ]);
+  });
+
   it("accepts a supervisor final summary written to the work order file", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
@@ -1283,7 +5821,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => {
@@ -1331,7 +5871,9 @@ prReview:
       configFile: file,
       now,
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => ({
@@ -1346,7 +5888,7 @@ prReview:
     expect(schedulerStore.getLastFired()).not.toHaveProperty("hub");
     const runDir = join(process.env.TCB_STATE_DIR, "loop-runs", "hub", "1784196600000-hub");
     expect(readFileSync(join(runDir, "work-order-state.json"), "utf8")).toContain(
-      '"status": "in-flight"',
+      '"status": "failed"',
     );
   });
 
@@ -1368,7 +5910,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("PR commands should not run without pullRequest.enabled");
       },
       runGit: (invocation) => {
@@ -1431,7 +5975,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("PR commands should not run without pullRequest.enabled");
       },
       runGit: (invocation) => {
@@ -1507,12 +6053,25 @@ prReview:
       projectPath: projectDir,
       runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
     });
+    const scheduledAt = Date.parse("2026-07-16T10:10:00Z");
+    const staleRunDir = join(process.env.TCB_STATE_DIR, "loop-runs", "hub", `${scheduledAt}-hub`);
+    mkdirSync(staleRunDir, { recursive: true });
+    writeFileSync(
+      join(staleRunDir, "supervisor-final-summary.json"),
+      '{"status":"completed","projectId":"hub","actionsTaken":["stale"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}\n',
+    );
+    writeFileSync(
+      join(staleRunDir, "system-gate.json"),
+      '{"resultStatus":"completed","accepted":true}\n',
+    );
 
     const result = await runLoopServiceTickAsync({
       configFile: file,
-      now: Date.parse("2026-07-16T10:10:00Z"),
+      now: scheduledAt,
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async () => ({
@@ -1527,8 +6086,12 @@ prReview:
     expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
       '"status": "invalid-output"',
     );
+    expect(JSON.parse(readFileSync(join(staleRunDir, "system-gate.json"), "utf8"))).toMatchObject({
+      resultStatus: "invalid-output",
+      accepted: false,
+    });
     expect(new DailyTaskLedger().listForWindow(singaporeDayWindow("2026-07-16"))[0]).toMatchObject({
-      taskId: `loop:hub:${Date.parse("2026-07-16T10:10:00Z")}`,
+      taskId: `loop:hub:${scheduledAt}`,
       source: "loop-engineering",
       status: "failed",
       error: "invalid-output",
@@ -1553,7 +6116,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1563,7 +6128,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1593,7 +6160,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1603,7 +6172,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1633,7 +6204,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1643,7 +6216,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1677,7 +6252,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1687,7 +6264,9 @@ prReview:
       configFile: file,
       now: nextAnchor,
       schedulerStore,
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: dispatch,
@@ -1710,7 +6289,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("system runner should not run");
       },
       runSupervisorTask: async (request) => {
@@ -1755,6 +6336,8 @@ prReview:
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
       runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         expect(invocation.kind).toBe("pr");
         return {
           status: 0,
@@ -1793,6 +6376,65 @@ prReview:
     );
   });
 
+  it("fails a completed supervised run when GitHub has not resolved PR mergeability", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: main",
+        "      switchBack: main",
+      ].join("\n"),
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "OPEN",
+            mergeable: "UNKNOWN",
+            statusCheckRollup: [],
+            commits: [{ oid: "abc123" }],
+          }),
+          stderr: "",
+        },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "main\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR mergeability is UNKNOWN",
+    );
+  });
+
   it("fails before PR lookup when the configured GitHub account lacks write access", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
@@ -1807,7 +6449,7 @@ prReview:
         "      enabled: true",
         "      base: main",
         "      switchBack: main",
-        "      githubAccount: miao2016",
+        "      githubAccount: example-maintainer",
       ].join("\n"),
     });
     const prCommands: string[] = [];
@@ -1817,6 +6459,8 @@ prReview:
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
       runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         prCommands.push(invocation.command);
         return { status: 0, stdout: JSON.stringify({ viewerPermission: "READ" }), stderr: "" };
       },
@@ -1842,10 +6486,10 @@ prReview:
 
     expect(result).toMatchObject({ ran: 1, failed: 1 });
     expect(prCommands).toEqual([
-      "GH_TOKEN=\"$(gh auth token --user 'miao2016')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-maintainer')\" gh repo view --json viewerPermission",
     ]);
     expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
-      "GitHub account miao2016 has READ permission",
+      "GitHub account example-maintainer has READ permission",
     );
   });
 
@@ -1870,7 +6514,9 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => {
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         throw new Error("PR lookup should not run without supervisor commits");
       },
       runGit: (invocation) => {
@@ -1917,19 +6563,20 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => ({
-        status: 0,
-        stdout: JSON.stringify({
-          url: "https://github.com/acme/hub/pull/1",
-          state: "OPEN",
-          mergeable: "MERGEABLE",
-          statusCheckRollup: [],
-          body: "## Summary\n- Clean architecture docs.",
-          files: [{ path: "README.md" }],
-          commits: [{ oid: "old999" }, { oid: "abc123" }],
-        }),
-        stderr: "",
-      }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "OPEN",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "## Summary\n- Clean architecture docs.",
+            files: [{ path: "README.md" }],
+            commits: [{ oid: "old999" }, { oid: "abc123" }],
+          }),
+          stderr: "",
+        },
       runGit: (invocation) => {
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
@@ -1980,23 +6627,24 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => ({
-        status: 0,
-        stdout: JSON.stringify({
-          url: "https://github.com/acme/hub/pull/1",
-          state: "MERGED",
-          mergeable: "MERGEABLE",
-          statusCheckRollup: [],
-          body: "## Summary\n- Clean architecture slices.",
-          files: [{ path: "README.md" }, { path: "src/planner.ts" }],
-          commits: [
-            { oid: "d1774c14efe74c881f425074150e931d5e3384d1" },
-            { oid: "ecdbef2b9dbf6e9f4a86d63100879cdc73aade89" },
-          ],
-          mergeCommit: { oid: "5a2ba869c37da0fa365e9b2d25cc528456332972" },
-        }),
-        stderr: "",
-      }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "MERGED",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "## Summary\n- Clean architecture slices.",
+            files: [{ path: "README.md" }, { path: "src/planner.ts" }],
+            commits: [
+              { oid: "d1774c14efe74c881f425074150e931d5e3384d1" },
+              { oid: "ecdbef2b9dbf6e9f4a86d63100879cdc73aade89" },
+            ],
+            mergeCommit: { oid: "5a2ba869c37da0fa365e9b2d25cc528456332972" },
+          }),
+          stderr: "",
+        },
       runGit: (invocation) => {
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
@@ -2017,6 +6665,101 @@ prReview:
         return {
           status: 0,
           stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["merged PR"],"delegatedTasks":[],"finalVerification":"passed","commits":["d1774c1 refactor: centralize routine schedule planning","ecdbef2 refactor: centralize radar report selection","5a2ba86 Refactor Alcove architecture slices (#11)","PR #15 opened and green: https://github.com/acme/hub/pull/15"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+  });
+
+  it("does not compare a merged branch PR against commits from earlier PRs in the same WorkOrder", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/18",
+            state: "MERGED",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "## Summary\n- Refine cache identity.",
+            files: [{ path: "src/cache.ts" }],
+            commits: [{ oid: "d11f61b2222222222222222222222222222222222" }],
+            mergeCommit: { oid: "5688bc7c2de48aa880f2a8f59e22dc53bf73adeb" },
+          }),
+          stderr: "",
+        },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only d11f61b") {
+          return { status: 0, stdout: "src/cache.ts\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: "hub",
+            actionsTaken: [
+              "PR #17 was reviewed, CI-clean, and squash-merged into dev.",
+              "PR #18 was reviewed, CI-clean, and squash-merged into dev.",
+            ],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            reviewGate: {
+              preMutationReview: [],
+              postMutationReview: ["reviewed both merged PRs"],
+              aiReview: "passed",
+              deterministicGates: [
+                {
+                  name: "PR-17-CI-and-mergeability",
+                  result: "passed",
+                  evidence: "state MERGED, squash commit 7f035bf6dd18f8a0b06f01f99a8630fb0e771685.",
+                },
+                {
+                  name: "PR-18-CI-and-mergeability",
+                  result: "passed",
+                  evidence: "state MERGED, squash commit 5688bc7c2de48aa880f2a8f59e22dc53bf73adeb.",
+                },
+              ],
+              decision: "pass",
+              notes: [],
+            },
+            commits: [
+              "be9649d fix: log non-cacheable queue fallbacks",
+              "d11f61b refactor: centralize cache identity checks",
+            ],
+            followUps: [],
+          })}`,
           stderr: "",
         };
       },
@@ -2047,19 +6790,20 @@ prReview:
       configFile: file,
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
-      runCommand: () => ({
-        status: 0,
-        stdout: JSON.stringify({
-          url: "https://github.com/acme/hub/pull/1",
-          state: "OPEN",
-          mergeable: "MERGEABLE",
-          statusCheckRollup: [],
-          body: "## Summary\n- Clean architecture docs.",
-          files: [{ path: "README.md" }, { path: "docs/stale.md" }],
-          commits: [{ oid: "abc123" }],
-        }),
-        stderr: "",
-      }),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? {
+          status: 0,
+          stdout: JSON.stringify({
+            url: "https://github.com/acme/hub/pull/1",
+            state: "OPEN",
+            mergeable: "MERGEABLE",
+            statusCheckRollup: [],
+            body: "## Summary\n- Clean architecture docs.",
+            files: [{ path: "README.md" }, { path: "docs/stale.md" }],
+            commits: [{ oid: "abc123" }],
+          }),
+          stderr: "",
+        },
       runGit: (invocation) => {
         if (invocation.args.join(" ") === "status --porcelain") {
           return { status: 0, stdout: "", stderr: "" };
@@ -2114,6 +6858,8 @@ prReview:
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
       runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         prCommands.push(invocation.command);
         if (invocation.command.includes("gh pr edit ")) {
           const bodyFile = invocation.command.match(/--body-file '([^']+)'/)?.[1];
@@ -2196,6 +6942,8 @@ prReview:
         now: Date.parse("2026-07-16T10:10:00Z"),
         schedulerStore: new LoopSchedulerStore(),
         runCommand: (invocation) => {
+          const assessment = mockArchitectureAssessment(invocation);
+          if (assessment !== undefined) return assessment;
           prCommands.push(invocation.command);
           if (invocation.command.startsWith("sleep ")) {
             return { status: 0, stdout: "", stderr: "" };
@@ -2276,6 +7024,8 @@ prReview:
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
       runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         if (invocation.command.includes("gh pr merge ")) {
           return { status: 0, stdout: "Merged pull request #1", stderr: "" };
         }
@@ -2338,7 +7088,8 @@ prReview:
         "      base: dev",
         "      switchBack: dev",
         "      autoMerge: true",
-        "      githubAccount: Kingson4Wu",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
       ].join("\n"),
     });
     const prCommands: string[] = [];
@@ -2349,9 +7100,17 @@ prReview:
       now: Date.parse("2026-07-16T10:10:00Z"),
       schedulerStore: new LoopSchedulerStore(),
       runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
         expect(invocation.kind).toBe("pr");
         prCommands.push(invocation.command);
         if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          const permissionChecks = prCommands.filter((command) =>
+            command.includes("gh repo view --json viewerPermission"),
+          ).length;
+          if (permissionChecks === 1) {
+            return { status: 1, stdout: "", stderr: "TLS handshake timeout" };
+          }
           return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
         }
         if (invocation.command.includes(" gh pr view ")) {
@@ -2388,8 +7147,9 @@ prReview:
         expect(request.prompt).toContain('"base": "dev"');
         expect(request.prompt).toContain('"switchBack": "dev"');
         expect(request.prompt).toContain('"autoMerge": true');
-        expect(request.prompt).toContain('"githubAccount": "Kingson4Wu"');
-        expect(request.prompt).toContain("gh auth token --user 'Kingson4Wu'");
+        expect(request.prompt).toContain('"mergeMethod": "merge"');
+        expect(request.prompt).toContain('"githubAccount": "example-owner"');
+        expect(request.prompt).toContain("gh auth token --user 'example-owner'");
         expect(request.prompt).toContain('"branch": "loop/hub/architecture/1784196600000-hub"');
         const marker = finalMarkerFromPrompt(request.prompt);
         return {
@@ -2403,20 +7163,575 @@ prReview:
 
     expect(result).toMatchObject({ ran: 1, failed: 0 });
     expect(prCommands).toEqual([
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh repo view --json viewerPermission",
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
-      "GH_TOKEN=\"$(gh auth token --user 'Kingson4Wu')\" gh pr merge 'loop/hub/architecture/1784196600000-hub' --squash --delete-branch",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
     ]);
     expect(gitCommands).toEqual([
       ["status", "--porcelain"],
       ["branch", "--show-current"],
       ["show", "--format=", "--name-only", "abc123"],
+      ["fetch", "origin", "dev"],
       ["switch", "dev"],
-      ["pull", "--ff-only", "origin", "dev"],
+      ["merge", "--ff-only", "FETCH_HEAD"],
     ]);
   });
 
-  it("does not overlap managed ticks while a supervisor run is still in flight", async () => {
+  it("refreshes the PR branch and retries auto-merge when GitHub reports the head is behind base", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+    const gitCommands: string[][] = [];
+    let mergeAttempts = 0;
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 0, stdout: "Updated branch", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          mergeAttempts += 1;
+          if (mergeAttempts === 1) {
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with base.\nTo have the pull request merged after all the requirements have been met, add the `--auto` flag.\n",
+            };
+          }
+          return { status: 0, stdout: "Merged pull request #146", stderr: "" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        gitCommands.push(invocation.args);
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(prCommands).toEqual([
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh repo view --json viewerPermission",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr view 'loop/hub/architecture/1784196600000-hub' --json url,state,mergeable,statusCheckRollup,body,files,commits,mergeCommit",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+    ]);
+    expect(gitCommands).toEqual([
+      ["status", "--porcelain"],
+      ["branch", "--show-current"],
+      ["show", "--format=", "--name-only", "abc123"],
+      ["fetch", "origin", "dev"],
+      ["switch", "dev"],
+      ["merge", "--ff-only", "FETCH_HEAD"],
+    ]);
+  });
+
+  it("fails a completed supervised PR when stale-head branch refresh fails", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 1, stdout: "", stderr: "branch update refused" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR branch update after auto-merge failure failed: branch update refused",
+    );
+  });
+
+  it("fails a completed supervised PR when auto-merge still fails after branch refresh", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+    let mergeAttempts = 0;
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr update-branch ")) {
+          return { status: 0, stdout: "Updated branch", stderr: "" };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          mergeAttempts += 1;
+          if (mergeAttempts === 1) {
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "X Pull request OctopusGarage/tmux-claude-bot#146 is not mergeable: the head branch is not up to date with the base branch.",
+            };
+          }
+          return { status: 1, stdout: "", stderr: "required checks still pending" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR auto-merge failed",
+    );
+  });
+
+  it("does not refresh the PR branch for generic auto-merge failures", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: true",
+        "      mergeMethod: merge",
+        "      githubAccount: example-owner",
+      ].join("\n"),
+    });
+    const prCommands: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) => {
+        const assessment = mockArchitectureAssessment(invocation);
+        if (assessment !== undefined) return assessment;
+        expect(invocation.kind).toBe("pr");
+        prCommands.push(invocation.command);
+        if (invocation.command.includes("gh repo view --json viewerPermission")) {
+          return { status: 0, stdout: JSON.stringify({ viewerPermission: "ADMIN" }), stderr: "" };
+        }
+        if (invocation.command.includes(" gh pr view ")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              url: "https://github.com/acme/hub/pull/146",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+              body: "## Summary\n- Clean architecture docs.",
+              files: [{ path: "README.md" }],
+              commits: [{ oid: "abc123" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (invocation.command.includes("gh pr merge ")) {
+          return { status: 1, stdout: "", stderr: "branch protection blocks merge" };
+        }
+        throw new Error(`unexpected PR command: ${invocation.command}`);
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "show --format= --name-only abc123") {
+          return { status: 0, stdout: "README.md\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["opened PR #146"],"delegatedTasks":[],"finalVerification":"passed","commits":["abc123"],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    expect(prCommands).toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr merge --auto 'loop/hub/architecture/1784196600000-hub' --merge",
+    );
+    expect(prCommands).not.toContain(
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh pr update-branch 'loop/hub/architecture/1784196600000-hub'",
+    );
+    expect(readFileSync(supervisorSummaryPath(process.env.TCB_STATE_DIR, "hub"), "utf8")).toContain(
+      "PR auto-merge failed: branch protection blocks merge",
+    );
+  });
+
+  it("dispatches supervised single-repository work from an isolated git worktree", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    mkdirSync(join(projectDir, ".git"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+        "      autoMerge: false",
+      ].join("\n"),
+    });
+    const expectedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+    const gitCommands: Array<{ cwd: string; args: string[] }> = [];
+    let executionWorktreePrepared = false;
+    let executionBranch = "loop/hub/architecture/1784196600000-hub";
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        gitCommands.push(invocation);
+        const command = invocation.args.join(" ");
+        if (invocation.cwd === projectDir && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${projectDir}\n`, stderr: "" };
+        }
+        if (invocation.cwd === expectedWorktree && command === "rev-parse --show-toplevel") {
+          return executionWorktreePrepared
+            ? { status: 0, stdout: `${expectedWorktree}\n`, stderr: "" }
+            : { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (
+          invocation.cwd === projectDir &&
+          command === `worktree add --detach ${expectedWorktree} origin/dev`
+        ) {
+          executionWorktreePrepared = true;
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (
+          invocation.cwd === expectedWorktree &&
+          command === "switch loop/hub/architecture/1784196600000-hub"
+        ) {
+          executionBranch = "loop/hub/architecture/1784196600000-hub";
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (command === "branch --show-current") {
+          return {
+            status: 0,
+            stdout: invocation.cwd === expectedWorktree ? `${executionBranch}\n` : "dev\n",
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async (request) => {
+        expect(request.workOrder.projectPath).toBe(expectedWorktree);
+        expect(request.workOrder.executionIsolation).toMatchObject({
+          expectedWorktree,
+          sourceWorktree: projectDir,
+          preparedBy: "system-git-worktree",
+        });
+        expect(request.prompt).toContain(`"projectPath": "${expectedWorktree}"`);
+        expect(request.prompt).toContain(`Original project worktree: ${projectDir}`);
+        expect(request.prompt).toContain("open-worker 'tmux_proj_loop-worker-hub-");
+        expect(request.prompt).toContain(`'${expectedWorktree}' --agent codex`);
+        expect(request.prompt).toContain(
+          `git -C '${expectedWorktree}' switch loop/hub/architecture/1784196600000-hub`,
+        );
+        expect(request.prompt).not.toContain(
+          `git -C '${expectedWorktree}' switch --detach origin/dev`,
+        );
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n{"status":"completed","projectId":"hub","actionsTaken":["no changes"],"delegatedTasks":[],"finalVerification":"passed","commits":[],"followUps":[]}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      projectSessionPrefix: "tmux_proj_",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(gitCommands).toContainEqual({
+      cwd: projectDir,
+      args: ["worktree", "add", "--detach", expectedWorktree, "origin/dev"],
+    });
+    expect(gitCommands).toContainEqual({ cwd: expectedWorktree, args: ["status", "--porcelain"] });
+    expect(gitCommands).not.toContainEqual({
+      cwd: expectedWorktree,
+      args: ["switch", "loop/hub/architecture/1784196600000-hub"],
+    });
+    expect(gitCommands).toContainEqual({ cwd: projectDir, args: ["branch", "--show-current"] });
+  });
+
+  it("includes isolated worktree preparation detail in dispatch failure evidence", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-project-"));
+    mkdirSync(join(projectDir, ".git"));
+    const file = writeLoopConfig({
+      projectPath: projectDir,
+      runner: ["    runner:", "      kind: agent-supervised", "      timeoutMs: 1000"].join("\n"),
+      projectExtra: [
+        "    commit:",
+        "      enabled: true",
+        "      branch: loop/hub/architecture",
+        "    pullRequest:",
+        "      enabled: true",
+        "      base: dev",
+        "      switchBack: dev",
+      ].join("\n"),
+    });
+    const expectedWorktree = join(stateDir, "loop-worktrees", "hub", "1784196600000-hub");
+
+    const result = await runLoopServiceTickAsync({
+      configFile: file,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: (invocation) =>
+        mockArchitectureAssessment(invocation) ?? { status: 0, stdout: "", stderr: "" },
+      runGit: (invocation) => {
+        const command = invocation.args.join(" ");
+        if (invocation.cwd === projectDir && command === "rev-parse --show-toplevel") {
+          return { status: 0, stdout: `${projectDir}\n`, stderr: "" };
+        }
+        if (invocation.cwd === expectedWorktree && command === "rev-parse --show-toplevel") {
+          return { status: 1, stdout: "", stderr: "not a git repository" };
+        }
+        if (command === "status --porcelain") return { status: 0, stdout: "", stderr: "" };
+        if (command === "fetch origin dev") return { status: 0, stdout: "", stderr: "" };
+        if (
+          invocation.cwd === projectDir &&
+          command === `worktree add --detach ${expectedWorktree} origin/dev`
+        ) {
+          return { status: 128, stdout: "", stderr: "fatal: path already exists" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      runSupervisorTask: async () => {
+        throw new Error("supervisor must not run after worktree preparation failure");
+      },
+      supervisorSessionName: "tmux_proj_loop-supervisor",
+      projectSessionPrefix: "tmux_proj_",
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 1 });
+    const summary = readFileSync(supervisorSummaryPath(stateDir, "hub"), "utf8");
+    expect(summary).toContain("execution worktree isolation failed");
+    expect(summary).toContain("fatal: path already exists");
+  });
+
+  it("does not enqueue an unsafe project Architecture run", async () => {
     vi.useFakeTimers();
     try {
       process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
@@ -2429,7 +7744,7 @@ prReview:
       });
       vi.setSystemTime(new Date("2026-07-16T10:10:00Z"));
       const enqueue = vi.fn(() => "queued" as const);
-      const stop = startLoopEngineering(
+      const stop = await startLoopEngineering(
         {
           config: {
             projectSessionPrefix: "tmux_proj_",
@@ -2453,12 +7768,133 @@ prReview:
         { configFile: file, tickMs: 1000 },
       );
 
-      await vi.advanceTimersByTimeAsync(0);
-      expect(enqueue).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(enqueue).toHaveBeenCalledTimes(0);
 
       await vi.advanceTimersByTimeAsync(1000);
-      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenCalledTimes(0);
 
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles a repository review final summary on the repository queue tick", async () => {
+    vi.useFakeTimers();
+    try {
+      const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-reconcile-state-"));
+      process.env.TCB_STATE_DIR = stateDir;
+      const projectDir = mkdtempSync(join(tmpdir(), "tcb-loop-repository-reconcile-project-"));
+      const configFile = writeRepositoryPrReviewConfig({
+        repoOne: projectDir,
+        repoTwo: projectDir,
+      });
+      const runId = "1786111988758-repo-one-prs-repo-pr-review";
+      const workOrder = {
+        id: runId,
+        scheduledAt: 1_786_111_988_758,
+        projectId: "repo-one-prs",
+        projectName: "Repo One PRs",
+        projectPath: projectDir,
+        task: {
+          kind: "repository-pull-request-review",
+          repo: "OctopusGarage/repo-one",
+          lookbackHours: 72,
+          consecutivePasses: 2,
+          autoMerge: true,
+          mergeMethod: "squash",
+          repair: { enabled: true, maxAttempts: 1 },
+        },
+        agent: "codex",
+        goal: "Review PRs.",
+        maxRounds: 1,
+        targetScore: 100,
+        runner: { kind: "agent-supervised", requireConfirmation: false },
+        allowedActions: ["tests"],
+        blockedActions: [],
+        skills: { approved: [] },
+        preflight: { commands: [], repair: { agent: false } },
+        assessment: { command: "true" },
+        execution: { agent: true },
+        recovery: { agent: false, dirtyWorktree: false, maxAttempts: 1 },
+        commitPolicy: { enabled: false, perRound: false },
+        pullRequestPolicy: {
+          enabled: true,
+          base: "dev",
+          switchBack: "dev",
+          autoMerge: true,
+          mergeMethod: "squash",
+        },
+        requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${runId}]`,
+        finalSummaryPath: join(
+          stateDir,
+          "loop-runs",
+          "repo-one-prs",
+          runId,
+          "supervisor-final-summary.json",
+        ),
+      } satisfies LoopWorkOrder;
+      writeLoopSupervisorWorkOrderState({
+        workOrder,
+        supervisorSession: "tmux_proj_loop-supervisor-1",
+        status: "in-flight",
+        now: 1_000,
+      });
+      const stop = await startLoopEngineering(
+        {
+          config: {
+            projectSessionPrefix: "tmux_proj_",
+            maxWaitDoneTotalMs: 60_000,
+            loopEngineering: {
+              configFile,
+              tickMs: 60_000,
+              supervisor: { enabled: false, dir: "", agent: "codex" },
+            },
+          },
+          bridge: { hasSession: vi.fn(async () => true) },
+          queue: {
+            enqueue: vi.fn(() => "queued" as const),
+            cancelQueued: vi.fn(() => false),
+            loadPersisted: vi.fn(() => []),
+            keepPersistedCarryover: vi.fn(),
+          },
+        } as never,
+        { configFile, tickMs: 60_000 },
+      );
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      writeFileSync(
+        workOrder.finalSummaryPath,
+        `${JSON.stringify({
+          status: "blocked",
+          projectId: "repo-one-prs",
+          actionsTaken: ["CI is retryable"],
+          delegatedTasks: [],
+          finalVerification: "failed",
+          commits: [],
+          followUps: ["Retry after CI recovers"],
+          pullRequestDecisions: [
+            {
+              number: 1,
+              repository: "OctopusGarage/repo-one",
+              outcome: "retry",
+              evidence: ["CI pending"],
+              nextStep: "Retry later",
+            },
+          ],
+        })}\n`,
+      );
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(
+        readFileSync(
+          join(stateDir, "loop-runs", "repo-one-prs", runId, "work-order-state.json"),
+          "utf8",
+        ),
+      ).toContain('"status": "failed"');
       stop();
     } finally {
       vi.useRealTimers();

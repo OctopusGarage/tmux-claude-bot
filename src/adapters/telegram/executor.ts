@@ -1,21 +1,20 @@
-import type { Bot, Context } from "grammy";
+import type { Context } from "grammy";
 import { planMessageAction } from "../../core/command/action-plan.js";
 import type { MessageAction } from "../../core/command/actions.js";
 import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
-import {
-  type PersistedMessage,
-  QueueCancelledError,
-  type QueuedMessage,
-} from "../../core/command/queue.js";
-import { restoreMessage } from "../../core/command/restore.js";
+import { QueueCancelledError, type QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { buildQueueCancelKeyboard, buildStartPickerKeyboard } from "./keyboards.js";
+import {
+  buildKeyPaletteKeyboard,
+  buildQueueCancelKeyboard,
+  buildStartPickerKeyboard,
+} from "./keyboards.js";
 import { MSG } from "./messages.js";
-import { reply, send } from "./replies.js";
+import { reply } from "./replies.js";
 import { requireSession } from "./session.js";
 
 const log = createLogger("telegram.executor");
@@ -106,6 +105,16 @@ export async function handleQueuedCommand(
   }
   const replyTo = ctx.message?.message_id;
 
+  if (action === "key" && !text?.trim()) {
+    await reply(ctx, "info", messages("telegram").keyUsage, {
+      session,
+      replyTo,
+      replyTarget,
+      replyMarkup: buildKeyPaletteKeyboard(sessionShortId(session)),
+    });
+    return;
+  }
+
   const planned = await planMessageAction({
     deps,
     action,
@@ -149,23 +158,4 @@ export async function handleQueuedCommand(
   if (planned.kind === "queued") {
     await enqueueSessionCommand(ctx, deps, session, planned.action, planned.text, replyTo);
   }
-}
-
-export function createRestoredMessage(p: PersistedMessage, bot: Bot): QueuedMessage {
-  return restoreMessage(
-    p,
-    "telegram",
-    (output) => {
-      void send(bot, Number(p.chatId), "recover", "Recovered", {
-        session: p.sessionName,
-        body: output,
-        code: true,
-      });
-    },
-    (err) => {
-      void send(bot, Number(p.chatId), "err", `Recovered failed: ${err.message}`, {
-        session: p.sessionName,
-      });
-    },
-  );
 }

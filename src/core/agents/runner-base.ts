@@ -1,10 +1,12 @@
-import { logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import type { OutputProcessor } from "../session/output.js";
 import type { TmuxBridge } from "../session/tmux.js";
 import type { ConfigResolver } from "./agent-config-resolver.js";
 import { pollUntilIdle, pollUntilReady, type ReadyVerdict } from "./pane-poll.js";
 import type { AgentRunner } from "./runner.js";
+
+const log = createLogger("agents.runner");
 
 /** Grace period after `/exit` before relaunching on a restart. */
 const EXIT_GRACE_MS = 2000;
@@ -23,7 +25,29 @@ export function paneNeedsConfirm(pane: string): boolean {
   return paneConfirmAction(pane) !== "wait";
 }
 
+/** Whether the pane's latest lifecycle evidence still represents an active turn.
+ * Codex can leave an old `esc to interrupt` line visible after a turn finishes;
+ * depending on the client version, later completion evidence is either a
+ * `Context … Goal achieved` footer or a `Worked for <duration>` banner. Compare
+ * evidence order so stale scrollback cannot block the next queued prompt, while
+ * a newer working marker still wins if another turn has started. */
+export function paneHasActiveTurn(pane: string): boolean {
+  const activeAt = pane.toLowerCase().lastIndexOf("esc to interrupt");
+  if (activeAt < 0) return false;
+
+  let completedAt = -1;
+  for (const pattern of [
+    /^.*\bcontext\b.*\bgoal achieved\b.*$/gimu,
+    /^\s*[─━]+\s*worked for\s+(?:\d+\s*[hms]\s*)+[─━]*\s*$/gimu,
+  ]) {
+    for (const match of pane.matchAll(pattern)) completedAt = Math.max(completedAt, match.index);
+  }
+  return activeAt > completedAt;
+}
+
 export function paneConfirmAction(pane: string): ReadyVerdict {
+  const codexUpdate = paneCodexUpdateAction(pane);
+  if (codexUpdate !== "wait") return codexUpdate;
   if (activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (!activeConfirmGate(pane)) return "wait";
   if (pane.includes("Bypass Permissions mode") && pane.includes("Yes, I accept")) {
@@ -36,6 +60,12 @@ export function paneConfirmAction(pane: string): ReadyVerdict {
 export function paneCodexAdditionalSafetyAction(pane: string): ReadyVerdict {
   if (!activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (/❯\s*2\.\s*Keep waiting/i.test(pane)) return { sendRawKey: "Enter" };
+  return { sendRawKeys: ["Down", "Enter"] };
+}
+
+function paneCodexUpdateAction(pane: string): ReadyVerdict {
+  if (!activeCodexUpdateMenu(pane)) return "wait";
+  if (/›\s*2\.\s*Skip\b/i.test(pane)) return { sendRawKey: "Enter" };
   return { sendRawKeys: ["Down", "Enter"] };
 }
 
@@ -69,6 +99,19 @@ function activeCodexAdditionalSafetyMenu(pane: string): boolean {
     /Retry with a faster model/i.test(pane) &&
     /Keep waiting/i.test(pane) &&
     /Press enter to confirm or esc to go back/i.test(lastLine)
+  );
+}
+
+function activeCodexUpdateMenu(pane: string): boolean {
+  const lines = pane.split("\n");
+  const lastNonBlank = findLastNonBlankLine(lines);
+  if (lastNonBlank < 0) return false;
+  const lastLine = lines[lastNonBlank] ?? "";
+  return (
+    /Update available!/i.test(pane) &&
+    /1\.\s*Update now/i.test(pane) &&
+    /2\.\s*Skip/i.test(pane) &&
+    /Press enter to continue/i.test(lastLine)
   );
 }
 
@@ -112,6 +155,7 @@ export abstract class AgentRunnerBase implements AgentRunner {
   protected readonly pollIntervalMs: number;
   protected readonly maxWaitReadyMs: number;
   protected readonly maxWaitDoneMs: number;
+  private readonly launchLocks = new Map<string, Promise<void>>();
 
   constructor(o: AgentRunnerOptions) {
     this.bridge = o.bridge;
@@ -144,7 +188,33 @@ export abstract class AgentRunnerBase implements AgentRunner {
    * turn is active; without this guard, the queue can type the next message into
    * Codex's composer before the previous turn is actually done. */
   protected activeTurnMarker(pane: string): boolean {
-    return /esc to interrupt/i.test(pane);
+    return paneHasActiveTurn(pane);
+  }
+
+  private async sendLaunchCommand(command: string, sessionName?: string): Promise<void> {
+    await this.bridge.sendRawKey("C-u", sessionName);
+    await this.bridge.sendKeys(command, sessionName);
+  }
+
+  private async withLaunchLock<T>(
+    sessionName: string | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const session = await this.bridge.resolveSessionName(sessionName);
+    const previous = this.launchLocks.get(session) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => {}).then(() => current);
+    this.launchLocks.set(session, queued);
+    await previous.catch(() => {});
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.launchLocks.get(session) === queued) this.launchLocks.delete(session);
+    }
   }
 
   /** After a launch: clear the trust-directory gate (BOTH agents show it on first
@@ -154,26 +224,39 @@ export abstract class AgentRunnerBase implements AgentRunner {
   protected async waitReadyBestEffort(sessionName?: string): Promise<void> {
     try {
       await this.waitUntilReady(sessionName);
-      logger.info(`${this.logTag} agent ready`);
+      log.info("agent launch ready", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag },
+      });
     } catch (err) {
-      logger.warn(
-        `${this.logTag} post-launch: trust-clear/readiness did not complete: ${err instanceof Error ? err.message : err}`,
-      );
+      log.warn("agent launch readiness did not complete", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        err,
+        data: { agent: this.logTag },
+      });
     }
   }
 
   async checkIfRunning(sessionName?: string): Promise<boolean> {
     const session = await this.bridge.resolveSessionName(sessionName);
     const running = await this.isRunning(session);
-    logger.info(`${this.logTag} checkIfRunning session=${session} → ${running} (process-based)`);
+    log.debug("agent liveness checked", {
+      session,
+      data: { agent: this.logTag, running, evidence: "process" },
+    });
     return running;
   }
 
   async start(sessionName?: string, command?: string): Promise<void> {
-    if (await this.checkIfRunning(sessionName)) return;
-    logger.info(`${this.logTag} starting agent`, { data: { resume: "fresh" } });
-    await this.bridge.sendKeys(command ?? this.command, sessionName);
-    await this.waitReadyBestEffort(sessionName);
+    await this.withLaunchLock(sessionName, async () => {
+      if (await this.checkIfRunning(sessionName)) return;
+      log.info("agent starting", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag, resume: "fresh" },
+      });
+      await this.sendLaunchCommand(command ?? this.command, sessionName);
+      await this.waitReadyBestEffort(sessionName);
+    });
   }
 
   async startWithResume(
@@ -181,12 +264,18 @@ export abstract class AgentRunnerBase implements AgentRunner {
     sessionId: string,
     command?: string,
   ): Promise<void> {
-    if (await this.checkIfRunning(sessionName)) return;
-    logger.info(`${this.logTag} starting agent`, {
-      data: { resume: "exact-id", sessionId },
+    await this.withLaunchLock(sessionName, async () => {
+      if (await this.checkIfRunning(sessionName)) return;
+      log.info("agent starting", {
+        ...(sessionName === undefined ? {} : { session: sessionName }),
+        data: { agent: this.logTag, resume: "exact-id", sessionId },
+      });
+      await this.sendLaunchCommand(
+        this.resumeCommand(command ?? this.command, sessionId),
+        sessionName,
+      );
+      await this.waitReadyBestEffort(sessionName);
     });
-    await this.bridge.sendKeys(this.resumeCommand(command ?? this.command, sessionId), sessionName);
-    await this.waitReadyBestEffort(sessionName);
   }
 
   async waitUntilReady(sessionName?: string): Promise<void> {
@@ -269,41 +358,54 @@ export abstract class AgentRunnerBase implements AgentRunner {
 
   async exit(sessionName?: string): Promise<void> {
     // Ctrl-C interrupts any in-flight turn, then `/exit` quits. Both agents.
-    logger.info(`${this.logTag} exiting agent`);
+    log.info("agent exiting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag },
+    });
     await this.bridge.sendExit(sessionName);
   }
 
   async gracefulRestart(sessionName?: string): Promise<void> {
-    logger.info(`${this.logTag} restarting agent`, { data: { resume: "fresh" } });
+    log.info("agent restarting", {
+      ...(sessionName === undefined ? {} : { session: sessionName }),
+      data: { agent: this.logTag, resume: "fresh" },
+    });
     await this.bridge.sendExit(sessionName);
     await sleep(EXIT_GRACE_MS);
     await this.start(sessionName);
   }
 
   async gracefulRestartWithContinue(sessionName?: string, command?: string): Promise<void> {
-    // Capture the EXACT running session id from the live process (its open
-    // transcript) BEFORE exiting, so we resume THAT conversation — not merely "the
-    // most recent in the dir". Falls back to the continue command when the id
-    // can't be read (no live transcript open).
-    const resolved = await this.bridge.resolveSessionName(sessionName);
-    // Prefer the EXACT live id; if the pid isn't holding the transcript open right
-    // now, fall back to the last-observed live id (disambiguates co-located Free
-    // Projects, where continueCommand's "newest in dir" can resume the wrong one).
-    const sessionId =
-      (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
-      this.configResolver.lastLiveSessionId?.(resolved) ??
-      null;
-    logger.info(`${this.logTag} restarting agent`, {
-      data: { resume: sessionId ? "exact-id" : "continue", ...(sessionId ? { sessionId } : {}) },
+    await this.withLaunchLock(sessionName, async () => {
+      // Capture the EXACT running session id from the live process (its open
+      // transcript) BEFORE exiting, so we resume THAT conversation — not merely "the
+      // most recent in the dir". Falls back to the continue command when the id
+      // can't be read (no live transcript open).
+      const resolved = await this.bridge.resolveSessionName(sessionName);
+      // Prefer the EXACT live id; if the pid isn't holding the transcript open right
+      // now, fall back to the last-observed live id (disambiguates co-located Free
+      // Projects, where continueCommand's "newest in dir" can resume the wrong one).
+      const sessionId =
+        (await this.configResolver.resolveLiveTranscript?.(resolved))?.sessionId ??
+        this.configResolver.lastLiveSessionId?.(resolved) ??
+        null;
+      log.info("agent restarting", {
+        session: resolved,
+        data: {
+          agent: this.logTag,
+          resume: sessionId ? "exact-id" : "continue",
+          ...(sessionId ? { sessionId } : {}),
+        },
+      });
+      await this.bridge.sendExit(sessionName);
+      await sleep(EXIT_GRACE_MS);
+      if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch
+      const cmd = command ?? this.command;
+      await this.sendLaunchCommand(
+        sessionId ? this.resumeCommand(cmd, sessionId) : this.continueCommand(cmd),
+        sessionName,
+      );
+      await this.waitReadyBestEffort(sessionName);
     });
-    await this.bridge.sendExit(sessionName);
-    await sleep(EXIT_GRACE_MS);
-    if (await this.checkIfRunning(sessionName)) return; // didn't exit — don't double-launch
-    const cmd = command ?? this.command;
-    await this.bridge.sendKeys(
-      sessionId ? this.resumeCommand(cmd, sessionId) : this.continueCommand(cmd),
-      sessionName,
-    );
-    await this.waitReadyBestEffort(sessionName);
   }
 }

@@ -23,7 +23,6 @@ import {
 import { parseInputsLimit } from "../../core/read/recent-inputs.js";
 import { rewriteUserPromptByAck } from "../../core/read/user-prompt-intake.js";
 import { isVoiceInstallable } from "../../core/read/voice-support.js";
-import { runBatchCommand } from "../../core/scheduler/batch-command.js";
 import { parsePeekLines } from "../../core/session/output.js";
 import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -38,6 +37,7 @@ import {
   handleRestore,
   handleUnbind,
 } from "./group-commands.js";
+import { findLarkImageResource, handleLarkImage } from "./image.js";
 import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
@@ -68,6 +68,10 @@ import { handleLarkVoice } from "./voice.js";
 
 const log = createLogger("lark.handlers");
 
+function isTextLikeContentType(contentType: string): boolean {
+  return contentType === "text" || contentType === "post";
+}
+
 /**
  * Build the channel `message` handler. p2p text messages are parsed for
  * slash commands; unknown senders are dropped silently.
@@ -91,7 +95,8 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // run binding-recovery commands (/bind, /rebind, /restore, /newgroup…, /help)
         // in place. Everything else (plain prompts, views) is still ignored: there is
         // no project to talk to until the group is re-bound.
-        const recoverable = msg.rawContentType === "text" && isRecoveryCommand(msg.content);
+        const recoverable =
+          isTextLikeContentType(msg.rawContentType) && isRecoveryCommand(msg.content);
         if (!recoverable) {
           log.info(`ignore unbound chat_type=${msg.chatType} chat=${msg.chatId}`);
           return;
@@ -100,7 +105,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
       }
 
       if (!isP2p) {
-        const mgmt = msg.rawContentType === "text" && isGroupMgmtCommand(msg.content);
+        const mgmt = isTextLikeContentType(msg.rawContentType) && isGroupMgmtCommand(msg.content);
         if (!mgmt) {
           const r = await reconcileGroupBinding(deps, "lark", msg.chatId);
           if (r.status === "missing-path") {
@@ -113,10 +118,10 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         }
       }
 
-      // Reply to a "已排队" ack with new text → rewrite that still-waiting message
+      // Reply to a localized queued ack with new text: rewrite that still-waiting message.
       // in place. TERMINAL unless it wasn't one of our acks (mirrors Telegram): a
       // rewrite blocked by dedup is reported, never silently re-enqueued.
-      if (msg.replyToMessageId && msg.rawContentType === "text") {
+      if (msg.replyToMessageId && isTextLikeContentType(msg.rawContentType)) {
         const newText = msg.content.trim();
         const rw = await rewriteUserPromptByAck(deps.queue, {
           source: "lark",
@@ -142,12 +147,16 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         ? resolveReplyTarget(msg.replyToMessageId)
         : undefined;
 
-      if (msg.rawContentType !== "text") {
-        // Voice/audio → transcribe and process as text (like Telegram); other
-        // media isn't supported yet.
+      if (!isTextLikeContentType(msg.rawContentType)) {
+        // Voice/audio → transcribe and process as text (like Telegram).
         const audio = msg.resources.find((r) => r.type === "audio");
         if (audio) {
           await handleLarkVoice(channel, deps, msg, audio, replySession);
+          return;
+        }
+        const image = findLarkImageResource(msg.resources);
+        if (image) {
+          await handleLarkImage(channel, deps, msg, image, replySession);
           return;
         }
         await sendText(channel, msg.chatId, messages("lark").onlyTextVoice);
@@ -240,6 +249,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               planned.action,
               replySession,
               msg.chatType === "p2p",
+              parsed.arg,
             );
           } else if (planned.kind === "queued") {
             await enqueueLarkAction(
@@ -308,7 +318,11 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
                 break;
               }
               const result = await applyPromptTranslateCommand("lark", parsed.arg ?? "");
-              await sendText(channel, msg.chatId, formatPromptTranslateCommandResult(result));
+              await sendText(
+                channel,
+                msg.chatId,
+                formatPromptTranslateCommandResult(result, messages("lark")),
+              );
               break;
             }
             case "translateinstall": {
@@ -427,11 +441,6 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               await sendText(channel, msg.chatId, formatActiveDelegateStart(result));
               break;
             }
-            case "batch":
-              // Host-wide op — p2p owner only (same gate as dashboard/logs).
-              if (msg.chatType === "p2p")
-                await sendText(channel, msg.chatId, runBatchCommand(parsed.arg ?? ""));
-              break;
             case "opportunity": {
               if (msg.chatType !== "p2p" && !isProjectGroup(msg.chatId)) break;
               const result = await runOpportunityCommand(
@@ -474,9 +483,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
     try {
       await handle(msg);
     } catch (err) {
-      log.error(
-        `handler error chat=${msg.chatId}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-      );
+      log.error("message handler failed", { err, chatId: msg.chatId });
       try {
         await sendText(channel, msg.chatId, messages("lark").handlerError);
       } catch {

@@ -5,7 +5,9 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
  * `Messages = typeof zh` — so every other language must implement exactly these
  * keys (a missing key fails the build). Entries are either static strings or
  * functions for interpolation. Keep keys protocol-agnostic; both adapters use
- * them. New copy goes here first, then en.ts / yue.ts.
+ * them. New chat/card/button/notification copy goes here first, then every
+ * catalog listed by `UI_LANGS`. `tests/core/i18n.test.ts` verifies catalog key
+ * parity and non-empty renders.
  */
 export const zh = {
   // ── acks / queue (executor) ──
@@ -33,10 +35,17 @@ export const zh = {
   promptTranslateInstalling: "🌐 正在安装 prompt 翻译依赖 · 首次需下载模型，请稍候…",
   promptTranslateInstallOk: "🌐 prompt 翻译依赖已就绪 · 现在可以开启翻译模式",
   promptTranslateInstallFailed: (e: string) =>
-    `🌐 安装失败 · ${e} · 可在主机运行 npm run translate:install 查看详情`,
+    `🌐 安装失败 · ${e} · 可在主机运行 pnpm translate:install 查看详情`,
+  promptTranslateCommandUsage: (usage: string) => `用法：/prompt_translate ${usage}`,
+  promptTranslateUnavailable: (error: string) => `Prompt translation 不可用：${error}`,
+  promptTranslateDisabledFor: (source: string) => `已关闭 ${source} 的 prompt translation`,
+  promptTranslateStatusOff: (source: string) => `${source} 的 prompt translation：off`,
+  promptTranslateStatusLine: (source: string, from: string, to: string) =>
+    `${source} 的 prompt translation：argos ${from}->${to}`,
+  promptTranslateEnabledLine: (line: string) => `已开启。${line}`,
   voiceEmpty: "没听清 · 请再说一遍或改发文字",
   voiceUnsupported: "语音转写仅支持 Apple Silicon",
-  voiceNotInstalled: "语音转写未安装（在仓库运行 npm run whisper:install）",
+  voiceNotInstalled: "语音转写未安装（在仓库运行 pnpm whisper:install）",
 
   // ── project switch / remove / current ──
   currentProjectIs: (project: string) => `${UI_ICONS.session.current} 当前会话：${project}`,
@@ -79,6 +88,12 @@ export const zh = {
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
   btnRight: "➡️ right",
+  btnKeys: "⌨️ 按键",
+  keyPaletteTitle: "快捷键",
+  keyUsage:
+    "发送一个按键或组合键：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修饰键支持 Ctrl、Alt、Shift，以 + 连接；也可点击下方快捷项。具体效果由当前应用决定。",
+  cmdKey: "发送组合键，或打开快捷键面板",
+  keySent: (chord: string) => `已发送按键: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 状态",
   btnStart: "🚀 启动",
@@ -147,6 +162,8 @@ export const zh = {
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
   adoptFailed: "接管失败：进程无法结束或未能启动",
+  adoptAgentDidNotStart:
+    "接管失败：原进程已结束，但 Agent 未能在纳管会话中启动。请用 /peek 查看画面，修正 shell 提示或启动命令后重试。",
   adoptBusy:
     "目标会话里已有程序在前台运行（另一个 agent 或其他程序）。已中止，未动原进程——请先去那边退出，再重新接管。",
   adoptProjectRunning:
@@ -159,10 +176,14 @@ export const zh = {
   agentNotRunningRestart: "未运行，请使用 /resume 恢复，或 /start 新建",
   contentTruncated: "...(内容过长，已截断)",
   agentEmptyOutput: "返回空内容 · 用 /peek 查看画面",
+  agentReplyUnavailable: "未捕获到有效 Agent 回复 · 用 /peek 查看画面，确认后可重试。",
   agentStarted: "✅ 已启动",
   agentResumed: "🔄 已恢复原会话",
   agentResumeMissingState: "没有可恢复的原会话状态，请用 /start 新建。",
   agentAlreadyRunning: "✅ 已在运行中，无需重复启动",
+  agentInputNotReady: "Agent 暂时还没准备好接收输入，请稍后重试；如果持续出现，请重启该会话。",
+  projectAutomationBusy: (taskKind: string, projectId: string, runId: string, supervisor: string) =>
+    `项目正在执行自动化任务，暂时不能发送普通消息。\n任务：${taskKind}\n项目：${projectId}\nRun：${runId}\nSupervisor：${supervisor}\n\n请等待任务完成，或先查看/取消该任务后再继续。`,
   agentStartedWith: (label: string) => `✅ 已用「${label}」启动`,
   startPickerTitle: "🚀 选择启动方式",
   startPickerPrompt: "配置了多个启动命令,选一个启动:",
@@ -276,7 +297,7 @@ export const zh = {
   currentProjectTitle: "当前会话",
   noRecentProjects: "没有近期项目\n\n用 /add_project <路径> 添加一个",
   messageTooLong: (len: number, max: number) => `消息过长 · ${len} > ${max} 字符`,
-  onlyTextVoice: "暂仅支持文本和语音消息",
+  onlyTextVoice: "暂仅支持文本、语音和图片消息",
   handlerErrorTelegram: "⚠️ 处理消息时出错，请重试。",
   handlerError: "⚠️ 处理消息时出错，请重试；若群组无响应，可发送 /restore 重新连接项目。",
   unknownCommand: (name: string) => `未知命令：/${name}（发送 /help 查看命令）`,
@@ -297,6 +318,8 @@ export const zh = {
   taskStillRunning: (body: string) => `⏳ 任务仍在进行中，请稍后通过 /peek 查看当前结果\n\n${body}`,
   taskStillRunningNotice: "⏳ 任务仍在进行中，完成后会自动推送结果 · /peek 查看当前画面",
   voiceDownloadFailed: "语音下载失败 · 网络波动,请重试",
+  imageDownloadFailed: "图片下载失败 · 网络波动,请重试",
+  imageAnalyzePrompt: "Please analyze the attached image.",
   historyYou: "🧑‍💻 你",
   crashRecovered: (time: string) =>
     `♻️ tmux-claude-bot 异常重启 — 上次未正常退出（崩溃/被杀），已自动恢复 · ${time}`,
@@ -307,13 +330,13 @@ export const zh = {
   noShortId: (id: string) => `未找到短 ID：${id}`,
   pathNotAllowed: (dirs: string[]) => `路径不在允许列表 · 允许：${dirs.join("、")}`,
   voiceNotEnabled:
-    "🎙️ 语音功能未启用 · 发送 /voice_install 一键安装（仅 Apple Silicon），或在主机运行 npm run whisper:install",
+    "🎙️ 语音功能未启用 · 发送 /voice_install 一键安装（仅 Apple Silicon），或在主机运行 pnpm whisper:install",
   voiceNeedsAppleSilicon: "🎙️ 语音转写需要 Apple Silicon（macOS arm64）· 当前主机不支持，请改发文字",
   voiceAlreadyInstalled: "🎙️ 语音功能已就绪 · 直接发语音即可",
   voiceInstalling: "🎙️ 正在安装语音功能 · 首次需下载依赖（约 1-2 分钟），稍候…",
   voiceInstallOk: "🎙️ 语音功能已就绪 · 现在可以直接发语音了",
   voiceInstallFailed: (e: string) =>
-    `🎙️ 安装失败 · ${e} · 可在主机运行 npm run whisper:install 查看详情`,
+    `🎙️ 安装失败 · ${e} · 可在主机运行 pnpm whisper:install 查看详情`,
   voiceLangCurrent: (lang: string) =>
     `🎙️ 当前识别语言：${lang === "auto" ? "自动检测" : lang} · 点下方按钮切换`,
   voiceLangSet: (lang: string) =>
@@ -418,92 +441,121 @@ export const zh = {
   promptsPrev: "◀ 上一页",
   promptsNext: "下一页 ▶",
 
-  // ── dashboard / batch ──
+  // ── dashboard ──
   cmdHome: "切换到主控操作员会话（未选项目时的默认目标）",
   homeOperatorDisabled: "未启用主控操作员会话",
   homeOperatorSwitched: "🏠 已切换到主控操作员会话",
   cmdDashboard: "查看全局仪表盘（所有会话状态总览）",
-  cmdBatch: "批量调度器：查看状态或控制批次运行（start/pause/resume/stop/report）",
   cmdAutopilot: "把当前会话工作托管给 Loop Supervisor 推进",
-  cmdOpportunity: "查看主动机会建议，并托管已确认的工作",
-  cmdGoals: "列出 autopilot 目标预设",
-  cmdSysload: "查看本机负载/发热/跑飞进程",
+  cmdOpportunity: "查看并讨论主动机会建议",
+  cmdSysload: "查看本机负载、发热、跑飞进程和资源守护状态",
   sysloadTitle: "🖥 系统负载",
   dashboardTitle: "📊 仪表盘",
+  dashboardOverallHealth: "总体健康",
+  dashboardAttention: "待处理",
+  dashboardActiveWork: "进行中的工作",
+  dashboardAutomation: "自动化",
+  dashboardOperatorAi: "Operator 与 AI 接口",
+  dashboardRuntimeDomains: "运行域",
+  dashboardRecentOutcomes: "最近结果",
+  dashboardProjectSessions: "项目会话",
+  dashboardNone: "无",
+  dashboardMore: "更多",
+  dashboardEnabled: "已启用",
+  dashboardIdle: "空闲",
+  dashboardShown: "已显示",
+  dashboardHealthy: "健康",
+  dashboardSession: "会话",
+  dashboardSkills: "技能",
+  dashboardMcpProfiles: "MCP 配置",
+  dashboardPromptLibrary: "提示词库",
+  dashboardSessions: "会话",
+  dashboardRunning: "运行中",
+  dashboardBusy: "忙碌",
+  dashboardQueue: "队列",
+  dashboardUp: "运行",
+  dashboardNoAdapters: "无适配器",
+  dashboardRuntimeDomain: (id: string) =>
+    ({
+      "work-orders": "工作单",
+      "repository-reviews": "仓库 PR 审查",
+      automation: "自动化",
+      "daily-task-audit": "每日任务审计",
+      "runtime-guardian": "运行时守护",
+      "resource-guardian": "资源守护",
+      "agent-capacity": "智能体容量",
+      power: "服务与电源",
+      "operator-ai": "操作员与 AI 接口",
+    })[id] ?? id,
+  dashboardHealthHealthy: "健康",
+  dashboardHealthAttention: "需处理",
+  dashboardHealthDegraded: "降级",
+  dashboardAttentionOperatorSession: "Home Operator 会话需要处理",
+  dashboardAttentionOperatorSkills: (installed: number, expected: number) =>
+    `Home Operator 技能已就绪 ${installed}/${expected}`,
+  dashboardAttentionOperatorMcp: (installed: number, expected: number) =>
+    `受管 MCP 配置已就绪 ${installed}/${expected}`,
+  dashboardAttentionOperatorPrompt: "已配置的提示词库当前不可用",
+  dashboardAttentionWorkOrderFailed: (project: string, _taskKind: string) =>
+    `${project} 的工作单失败`,
+  dashboardAttentionWorkOrderAbandoned: (project: string) => `${project} 的 WorkOrder 已失去接管`,
+  dashboardAttentionWorkOrderStale: (project: string) => `${project} 的 WorkOrder 派发已过期`,
+  dashboardAttentionAutomationDependency: (automation: string) => `${automation} 存在未启用的依赖`,
+  dashboardAttentionDailyAudit: (count: number) => `${count} 项 Daily Task Audit 需要处理`,
+  dashboardAttentionRuntimeFinding: (project: string, _findingKind: string) =>
+    `${project} 存在运行时守护发现`,
+  dashboardAttentionResourcePressure: (_pressure: string, _circuit: string) => "资源守护需要处理",
+  dashboardAttentionAgentCapacity: (agent: string, state: string) => `${agent} 容量状态为 ${state}`,
+  dashboardAttentionPowerPolicy: (_mode: string, _phase: string, _schedule: string) =>
+    "电源策略需要处理",
+  dashboardAttentionRepositoryReview: (project: string, status: string, retryEpoch: number) =>
+    status === "retry-wait"
+      ? `${project} 正在自动重试（轮次 ${retryEpoch}）`
+      : status === "manual-review"
+        ? `${project} 存在已验证的人工边界`
+        : `${project} 的仓库 PR 审查重试额度已耗尽`,
   autopilotTitle: `${UI_ICONS.feature.autopilot} Autopilot`,
   autopilotDelegatePanelBody:
-    "把当前会话上下文托管给 Loop Supervisor，继续完成实现、复核、验证、PR 处理和最终通知。",
-  autopilotNotifyPaused: (session: string, reason: string) =>
-    `🛑 autopilot 已暂停 [${session}]：${reason}`,
-  autopilotNotifyStopped: (session: string, reason: string) =>
-    `⏹️ autopilot 已停止 [${session}]：${reason}`,
-  autopilotNotifyUsage: (session: string, pct: number) =>
-    `🛑 autopilot 目标暂停 [${session}]：用量达 ${pct}% 阈值`,
-  autopilotNotifyMaxIter: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达最大迭代`,
-  autopilotNotifyWallClock: (session: string) => `⏹️ autopilot 目标停止 [${session}]：已达时长上限`,
-  autopilotNotifyAwaitHuman: (session: string) =>
-    `🎯 autopilot [${session}]：阶段判定完成，请确认（/autopilot confirm）或继续（/autopilot reject）`,
-  autopilotNotifyGoalComplete: (session: string, goalId: string) =>
-    `✅ autopilot 目标完成 [${session}]：${goalId}（请确认）`,
-  autopilotNotifyCycleComplete: (session: string, rounds: number) =>
-    `✅ autopilot 循环完成 [${session}]：已跑满 ${rounds} 轮（请确认）`,
-  autopilotNotifyKeepaliveDone: (session: string) =>
-    `✅ autopilot 保活任务完成 [${session}]：检测到完成标记`,
-  autopilotNotifyGoalAdvance: (
-    session: string,
-    goalId: string,
-    pos: number,
-    total: number,
-    round: number,
-    rounds: number,
-  ) => `➡️ autopilot [${session}]：进入目标 ${goalId}（${pos}/${total} · 第 ${round}/${rounds} 轮）`,
-  batchRunStarted: (planId: string, tasks: number) =>
-    `🚀 批次运行已启动：计划 ${planId}，共 ${tasks} 个任务`,
-  batchPoolPaused: (agent: string, resumeAt: string) =>
-    `⏸ 批次池已暂停 [${agent}]：额度已达上限，预计恢复 ${resumeAt}`,
-  batchRunComplete: (summary: string) => `✅ 批次运行完成\n${summary}`,
-  autopilotGlobal: (on: boolean): string =>
-    on
-      ? "已开启全局托管:所有活跃会话自动保活(某个会话用 /autopilot off 单独退出)"
-      : "已关闭全局托管",
-  autopilotStatus: (o: {
-    enabled: boolean;
-    pureKeepAlive: boolean;
-    iterations: number;
-    persona: string;
-    goal?: { id: string; phaseIndex: number };
-  }) =>
-    `Autopilot：${o.enabled ? "开" : "关"}（${o.pureKeepAlive ? "纯保活" : "随目标"}，已干预 ${o.iterations} 次，persona=${o.persona}）${o.goal ? `（目标 ${o.goal.id}#${o.goal.phaseIndex}）` : ""}`,
+    "把当前会话上下文托管给 Loop Supervisor。范围已经清楚时可以直接托管；需要先看清任务清单、验收标准和停止条件时，先看计划再确认推进。",
   autopilotUsage: (raw: string) =>
     `未知子命令「${raw}」。用法：/autopilot [需求] 或 /autopilot delegate [需求]`,
-  btnApEnable: `${UI_ICONS.feature.autopilot} 开启保活/目标`,
-  btnApDisable: "⏹ 关闭保活/目标",
+  autopilotPlanPreviewBody:
+    "托管前计划预览\n\n目标：基于当前会话和仓库状态，继续推进用户已确认的任务，直到真正完成。\n\n任务清单：检查现场上下文、git 状态、近期提交、现有 PR 和之前的验证结果；判断还剩什么；只做必要改动；复核 diff；运行相关本地验证、触达风险路径的覆盖率复核，以及有必要时使用已有 eval。\n\n验收标准：最终 summary 记录检查了什么、改了什么、验证了什么、PR/合并结果、最终分支、干净 worktree，以及任何真实 blocker 和证据。\n\n停止条件：任务已完成、确认存在真实 blocker、或继续推进会越过当前范围时停止；避免为了优化而优化。\n\n非目标：不扩大范围，不重做已经满足要求的工作，不为了 bot 策略去安装目标项目依赖，不在项目策略未允许时合并。\n\n确认这份计划符合你的意图后，再继续托管推进。",
+  langUsage: "用法 / Usage: /lang <en|zh|zh-TW|yue|ja|es>",
+  sessionsRestoreHint: "用 `/sessions <id前缀>` 恢复",
+  opportunityProjectFallback: "项目",
+  opportunityProjectCount: (n: number) => `${n} 个项目`,
+  opportunityDigestDelegable: (project: string, n: number) =>
+    `${project} · ${n} 个建议\n可以继续讨论；确认要执行时，请使用 Autopilot 托管。`,
+  opportunityDigestDiscussFirst: (project: string, n: number) =>
+    `${project} · ${n} 个建议\n先参与讨论，确认清楚后再托管执行。`,
+  btnOpportunityContinueDiscuss: "继续讨论",
+  btnOpportunityDiscussAll: "讨论全部",
+  btnOpportunityShow: "查看详情",
+  btnOpportunityDiscuss: "参与讨论",
+  btnOpportunityDismiss: "暂不处理",
+  opportunityNotFound: (ids: string) => `Opportunity not found: ${ids}`,
+  opportunitySkipped: (n: number) => `已跳过 ${n} 个建议。`,
+  opportunitySkippedMissing: (n: number, ids: string) => `已跳过 ${n} 个建议。缺失：${ids}`,
+  opportunityMixedProjects: "不能一起讨论来自不同项目的建议。",
+  opportunityCannotOpenProject: (reason: string) => `无法打开项目进行讨论：${reason}`,
+  opportunityDiscussionStarted: (n: number) => `正在讨论 ${n} 个建议。`,
+  opportunityAutomationConflict: (taskKind: string, runId: string, supervisorSession: string) =>
+    `项目正在执行自动化任务，暂时不能参与讨论。请等当前任务完成后再试。\n\n任务：${taskKind}\nRun：${runId}\nSupervisor：${supervisorSession}`,
+  opportunityQueueBusy:
+    "项目 agent 当前正在处理任务或已有排队消息，暂时不能参与讨论。请等当前任务完成后再试。",
+  opportunityGitStatusUnknown: (reason: string) =>
+    `无法确认项目 git 状态，暂时不能参与讨论。\n${reason}`,
+  opportunityDirtyWorktree: (preview: string) =>
+    `项目工作区不干净，暂时不能参与讨论。请先处理现有改动后再试。\n\n${preview}`,
   btnApDelegate: "🚀 继续托管推进",
+  btnApDelegateNow: "🚀 直接托管",
+  btnApReviewPlan: "📋 先看计划",
+  btnApConfirmDelegate: "✅ 确认托管",
   btnApCancelDelegate: "⛔ 取消托管",
-  btnApPickGoals: "🎯 选目标",
-  btnApGlobalOn: "🌐 全局:开",
-  btnApGlobalOff: "🌐 全局:关",
-  btnApStop: "⏹ 停止目标",
-  btnApConfirm: "✅ 确认完成",
-  btnApContinue: "▶️ 继续打磨",
+  btnApQueue: `${UI_ICONS.tone.queue} 查看队列`,
   btnApBack: "↩︎ 返回",
-  btnApRoundsMinus: "➖",
-  btnApRoundsPlus: "➕",
-  btnApStartCycle: (n: number, rounds: number) => `▶️ 开始(${n} 个目标 · ${rounds} 轮)`,
-  apRoundsLabel: (rounds: number) => `轮数:${rounds}`,
-  goalTestCoverage: "提升测试覆盖",
-  goalFixTests: "修复测试",
-  goalCodeReview: "代码评审",
-  goalAddFeature: "添加功能",
-  goalRefactorElegant: "重构为优雅专业",
-  goalUiPolish: "打磨界面",
-  goalImproveArchitecture: "提升架构质量",
-  goalHardenStandards: "加固工程规范与门禁",
-  goalPolishGithub: "GitHub 专业化",
-  goalSyncDocs: "文档与代码对齐",
-  autopilotGoalStarted: (id: string) => `已启动目标：${id}`,
-  autopilotUnknownGoal: (ids: string) => `未知目标。可用：${ids}`,
-  goalsTitle: "🎯 目标预设",
+  autopilotQueueTitle: `${UI_ICONS.tone.queue} Supervisor 队列`,
   noLogsContext: "无当前会话，请先选择项目或指定 trace（/logs <traceId>）。",
 
   // ── group binding (Feishu) ──

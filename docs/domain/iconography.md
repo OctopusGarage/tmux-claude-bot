@@ -85,7 +85,7 @@ formatters should reference semantic keys instead of hardcoding emoji.
 | `feature.inputs` | 🔁 | Recent inputs / re-run. |
 | `feature.dashboard` | 📊 | Dashboard. |
 | `feature.adopt` | 🧲 | Take over unmanaged agent. |
-| `feature.autopilot` | ✈️ | Autopilot / hands-free agent loop. |
+| `feature.autopilot` | ✈️ | Supervisor-backed Autopilot delegation. |
 | `feature.tag` | 🏷 | Prompt tag. |
 
 ## Rules
@@ -93,6 +93,8 @@ formatters should reference semantic keys instead of hardcoding emoji.
 - Add a semantic key in `UI_ICON_REGISTRY` before introducing a new reusable icon.
 - Tests should import `UI_ICONS` or formatter outputs, not duplicate raw emoji.
 - Do not maintain a second meaning table by hand; derive it from the registry.
+- Iconography owns semantic symbols only. Localized labels and surrounding
+  user-facing copy belong in `Messages`, `SetupMessages`, or maintained docs.
 - Shared action buttons should be rendered through
   `src/core/command/action-registry.ts` (`actionButtonRows`) so adapters do not
   read button keys or style metadata directly.

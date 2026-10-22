@@ -2,12 +2,7 @@ import type { LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { MessageAction } from "../../core/command/actions.js";
 import { executeMessage } from "../../core/command/dispatch.js";
 import { enqueueMessage, planQueuedAck } from "../../core/command/enqueue.js";
-import {
-  type PersistedMessage,
-  QueueCancelledError,
-  type QueuedMessage,
-} from "../../core/command/queue.js";
-import { restoreMessage } from "../../core/command/restore.js";
+import { QueueCancelledError, type QueuedMessage } from "../../core/command/queue.js";
 import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { isProjectGroup } from "../../core/projects/group-bindings.js";
@@ -23,55 +18,19 @@ import {
   userPromptQueueFields,
 } from "../../core/read/user-prompt-intake.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { queueAckCard, recoveryCard, resultCard } from "./cards.js";
+import { keyPaletteCard, queueAckCard, recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
 
 const log = createLogger("lark.executor");
 
+type LarkActionPreview = "text" | "voice" | "image";
+
 /** "📂 <friendly project>" tag stamped on every reply so the user can see which
  * project session received it — mirrors the Telegram adapter's project line. */
 function projectTag(session: string): string {
   return messages("lark").projectTag(labelForSession(session));
-}
-
-/**
- * Rehydrate a persisted Lark-channel message into a live QueuedMessage on boot,
- * so a bot restart resumes the backlog instead of dropping it (parity with
- * Telegram's createRestoredMessage). resolve/reject deliver the result through
- * the freshly-connected Lark channel, the same way enqueueLarkAction does.
- */
-export function createLarkRestoredMessage(
-  p: PersistedMessage,
-  channel: LarkChannel,
-): QueuedMessage {
-  const chatId = String(p.chatId);
-  const session = p.sessionName ?? "";
-  return restoreMessage(
-    p,
-    "lark",
-    (output) => {
-      void (async () => {
-        const mid = await sendCard(
-          channel,
-          chatId,
-          resultCard(output, projectTag(session), isProjectGroup(chatId)),
-        );
-        if (mid) recordReplyTarget(mid, session);
-      })();
-    },
-    (err) => {
-      void sendCard(
-        channel,
-        chatId,
-        recoveryCard(
-          `${messages("lark").errorPrefix(err.message)}\n${projectTag(session)}`,
-          isProjectGroup(chatId),
-        ),
-      );
-    },
-  );
 }
 
 export async function resolveSession(
@@ -123,7 +82,7 @@ export async function enqueueLarkAction(
   text: string,
   sessionOverride?: string,
   operatorFallbackOk = false,
-  preview: "text" | "voice" = "text",
+  preview: LarkActionPreview = "text",
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) {
@@ -133,9 +92,11 @@ export async function enqueueLarkAction(
   const m = messages("lark");
   const tag = projectTag(session);
   const prepared =
-    action === "text"
+    action === "text" && preview !== "image"
       ? await prepareUserPromptDelivery("lark", text, preview)
-      : ({ ok: true, text } as const);
+      : action === "text"
+        ? ({ ok: true, text, origin: "user", promptSource: "lark" } as const)
+        : ({ ok: true, text } as const);
   if (!prepared.ok) {
     await sendText(channel, chatId, `${m.promptTranslateFailed}\n${tag}`);
     return;
@@ -166,7 +127,9 @@ export async function enqueueLarkAction(
       action,
       ...(action === "text" && "preview" in prepared
         ? userPromptQueueFields(prepared)
-        : { text: prepared.text }),
+        : action === "text"
+          ? { text: prepared.text, origin: "user", promptSource: "lark" }
+          : { text: prepared.text }),
       callbacks: {
         resolve: (output) => {
           log.info(`resolve session=${session} output_len=${output.length}`);
@@ -183,6 +146,8 @@ export async function enqueueLarkAction(
               );
               if (mid) {
                 recordReplyTarget(mid, session);
+              } else {
+                await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);
               }
             } else {
               await sendText(channel, chatId, `${output}\n\n${projectTag(session)}`);
@@ -253,13 +218,19 @@ export async function runImmediateLarkAction(
   action: MessageAction,
   sessionOverride?: string,
   operatorFallbackOk = false,
+  text = "",
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) return;
 
+  if (action === "key" && !text.trim()) {
+    await sendCard(channel, chatId, keyPaletteCard());
+    return;
+  }
+
   const msg: QueuedMessage = {
     id: "",
-    text: "",
+    text,
     chatId,
     channel: "lark",
     sessionName: session,

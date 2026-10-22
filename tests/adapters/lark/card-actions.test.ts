@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { CardActionEvent } from "@larksuiteoapi/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCardActionHandler } from "../../../src/adapters/lark/card-actions.js";
+import { writeLoopSupervisorWorkOrderState } from "../../../src/core/loop/supervisor-state.js";
+import type { LoopWorkOrder } from "../../../src/core/loop/work-order.js";
 import { OpportunityStore } from "../../../src/core/opportunities/store.js";
 import { bindGroup, getBinding, unbindGroup } from "../../../src/core/projects/group-bindings.js";
 import { appendRecentProject } from "../../../src/core/projects/recentProjects.js";
@@ -43,6 +45,34 @@ function evt(value: unknown, over: Partial<CardActionEvent> = {}): CardActionEve
   } as CardActionEvent;
 }
 
+function writeTestWorkOrder(input: { id: string; projectPath: string }): void {
+  writeLoopSupervisorWorkOrderState({
+    workOrder: {
+      id: input.id,
+      scheduledAt: 1,
+      projectId: "api",
+      projectName: "api",
+      projectPath: input.projectPath,
+      task: { kind: "architecture" },
+      agent: "codex",
+      goal: "test",
+      maxRounds: 1,
+      targetScore: 95,
+      runner: { kind: "agent-supervised" },
+      allowedActions: [],
+      blockedActions: [],
+      skills: { approved: [] },
+      preflight: { commands: [] },
+      verification: { commands: [] },
+      pullRequest: { enabled: false },
+      requiredFinalMarker: `[LOOP_SUPERVISOR_DONE:${input.id}]`,
+    } as unknown as LoopWorkOrder,
+    supervisorSession: "tmux_proj_loop-supervisor-1",
+    status: "in-flight",
+    now: Date.now(),
+  });
+}
+
 function initGitProject(projectDir: string): void {
   execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
 }
@@ -50,6 +80,26 @@ function initGitProject(projectDir: string): void {
 describe("makeCardActionHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("key opens the palette and a palette choice sends the chord immediately", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    const handle = makeCardActionHandler(channel, deps);
+    await handle(evt({ cmd: "key" }));
+    expect(JSON.stringify(channel.cards())).toContain('"arg":"Shift+Left"');
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+    await handle(evt({ cmd: "key", arg: "Shift+Left" }));
+    expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", "proj-1");
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("does not send malformed chord callback payloads", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "key", arg: "-X;kill-session" }));
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+    expect(channel.texts().join("\n")).toContain("/key");
   });
 
   it("voicelangmenu → sends the voice-install card when voice is missing", async () => {
@@ -73,6 +123,16 @@ describe("makeCardActionHandler", () => {
     expect(JSON.stringify(channel.cards())).toContain("翻译模式");
   });
 
+  it("prompttranslate with a malformed option reports the parse error instead of opening the picker", async () => {
+    const channel = fakeChannel();
+    const handle = makeCardActionHandler(channel, fakeDeps());
+
+    await handle(evt({ cmd: "prompttranslate", arg: "on klingon" }));
+
+    expect(channel.cards()).toHaveLength(0);
+    expect(channel.texts().length).toBeGreaterThanOrEqual(1);
+  });
+
   it("qcancel → cancels that queued message by (session, id)", async () => {
     const cancelQueued = vi.fn(() => true);
     const channel = fakeChannel();
@@ -91,6 +151,98 @@ describe("makeCardActionHandler", () => {
     // Must NOT falsely confirm a cancellation; say the item is no longer queued.
     expect(channel.texts().some((t) => t.includes("不在队列"))).toBe(true);
     expect(channel.texts().some((t) => t.includes("已取消"))).toBe(false);
+  });
+
+  it.each([
+    ["missing session", { id: "m-7" }],
+    ["missing queue id", { s: "proj-1" }],
+  ])(
+    "qcancel with %s is inert so stale cards cannot cancel the wrong item",
+    async (_case, value) => {
+      const cancelQueued = vi.fn(() => true);
+      const channel = fakeChannel();
+      const deps = fakeDeps({ queue: { cancelQueued } });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "qcancel", ...value }));
+
+      expect(cancelQueued).not.toHaveBeenCalled();
+      expect(channel.sent).toHaveLength(0);
+    },
+  );
+
+  it("ap_plan sends a confirmation card without queueing delegation", async () => {
+    const enqueue = vi.fn(() => "queued" as const);
+    const channel = fakeChannel();
+    const deps = fakeDeps({ queue: { enqueue } });
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "ap_plan", s: "tmux_proj_api" }));
+
+    const cards = JSON.stringify(channel.cards());
+    expect(cards).toContain("托管前计划预览");
+    expect(cards).toContain("ap_confirm_delegate");
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("ap_delegate acks quickly even when the follow-up reply is slow", async () => {
+    const channel = fakeChannel();
+    channel.send = vi.fn(() => new Promise(() => undefined)) as unknown as typeof channel.send;
+    const deps = fakeDeps({
+      config: {
+        loopEngineering: {
+          configFile: "",
+          tickMs: 60_000,
+          supervisor: {
+            enabled: false,
+            dir: "/tmp/tcb-loop-supervisor",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+    });
+
+    const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "ap_delegate", s: "proj-1" }));
+
+    await expect(
+      Promise.race([
+        handler.then(() => "resolved"),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]),
+    ).resolves.toBe("resolved");
+  });
+
+  it("ap_delegate acks quickly even when chat type lookup is slow", async () => {
+    const channel = fakeChannel();
+    channel.getChatInfo = vi.fn(
+      () => new Promise(() => undefined),
+    ) as unknown as typeof channel.getChatInfo;
+    const deps = fakeDeps({
+      config: {
+        loopEngineering: {
+          configFile: "",
+          tickMs: 60_000,
+          supervisor: {
+            enabled: false,
+            dir: "/tmp/tcb-loop-supervisor",
+            agent: "codex",
+            poolSize: 1,
+            resetBeforeWorkOrder: "compact",
+            worktreeIsolation: "isolated",
+          },
+        },
+      },
+    });
+
+    const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "ap_delegate", s: "proj-1" }));
+
+    await expect(
+      Promise.race([
+        handler.then(() => "resolved"),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]),
+    ).resolves.toBe("resolved");
   });
 
   it("dangerous control button asks for confirmation before enqueueing", async () => {
@@ -196,8 +348,8 @@ describe("makeCardActionHandler", () => {
   });
 
   // peek/listalive/recent render cards; current/queuestatus render text. history
-  // renders a card only when the session has a path mapping (otherwise a "缺少路径"
-  // text hint) — covered separately in views.test.ts, so it's excluded here.
+  // renders a card only when the session has a path mapping; otherwise it renders
+  // a localized text hint. views.test.ts covers that branch, so it is excluded here.
   it.each([
     ["peek", "card"],
     ["listalive", "card"],
@@ -281,6 +433,7 @@ describe("makeCardActionHandler", () => {
               agent: "codex",
               poolSize: 1,
               resetBeforeWorkOrder: "compact",
+              worktreeIsolation: "isolated",
             },
           },
         },
@@ -292,7 +445,9 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(deps.queue.enqueued).toHaveLength(1);
+      });
       expect(deps.queue.enqueued[0]?.action).toBe("text");
       expect(deps.queue.enqueued[0]?.text).toContain("Do not implement yet.");
       expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
@@ -356,7 +511,75 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      await vi.waitFor(() => {
+        expect(channel.texts().join("\n")).toContain("项目 agent 当前正在处理任务");
+      });
+      expect(deps.queue.enqueued).toHaveLength(0);
+      expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscuss blocks when the target project has active supervisor automation", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-automation-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-automation-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      writeTestWorkOrder({ id: "run-automation-1", projectPath: projectDir });
+      const [suggestion] = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      if (suggestion === undefined) throw new Error("expected suggestion");
+      const channel = fakeChannel();
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
+
+      await vi.waitFor(() => {
+        const text = channel.texts().join("\n");
+        expect(text).toContain("项目正在执行自动化任务");
+        expect(text).toContain("run-automation-1");
+      });
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {
@@ -419,9 +642,11 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscuss", id: suggestion.id }));
 
-      const text = channel.texts().join("\n");
-      expect(text).toContain("项目工作区不干净");
-      expect(text).toContain("?? dirty.ts");
+      await vi.waitFor(() => {
+        const text = channel.texts().join("\n");
+        expect(text).toContain("项目工作区不干净");
+        expect(text).toContain("?? dirty.ts");
+      });
       expect(deps.queue.enqueued).toHaveLength(0);
       expect(new OpportunityStore().get(suggestion.id)).toMatchObject({ status: "proposed" });
     } finally {
@@ -499,7 +724,10 @@ describe("makeCardActionHandler", () => {
 
       await makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscussall", ids }));
 
-      expect(deps.queue.enqueued).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(deps.queue.enqueued).toHaveLength(1);
+      });
+
       expect(deps.queue.enqueued[0]?.action).toBe("text");
       expect(deps.queue.enqueued[0]?.text).toContain("as one combined scope");
       expect(deps.queue.enqueued[0]?.text).toContain(suggestions[0]?.id);
@@ -507,6 +735,71 @@ describe("makeCardActionHandler", () => {
       expect(JSON.stringify(channel.cards())).not.toContain("oppdelegate");
       expect(new OpportunityStore().get(ids[0] ?? "")).toMatchObject({ status: "discussing" });
       expect(new OpportunityStore().get(ids[1] ?? "")).toMatchObject({ status: "discussing" });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      if (oldStateDir === undefined) {
+        delete process.env.TCB_STATE_DIR;
+      } else {
+        process.env.TCB_STATE_DIR = oldStateDir;
+      }
+    }
+  });
+
+  it("oppdiscussall acks quickly even when follow-up card sending is slow", async () => {
+    const oldStateDir = process.env.TCB_STATE_DIR;
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-fast-ack-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tcb-lark-opp-batch-fast-project-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    try {
+      initGitProject(projectDir);
+      const suggestions = new OpportunityStore().upsertDiscoveryReport({
+        report: {
+          projectId: "api",
+          projectName: "api",
+          generatedAt: "2026-07-29T09:00:00.000Z",
+          coverage: "partial",
+          checkedSignals: ["docs"],
+          skippedSignals: [],
+          suggestions: [
+            {
+              title: "Add explain command",
+              category: "developer-experience",
+              confidence: "high",
+              problem: "Users need manual log inspection.",
+              whyNow: "Opportunity discovery found repeated support friction.",
+              value: "Faster support.",
+              evidence: ["support logs mention missing context"],
+              recommendedApproach: "Discuss a read-only explain command.",
+              alternatives: ["Keep raw logs only"],
+              acceptanceCriteria: ["Owner confirms scope before implementation"],
+              risks: ["Scope can grow"],
+              nonGoals: ["Do not implement during discussion"],
+              estimatedComplexity: "small",
+              delegateRequirement: "Add the explain command after owner approval.",
+            },
+          ],
+        },
+        projectPath: projectDir,
+        runId: "run-1",
+        cooldownDays: 14,
+        now: Date.parse("2026-07-29T09:00:00Z"),
+      });
+      const ids = suggestions.map((suggestion) => suggestion.id);
+      const channel = fakeChannel();
+      channel.send = vi.fn(() => new Promise(() => undefined)) as unknown as typeof channel.send;
+      const deps = fakeDeps({
+        config: { cdAllowedDirs: [projectDir] },
+        bridge: { hasSession: vi.fn(async () => true) },
+      });
+      const handler = makeCardActionHandler(channel, deps)(evt({ cmd: "oppdiscussall", ids }));
+
+      await expect(
+        Promise.race([
+          handler.then(() => "resolved"),
+          new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+        ]),
+      ).resolves.toBe("resolved");
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
       rmSync(projectDir, { recursive: true, force: true });
@@ -648,13 +941,35 @@ describe("makeCardActionHandler", () => {
     expect(channel.sent).toHaveLength(0);
   });
 
+  it.each([
+    ["switch", "set"],
+    ["remove", "killSession"],
+    ["addrecent", "set"],
+  ] as const)("%s with no sid is inert before resolving project state", async (cmd, effect) => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({
+      bridge: { listProjectSessions: vi.fn(async () => ["tmux_proj_x"]) },
+      agent: { checkIfRunning: vi.fn(async () => false) },
+    });
+
+    await makeCardActionHandler(channel, deps)(evt({ cmd }));
+
+    expect(channel.sent).toHaveLength(0);
+    if (effect === "killSession") {
+      expect(deps.bridge.killSession).not.toHaveBeenCalled();
+    } else {
+      expect(deps.currentProject.set).not.toHaveBeenCalled();
+    }
+    expect(deps.bridge.listProjectSessions).not.toHaveBeenCalled();
+  });
+
   it("'addrecent' with a sid routes to addRecentBySid", async () => {
     const channel = fakeChannel();
     const deps = fakeDeps();
     const handler = makeCardActionHandler(channel, deps);
 
-    // No recent lines match → replies the "未找到短 id" message; that's enough to
-    // prove the addrecent branch was taken.
+    // No recent lines match, so the localized short-id-not-found reply proves the
+    // addrecent branch was taken.
     await handler(evt({ cmd: "addrecent", sid: "nomatch" }));
 
     expect(channel.texts().some((t) => t.includes("未找到短 id"))).toBe(true);
@@ -860,6 +1175,33 @@ describe("makeCardActionHandler", () => {
       expect(channel.texts()).toHaveLength(1);
       expect(channel.texts().some((t) => t.includes(missingBinary))).toBe(true);
     });
+
+    it.each([
+      ["startpick", undefined],
+      ["startpick", 99],
+      ["restartpick", undefined],
+    ] as const)(
+      "%s with idx=%s is inert so stale picker cards do not launch anything",
+      async (cmd, idx) => {
+        const channel = fakeChannel();
+        const deps = fakeDeps(multi);
+
+        await makeCardActionHandler(channel, deps)(evt({ cmd, idx }));
+
+        expect(deps.agent.start).not.toHaveBeenCalled();
+        expect(channel.sent).toHaveLength(0);
+      },
+    );
+
+    it("startpick with no resolved session reports the missing project after validating the picker value", async () => {
+      const channel = fakeChannel();
+      const deps = fakeDeps({ ...multi, session: null });
+
+      await makeCardActionHandler(channel, deps)(evt({ cmd: "startpick", idx: 0 }));
+
+      expect(deps.agent.start).not.toHaveBeenCalled();
+      expect(channel.cards().length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   describe("directory browser", () => {
@@ -912,6 +1254,22 @@ describe("makeCardActionHandler", () => {
       // The prompt echoes the breadcrumb (~ or the dir path).
       expect(channel.texts().length).toBeGreaterThan(0);
     });
+
+    it.each(["browsecreate", "browsenewfolder"] as const)(
+      "%s with expired browser state is inert",
+      async (cmd) => {
+        const channel = fakeChannel();
+        const deps = fakeDeps({
+          config: { cdAllowedDirs: [dir] },
+          bridge: { hasSession: vi.fn(async () => false) },
+        });
+
+        await makeCardActionHandler(channel, deps)(evt({ cmd }, { chatId: `chat-expired-${cmd}` }));
+
+        expect(deps.bridge.createSession).not.toHaveBeenCalled();
+        expect(channel.sent).toHaveLength(0);
+      },
+    );
   });
 
   // --- inputredo (re-run a /inputs entry as an editable draft) ---

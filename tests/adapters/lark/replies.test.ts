@@ -41,6 +41,26 @@ describe("sendText", () => {
     }
   });
 
+  it("times out a hung channel.send and retries", async () => {
+    vi.useFakeTimers();
+    try {
+      const channel = fakeChannel();
+      vi.mocked(channel.send)
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValueOnce({ messageId: "m2" });
+
+      const p = sendText(channel, "chat-1", "hi");
+      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(600);
+      await p;
+
+      expect(channel.send).toHaveBeenCalledTimes(2);
+      expect(channel.send).toHaveBeenLastCalledWith("chat-1", { markdown: "hi" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does NOT retry rate_limited (the SDK already retried+exhausted it)", async () => {
     const channel = fakeChannel();
     vi.mocked(channel.send).mockRejectedValueOnce(

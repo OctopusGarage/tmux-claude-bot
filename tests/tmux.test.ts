@@ -506,9 +506,13 @@ describe("TmuxBridge", () => {
       mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
       await expect(bridge.createSession("my_session")).resolves.toBe(true);
-      expect(mockExecFile).toHaveBeenCalledWith("tmux", ["new-session", "-d", "-s", "my_session"], {
-        timeout: 10000,
-      });
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        ["new-session", "-d", "-s", "my_session", "-e", "DISABLE_AUTO_UPDATE=true"],
+        {
+          timeout: 10000,
+        },
+      );
     });
 
     it("passes -c <cwd> to new-session so the pane starts there (no shell `cd`, no injection)", async () => {
@@ -521,7 +525,29 @@ describe("TmuxBridge", () => {
       await expect(bridge.createSession("my_session", evilPath)).resolves.toBe(true);
       expect(mockExecFile).toHaveBeenCalledWith(
         "tmux",
-        ["new-session", "-d", "-s", "my_session", "-c", evilPath],
+        ["new-session", "-d", "-s", "my_session", "-e", "DISABLE_AUTO_UPDATE=true", "-c", evilPath],
+        { timeout: 10000 },
+      );
+    });
+
+    it("disables shell auto-update prompts before typing startup commands", async () => {
+      mockExecFile = createMockExecFile({ newSession: { stdout: "", stderr: "" } });
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await bridge.createSession("tmux_proj_new", "/repo");
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "tmux",
+        [
+          "new-session",
+          "-d",
+          "-s",
+          "tmux_proj_new",
+          "-e",
+          "DISABLE_AUTO_UPDATE=true",
+          "-c",
+          "/repo",
+        ],
         { timeout: 10000 },
       );
     });
@@ -582,9 +608,47 @@ describe("TmuxBridge", () => {
 
     it("throws when kill fails", async () => {
       mockExecFile = createMockExecFile({});
-      mockExecFile.mockRejectedValueOnce(new Error("no such session"));
+      mockExecFile.mockRejectedValueOnce(new Error("tmux server died"));
       const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
-      await expect(bridge.killSession("nonexistent")).rejects.toThrow("no such session");
+      await expect(bridge.killSession("nonexistent")).rejects.toThrow("tmux server died");
+    });
+
+    it("treats an already-missing session as cleaned up", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        new Error("Command failed: tmux kill-session -t missing\ncan't find session: missing\n"),
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).resolves.toBeUndefined();
+    });
+
+    it("treats string-form already-missing session failures as cleaned up", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        "Command failed: tmux kill-session -t missing\ncan't find session: missing\n",
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).resolves.toBeUndefined();
+    });
+
+    it("throws when kill fails for a different missing session", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(
+        new Error("Command failed: tmux kill-session -t missing\ncan't find session: other\n"),
+      );
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).rejects.toThrow("can't find session: other");
+    });
+
+    it("throws when a missing-session error did not come from kill-session", async () => {
+      mockExecFile = createMockExecFile({});
+      mockExecFile.mockRejectedValueOnce(new Error("can't find session: missing"));
+      const bridge = new TmuxBridge({ execFile: mockExecFile, getSessionName });
+
+      await expect(bridge.killSession("missing")).rejects.toThrow("can't find session: missing");
     });
   });
 

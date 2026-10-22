@@ -35,9 +35,9 @@ projects:
     maxRounds: 3
     targetScore: 90
     assessment:
-      command: npm run assess
+      command: pnpm assess
     eval:
-      command: npm run loop-eval
+      command: pnpm loop-eval
       minScore: 95
     commit:
       enabled: false
@@ -54,16 +54,16 @@ describe("parseLoopConfigYaml", () => {
     const config = parseLoopConfigYaml(validConfig);
 
     expect(config.scheduler.jitter).toEqual({
-      enabled: false,
-      seed: "loop-engineering",
-      architectureMaxDelayMinutes: 0,
-      bugFixMaxDelayMinutes: 0,
-      testCoverageMaxDelayMinutes: 0,
-      securityMaintenanceMaxDelayMinutes: 0,
-      harnessAutoMaxDelayMinutes: 0,
-      opportunityDiscoveryMaxDelayMinutes: 0,
-      pullRequestReviewMaxDelayMinutes: 0,
-      repositoryPullRequestReviewMaxDelayMinutes: 0,
+      enabled: true,
+      architectureMaxDelayMinutes: 60,
+      bugFixMaxDelayMinutes: 60,
+      testCoverageMaxDelayMinutes: 60,
+      securityMaintenanceMaxDelayMinutes: 60,
+      harnessAutoMaxDelayMinutes: 60,
+      opportunityDiscoveryMaxDelayMinutes: 60,
+      automationGovernanceReviewMaxDelayMinutes: 60,
+      pullRequestReviewMaxDelayMinutes: 60,
+      repositoryPullRequestReviewMaxDelayMinutes: 60,
     });
     expect(config.skills.approved[0]).toMatchObject({
       id: "improve-codebase-architecture",
@@ -82,18 +82,52 @@ describe("parseLoopConfigYaml", () => {
       agent: "codex",
       maxRounds: 3,
       targetScore: 90,
+      cleanupPolicy: "conservative",
       execution: { agent: false },
-      assessment: { command: "npm run assess" },
-      eval: { command: "npm run loop-eval", minScore: 95 },
+      assessment: { command: "pnpm assess" },
+      eval: { command: "pnpm loop-eval", minScore: 95 },
       commit: { enabled: false, perRound: true },
     });
+  });
+
+  it("parses cleanup policy defaults and task overrides", () => {
+    const config = parseLoopConfigYaml(`
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    cleanupPolicy: balanced
+    schedule: "0 2 * * *"
+    runner:
+      kind: agent-supervised
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 3
+    targetScore: 90
+    assessment:
+      command: pnpm assess
+    bugFix:
+      enabled: true
+      schedule: "10 2 * * *"
+      cleanupPolicy: conservative
+    harnessAuto:
+      enabled: true
+      schedule: "20 2 * * *"
+      cleanupPolicy: aggressive
+      tasks:
+        - kind: architecture
+          enabled: true
+`);
+
+    expect(config.projects[0]?.cleanupPolicy).toBe("balanced");
+    expect(config.projects[0]?.bugFix.cleanupPolicy).toBe("conservative");
+    expect(config.projects[0]?.harnessAuto.cleanupPolicy).toBe("aggressive");
   });
 
   it("parses scheduler jitter defaults and per-job overrides", () => {
     const config = parseLoopConfigYaml(`scheduler:
   jitter:
     enabled: true
-    seed: local-stable
     architectureMaxDelayMinutes: 10
     bugFixMaxDelayMinutes: 20
     testCoverageMaxDelayMinutes: 25
@@ -113,6 +147,7 @@ prReview:
       path: /repo/mesh-talk
       repo: OctopusGarage/mesh-talk
       agent: codex
+      enabled: false
       schedule: "45 3 * * *"
       scheduleJitterMinutes: 12
       switchBack: dev
@@ -120,18 +155,74 @@ prReview:
 
     expect(config.scheduler.jitter).toEqual({
       enabled: true,
-      seed: "local-stable",
       architectureMaxDelayMinutes: 10,
       bugFixMaxDelayMinutes: 20,
       testCoverageMaxDelayMinutes: 25,
       securityMaintenanceMaxDelayMinutes: 28,
       harnessAutoMaxDelayMinutes: 26,
       opportunityDiscoveryMaxDelayMinutes: 18,
+      automationGovernanceReviewMaxDelayMinutes: 60,
       pullRequestReviewMaxDelayMinutes: 30,
       repositoryPullRequestReviewMaxDelayMinutes: 45,
     });
     expect(config.projects[0]?.scheduleJitterMinutes).toBe(7);
+    expect(config.prReview.repositories[0]?.enabled).toBe(false);
     expect(config.prReview.repositories[0]?.scheduleJitterMinutes).toBe(12);
+  });
+
+  it("parses worktree isolation overrides for supervised work orders", () => {
+    const config = parseLoopConfigYaml(`
+projects:
+  - id: hub
+    name: Hub
+    path: /repo/hub
+    agent: codex
+    worktreeIsolation: source
+    schedule: "0 2 * * *"
+    goal: Improve core module clarity in small verified slices.
+    maxRounds: 3
+    targetScore: 90
+    assessment:
+      command: pnpm assess
+    execution:
+      agent: true
+workspaces:
+  - id: geo
+    name: Geo
+    root: /repo/geo
+    agent: codex
+    worktreeIsolation: isolated
+    repositories:
+      - id: backend
+        name: Backend
+        path: /repo/geo/backend
+        role: api
+        worktreeIsolation: source
+      - id: frontend
+        name: Frontend
+        path: /repo/geo/frontend
+        role: web
+    architecture:
+      enabled: true
+      schedule: "0 3 * * *"
+      goal: Improve cross-repository boundaries.
+prReview:
+  repositories:
+    - id: mesh-talk-all-prs
+      name: mesh-talk all PRs
+      path: /repo/mesh-talk
+      repo: OctopusGarage/mesh-talk
+      agent: codex
+      schedule: "45 3 * * *"
+      switchBack: dev
+      worktreeIsolation: isolated
+`);
+
+    expect(config.projects[0]?.worktreeIsolation).toBe("source");
+    expect(config.workspaces[0]?.worktreeIsolation).toBe("isolated");
+    expect(config.workspaces[0]?.repositories[0]?.worktreeIsolation).toBe("source");
+    expect(config.workspaces[0]?.repositories[1]?.worktreeIsolation).toBeUndefined();
+    expect(config.prReview.repositories[0]?.worktreeIsolation).toBe("isolated");
   });
 
   it("parses test coverage jobs for meaningful coverage improvement", () => {
@@ -657,14 +748,14 @@ workspaces:
 
   it("rejects unsupported agent-backed assessment in phase one", () => {
     expect(() =>
-      parseLoopConfigYaml(validConfig.replace("command: npm run assess", "agent: true")),
+      parseLoopConfigYaml(validConfig.replace("command: pnpm assess", "agent: true")),
     ).toThrow(/assessment.agent is not implemented/i);
   });
 
   it("accepts agent-backed eval for active-agent evaluation", () => {
     const config = parseLoopConfigYaml(
       validConfig.replace(
-        "command: npm run loop-eval\n      minScore: 95",
+        "command: pnpm loop-eval\n      minScore: 95",
         "agent: true\n      minScore: 95",
       ),
     );
@@ -672,7 +763,7 @@ workspaces:
     expect(config.projects[0]?.eval).toMatchObject({ agent: true, minScore: 95 });
     const summary = validateLoopConfig(
       validConfig.replace(
-        "command: npm run loop-eval\n      minScore: 95",
+        "command: pnpm loop-eval\n      minScore: 95",
         "agent: true\n      minScore: 95",
       ),
     );
@@ -738,7 +829,7 @@ workspaces:
           "      base: dev",
           "      switchBack: dev",
           "      autoMerge: true",
-          "      githubAccount: Kingson4Wu",
+          "      githubAccount: example-owner",
           "    allowedActions:",
         ].join("\n"),
       ),
@@ -749,7 +840,7 @@ workspaces:
       base: "dev",
       switchBack: "dev",
       autoMerge: true,
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
     });
   });
 
@@ -764,12 +855,14 @@ workspaces:
           "      enabled: true",
           "      base: main",
           "      switchBack: main",
+          "      githubAccount: example-owner",
           "    pullRequestReview:",
           "      enabled: true",
           '      schedule: "30 9 * * *"',
           "      lookbackHours: 36",
           "      consecutivePasses: 2",
           "      autoMerge: true",
+          "      mergeMethod: merge",
           "      prompt: Focus on bugs, CI, mergeability, and user-visible regressions.",
           "    allowedActions:",
         ].join("\n"),
@@ -782,6 +875,7 @@ workspaces:
       lookbackHours: 36,
       consecutivePasses: 2,
       autoMerge: true,
+      mergeMethod: "merge",
       prompt: "Focus on bugs, CI, mergeability, and user-visible regressions.",
     });
     const text = validConfig.replace(
@@ -884,10 +978,11 @@ prReview:
       agent: codex
       schedule: "0 2 * * *"
       base: dev
-      githubAccount: Kingson4Wu
+      githubAccount: example-owner
       lookbackHours: 72
       consecutivePasses: 2
       autoMerge: true
+      mergeMethod: rebase
       repair:
         enabled: true
         maxAttempts: 1
@@ -900,8 +995,9 @@ prReview:
       repo: "OctopusGarage/tmux-claude-bot",
       base: "dev",
       switchBack: "dev",
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
       autoMerge: true,
+      mergeMethod: "rebase",
       repair: {
         enabled: true,
         maxAttempts: 1,
@@ -922,7 +1018,7 @@ prReview:
       agent: codex
       schedule: "0 2 * * *"
       switchBack: dev
-      githubAccount: Kingson4Wu
+      githubAccount: example-owner
       autoMerge: true
 `);
 
@@ -930,7 +1026,7 @@ prReview:
       id: "mesh-talk-all-prs",
       repo: "OctopusGarage/mesh-talk",
       switchBack: "dev",
-      githubAccount: "Kingson4Wu",
+      githubAccount: "example-owner",
       autoMerge: true,
     });
     expect(config.prReview.repositories[0]?.base).toBeUndefined();

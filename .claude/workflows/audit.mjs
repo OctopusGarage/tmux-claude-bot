@@ -15,7 +15,7 @@ const MAP = [
   "Layering: src/adapters/{telegram,lark} (thin per-channel I/O) -> src/core (protocol-agnostic logic) -> src/shared (leaf utils). The two adapters historically drift.",
   "State files live under appStateDir() (TCB_STATE_DIR ?? ~/.tmux-claude-bot) and .queue/: session_path_map.json, group_bindings.json, workspaces.json, reply_target_map.json, recent_projects.txt, .current_project, .instance.lock, .env.",
   "session_path_map.json is written by BOTH the bot and the claude-tmux helper.",
-  "Existing gates: vitest+coverage, biome, knip, dependency-cruiser, Stryker (npm run mutation). They verify local/static/single-process properties only.",
+  "Existing gates: vitest+coverage, biome, knip, dependency-cruiser, Stryker (pnpm mutation). They verify local/static/single-process properties only.",
 ].join("\n");
 
 const FINDINGS_SCHEMA = {

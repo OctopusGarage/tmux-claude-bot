@@ -37,8 +37,8 @@ fi
 MATERIALIZE=0
 if [ -n "${TCB_MATERIALIZE_FROM:-}" ]; then
   # Materialize mode: provision the managed runtime from an already-built copy
-  # (the installed npm package) instead of downloading. Used by `tmux-claude-bot
-  # install` so an `npm i -g` install can stand up the launchd service from a
+# (the installed npm package) instead of downloading. Used by `tmux-claude-bot
+# install` so an `npm i -g` install can stand up the launchd service from a
   # stable ~/.tmux-claude-bot, without re-downloading or rebuilding. dist is
   # prebuilt in the package, so the deps step below only installs runtime deps.
   MATERIALIZE=1
@@ -141,48 +141,51 @@ command -v node >/dev/null 2>&1 || { err "node not found - install via nvm: http
 command -v tmux >/dev/null 2>&1 || warn "tmux not found - install it (macOS: brew install tmux | Debian/Ubuntu: sudo apt install tmux)"
 command -v claude >/dev/null 2>&1 || warn "Claude Code CLI not found - see https://docs.anthropic.com/en/docs/claude-code (or set CLAUDE_START_COMMAND)."
 
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return
+  fi
+  command -v corepack >/dev/null 2>&1 || {
+    err "pnpm not found and corepack is unavailable. Install pnpm first: https://pnpm.io/installation"
+    exit 1
+  }
+  info "Enabling pnpm via corepack..."
+  corepack enable pnpm >/dev/null 2>&1 || corepack prepare pnpm@10.32.1 --activate
+  command -v pnpm >/dev/null 2>&1 || {
+    err "pnpm is still unavailable after corepack activation."
+    exit 1
+  }
+}
+
+ensure_pnpm
+
 if [ "$MATERIALIZE" = 1 ]; then
   # Materialize mode ships a prebuilt dist - only runtime deps are needed.
   info "Installing runtime dependencies..."
-  HUSKY=0 npm install --omit=dev
+  HUSKY=0 pnpm install --prod --frozen-lockfile
 else
   # Full install (dev deps included) so the tsup build can run, then build the
   # bundled dist the launchd service runs, then prune dev deps back out. Skip
   # husky - end users need no git hooks; tarball installs have no .git anyway.
   info "Installing dependencies..."
-  HUSKY=0 npm ci || HUSKY=0 npm install
+  HUSKY=0 pnpm install --frozen-lockfile || HUSKY=0 pnpm install
   info "Building..."
-  npm run build
+  pnpm build
   info "Pruning dev dependencies..."
-  HUSKY=0 npm prune --omit=dev
+  HUSKY=0 pnpm prune --prod
 fi
 
-# Global launchers so the documented commands ('tmux-claude-bot tui', 'tcb tui',
-# 'tcb dashboard', ...) work from anywhere - a thin wrapper that execs the bundled
-# CLI. Same ~/.local/bin launcher pattern as the sibling net-auto-switch install.
-# Two names: the full 'tmux-claude-bot' and the short 'tcb' the docs use.
+# Global launchers follow the same production bundle and state directory as the
+# managed service. Service mode changes refresh them through the same helper.
+scripts/install-cli-launchers.sh
 BIN_DIR="$HOME/.local/bin"
-NODE_BIN="$(command -v node)"
-mkdir -p "$BIN_DIR"
-cat >"$BIN_DIR/tmux-claude-bot" <<EOF_RUNNER
-#!/usr/bin/env bash
-set -euo pipefail
-# Pin to THIS install's state dir (the launchd/systemd service uses the same
-# state/ subdir) so the CLI always reaches the managed bot's control socket,
-# regardless of any stray TCB_STATE_DIR in the caller's environment.
-export TCB_STATE_DIR="$PROJECT_DIR/state"
-exec "$NODE_BIN" "$PROJECT_DIR/dist/cli.js" "\$@"
-EOF_RUNNER
-chmod +x "$BIN_DIR/tmux-claude-bot"
-ln -sf tmux-claude-bot "$BIN_DIR/tcb"
-info "Installed launchers 'tcb' and 'tmux-claude-bot' in $BIN_DIR"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) warn "Add $BIN_DIR to your PATH to use them globally:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 
 # Guided setup (read prompts from the terminal even when piped via curl). Driven
-# through the built CLI, not `npm run setup` (= tsx src/...): the materialized npm
+# through the built CLI, not `pnpm setup` (= tsx src/...): the materialized npm
 # package ships dist only, no src.
 # Migrate a legacy root-level .env into state/ before the check, so an existing
 # install isn't re-prompted for setup after the state/ split.
@@ -202,19 +205,22 @@ else
   info "TCB_SKIP_SERVICE set - skipping service registration."
 fi
 
-# AI operating skill (Claude Code / Codex). Lets an agent drive the bot via the
-# tcb CLI in natural language. Opt out with TCB_SKIP_SKILL=1.
-if [ -z "${TCB_SKIP_SKILL:-}" ]; then
-  info "Installing AI operating skill (Claude Code / Codex)..."
-  node dist/cli.js skill install || info "Skill install skipped (non-fatal)."
+# Default AI tool surfaces live under the bot-owned Home Operator workspace;
+# this command also removes stale global skill copies. It does not mutate the
+# user's private Claude/Codex global config.
+if [ -z "${TCB_SKIP_AI_TOOLS:-}" ] && [ -z "${TCB_SKIP_MCP:-}" ]; then
+  info "Installing default AI tool surfaces..."
+  node dist/cli.js ai-tools install || info "AI tool surface install skipped (non-fatal)."
 else
-  info "TCB_SKIP_SKILL set - skipping AI skill install."
+  info "TCB_SKIP_AI_TOOLS/TCB_SKIP_MCP set - skipping AI tool surface install."
 fi
 
 info "Done. Installed at $PROJECT_DIR"
 info "Terminal UI:     tcb tui"
 info "Other commands (global - no cd needed; 'tmux-claude-bot' works too):"
 info "  Health check:  tcb doctor"
+info "  MCP profiles:  tcb mcp install"
+info "  Skills:        tcb skill status   (optional global copy: tcb skill install --scope global)"
 info "  Reconfigure:   tcb setup --reconfigure"
 info "  Add Feishu:    tcb setup:lark   (scan a QR; works with or instead of Telegram)"
 info "  Uninstall:     tcb service uninstall"

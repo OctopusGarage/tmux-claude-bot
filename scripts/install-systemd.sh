@@ -9,10 +9,14 @@ UNIT_DIR="$HOME/.config/systemd/user"
 TARGET="$UNIT_DIR/$UNIT.service"
 
 WRAPPER="systemd-wrapper.sh"
+LAUNCHER_ARGS=()
 if [ "${1:-}" = "--dev" ]; then
   WRAPPER="dev-systemd-wrapper.sh"
+  LAUNCHER_ARGS=("--dev")
   echo "[install-systemd] DEV mode: service will hot-reload from $PROJECT_DIR"
 fi
+
+"$SCRIPT_DIR/install-cli-launchers.sh" "${LAUNCHER_ARGS[@]}"
 
 mkdir -p "$UNIT_DIR"
 mkdir -p "$PROJECT_DIR/logs"

@@ -8,15 +8,18 @@ import { SHELL_RC_FILES } from "../../shared/shell-rc.js";
 import type { AgentKind } from "../../shared/types.js";
 import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { sleep } from "../../shared/utils/sleep.js";
 import { getAgentRuntimeRecord, recordAgentLaunch } from "../agents/agent-runtime-records.js";
 import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
+import { findProjectAutomationConflictForSession } from "../automation/project-conflicts.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
 import { recoveryStartCommand } from "../recovery/recover.js";
 import { getActionPrecondition, isMessageAction } from "./actions.js";
 import { sendContextReset } from "./context-reset.js";
+import { parseKeyChord } from "./key-chord.js";
 import type { QueuedMessage } from "./queue.js";
 
 const log = createLogger("command.dispatch");
@@ -232,8 +235,12 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     throw new Error(`Unknown action: ${msg.action}`);
   }
   const text = queuedMessageText(msg);
+  const chord = msg.action === "key" ? parseKeyChord(text) : null;
+  if (msg.action === "key" && !chord) return m.keyUsage;
 
-  log.info(`action=${msg.action} session=${session} text_len=${text.length}`);
+  log.info("message action dispatch started", {
+    data: { action: msg.action, session, textLength: text.length, origin: msg.origin },
+  });
 
   const liveSession = await resolveLiveSessionName(deps.bridge, session);
   if (!liveSession) {
@@ -262,46 +269,86 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
 
   switch (msg.action) {
     case "text": {
-      await deps.agent.waitUntilInputReady(session);
+      if (msg.origin !== "system") {
+        const conflict = findProjectAutomationConflictForSession(session);
+        if (conflict !== null) {
+          log.warn("text rejected: project automation conflict", {
+            data: {
+              session,
+              projectPath: conflict.projectPath,
+              projectId: conflict.projectId,
+              runId: conflict.runId,
+              taskKind: conflict.taskKind,
+              status: conflict.status,
+              supervisorSession: conflict.supervisorSession,
+            },
+          });
+          return m.projectAutomationBusy(
+            conflict.taskKind,
+            conflict.projectId,
+            conflict.runId,
+            conflict.supervisorSession,
+          );
+        }
+      }
+      try {
+        await waitUntilInputReadyForMessage(msg, deps, session);
+      } catch (err) {
+        if (msg.origin === "system") throw err;
+        log.warn("text rejected: agent input surface not ready", {
+          err,
+          data: { session, action: msg.action, channel: msg.channel },
+        });
+        return m.agentInputNotReady;
+      }
       const promptText = text;
-      log.info(`sending keys session=${session}`);
+      log.debug("sending prompt to agent", { data: { session } });
       await deps.bridge.sendKeys(promptText, session);
-      log.info(`keys sent, waiting for done session=${session}`);
+      log.debug("prompt sent; waiting for agent completion", { data: { session } });
 
       // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first
       // expired round sends a one-time "still running" notice (when the adapter
       // provided a notify channel) and waiting continues — so long tasks resolve
       // with their real result instead of a partial snapshot, and nothing gets
       // typed into a still-busy pane. Past the horizon, give up with partials.
-      let rawResult: string;
+      let rawResult: string | undefined;
       try {
         let round = await deps.agent.waitUntilDone(session);
         let waitedMs = deps.config.maxWaitDoneMs;
         const maxWaitDoneTotalMs = msg.maxWaitDoneTotalMs ?? deps.config.maxWaitDoneTotalMs;
         let noticed = false;
-        while (!round.done && waitedMs < maxWaitDoneTotalMs) {
+        if (msg.doneProbe?.(round.output)) {
+          rawResult = round.output;
+        }
+        while (rawResult === undefined && !round.done && waitedMs < maxWaitDoneTotalMs) {
           if (!noticed) {
             msg.notify?.(m.taskStillRunningNotice);
             noticed = true;
           }
-          log.info(`still running session=${session} waited=${waitedMs}ms, continuing to wait`);
+          log.debug("agent still running; continuing to wait", {
+            data: { session, waitedMs },
+          });
           round = await deps.agent.waitUntilDone(session);
           waitedMs += deps.config.maxWaitDoneMs;
+          if (msg.doneProbe?.(round.output)) {
+            rawResult = round.output;
+          }
         }
-        if (!round.done) {
+        if (rawResult === undefined && !round.done) {
           log.warn(`gave up waiting session=${session} after ${waitedMs}ms`);
           return m.taskStillRunning(deps.output.process(round.output));
         }
-        rawResult = round.output;
+        rawResult ??= round.output;
       } catch (err) {
-        log.error(`waitUntilDone failed: ${err instanceof Error ? err.message : err}`);
+        log.error("agent completion wait failed", { err, data: { session } });
         try {
           const pane = await deps.bridge.capturePane(session);
           rawResult = deps.output.process(pane);
         } catch (paneErr) {
-          log.error(
-            `capturePane fallback failed: ${paneErr instanceof Error ? paneErr.message : paneErr}`,
-          );
+          log.error("agent pane fallback capture failed", {
+            err: paneErr,
+            data: { session },
+          });
           throw normalizeError(err);
         }
       }
@@ -310,7 +357,9 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       // Read the reply from the agent's transcript (cleaner than scraping the
       // ANSI pane). claude: <CLAUDE_CONFIG_DIR>/projects JSONL; codex: the rollout
       // under <CODEX_HOME>/sessions. Either may return null → pane fallback below.
-      log.info(`looking up history session=${session} path=${projectPath}`);
+      log.debug("looking up agent transcript reply", {
+        data: { session, projectPath },
+      });
       const historyReply = await readAgentLatestReply(
         deps.configResolver,
         session,
@@ -318,7 +367,9 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         promptText,
       );
       if (historyReply?.trim()) {
-        log.info(`history reply found len=${historyReply.length}`);
+        log.debug("agent transcript reply found", {
+          data: { session, replyLength: historyReply.length },
+        });
         const maxLen = deps.config.maxMessageLength - 100;
         if (historyReply.length > maxLen) {
           return `${historyReply.slice(0, maxLen)}\n\n${m.contentTruncated}`;
@@ -326,11 +377,19 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return historyReply;
       }
 
-      log.info(
-        `no history reply, using pane output session=${session} raw_len=${rawResult.length}`,
-      );
+      if (msg.origin !== "system") {
+        log.warn(`no history reply; suppressing pane output session=${session}`, {
+          data: { rawLen: rawResult.length, channel: msg.channel },
+        });
+        return m.agentReplyUnavailable;
+      }
+      log.debug("agent transcript reply unavailable; using pane output", {
+        data: { session, rawLength: rawResult.length },
+      });
       const processed = deps.output.process(rawResult);
-      log.info(`processed output len=${processed.length}`);
+      log.debug("agent output processed", {
+        data: { session, outputLength: processed.length },
+      });
       if (!processed.trim()) {
         return m.agentEmptyOutput;
       }
@@ -375,12 +434,16 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
     case "clear": {
       log.info(`sending /clear session=${session}`);
-      await sendContextReset(deps, session, "clear");
+      await sendContextReset(deps, session, "clear", {
+        ensureSubmitted: msg.origin === "system",
+      });
       return m.clearedContext;
     }
     case "compact": {
       log.info(`sending /compact session=${session}`);
-      await sendContextReset(deps, session, "compact");
+      await sendContextReset(deps, session, "compact", {
+        ensureSubmitted: msg.origin === "system",
+      });
       return m.compactedContext;
     }
     case "enter": {
@@ -408,6 +471,11 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       await deps.bridge.sendRawKey("Right", session);
       return m.sentRight;
     }
+    case "key": {
+      if (!chord) return m.keyUsage;
+      await deps.bridge.sendRawKey(chord.tmuxKey, session);
+      return m.keySent(chord.label);
+    }
     case "tab": {
       log.info(`sending tab session=${session}`);
       await deps.bridge.sendRawKey("Tab", session);
@@ -424,6 +492,51 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
+}
+
+async function waitUntilInputReadyForMessage(
+  msg: QueuedMessage,
+  deps: HandlerDeps,
+  session: string,
+): Promise<void> {
+  if (msg.origin !== "system") {
+    await deps.agent.waitUntilInputReady(session);
+    return;
+  }
+  const maxWaitMs =
+    msg.maxWaitDoneTotalMs ??
+    (deps.config as { maxWaitDoneTotalMs?: number }).maxWaitDoneTotalMs ??
+    0;
+  if (maxWaitMs <= 0) {
+    await deps.agent.waitUntilInputReady(session);
+    return;
+  }
+  const deadline = Date.now() + maxWaitMs;
+  const retryDelayMs = 1000;
+  let attempts = 0;
+  let lastError: unknown = new Error("agent input surface not ready before retry deadline");
+  while (Date.now() < deadline) {
+    attempts++;
+    try {
+      await deps.agent.waitUntilInputReady(session);
+      if (attempts > 1) {
+        log.info(
+          `system prompt input surface became ready session=${session} attempts=${attempts}`,
+        );
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      log.warn(`system prompt input surface not ready; retrying session=${session}`, {
+        err,
+        data: { attempts, remainingMs },
+      });
+      await sleep(Math.min(retryDelayMs, remainingMs));
+    }
+  }
+  throw normalizeError(lastError);
 }
 
 function queuedMessageText(msg: QueuedMessage): string {

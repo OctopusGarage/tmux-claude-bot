@@ -495,18 +495,26 @@ describe("aliveProjectButtons", () => {
     const userSession = "tmux_proj_-my-app";
     const operatorSession = "tmux_proj_home";
     const supervisorSession = "tmux_proj_loop-supervisor";
+    const loopWorkerSession = "tmux_proj_loop-worker-my-app";
     setPathForSession(userSession, dir);
     setPathForSession(operatorSession, dir);
     setPathForSession(supervisorSession, dir);
+    setPathForSession(loopWorkerSession, dir);
     const deps = fakeDeps({
       bridge: {
-        listProjectSessions: vi.fn(async () => [operatorSession, supervisorSession, userSession]),
+        listProjectSessions: vi.fn(async () => [
+          operatorSession,
+          supervisorSession,
+          loopWorkerSession,
+          userSession,
+        ]),
       },
     });
     const buttons = await aliveProjectButtons(deps, "telegram");
     const sids = buttons.map((b) => b.sid);
     expect(sids).not.toContain(sessionShortId(operatorSession));
     expect(sids).not.toContain(sessionShortId(supervisorSession));
+    expect(sids).not.toContain(sessionShortId(loopWorkerSession));
     expect(sids).toContain(sessionShortId(userSession));
   });
 });
@@ -617,9 +625,14 @@ describe("recentProjectButtons", () => {
     // Infrastructure sessions have recorded paths but must not appear in the picker.
     setPathForSession("tmux_proj_home", dir);
     setPathForSession("tmux_proj_loop-supervisor", dir);
+    setPathForSession("tmux_proj_loop-worker-my-app", dir);
     const deps = fakeDeps({
       bridge: {
-        listProjectSessions: vi.fn(async () => ["tmux_proj_home", "tmux_proj_loop-supervisor"]),
+        listProjectSessions: vi.fn(async () => [
+          "tmux_proj_home",
+          "tmux_proj_loop-supervisor",
+          "tmux_proj_loop-worker-my-app",
+        ]),
       },
     });
     const buttons = await recentProjectButtons(deps, "telegram");

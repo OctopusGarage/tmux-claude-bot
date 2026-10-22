@@ -4,7 +4,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Keep full local/coverage gates within the host's CPU and memory envelope.
+    // Several suites spawn real child processes, so high coverage parallelism
+    // causes scheduler starvation and false 30-second timeouts on busy hosts.
+    maxWorkers: 1,
     setupFiles: ["tests/setup.ts"],
+    testTimeout: 30_000,
     exclude: [
       // Prevent git worktrees nested under .claude/worktrees/ from being picked
       // up as additional test suites — they are independent branches/sandboxes.

@@ -13,6 +13,16 @@
   "publishConfig": {
     "access": "public"
   },
+  "pnpm": {
+    "overrides": {
+      "follow-redirects": "1.16.1"
+    },
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "node-pty",
+      "protobufjs"
+    ]
+  },
   "bin": {
     "tmux-claude-bot": "dist/cli.js"
   },
@@ -32,7 +42,7 @@
     "dev": "scripts/dev-env.sh tsx watch src/index.ts",
     "tui": "scripts/dev-env.sh tsx src/cli.ts tui",
     "build": "tsup",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "pnpm build",
     "start": "node dist/cli.js run",
     "setup": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts",
     "setup:reconfigure": "NODE_NO_WARNINGS=1 tsx src/scripts/setup.ts --reconfigure",
@@ -64,56 +74,59 @@
     "lint:deep": "eslint src",
     "verify:local": "scripts/verify-local.sh",
     "mutation": "stryker run",
-    "audit": "npm audit --audit-level=high",
+    "audit": "pnpm audit --audit-level high",
     "prepare": "husky 2>/dev/null || true"
   },
   "dependencies": {
     "@grammyjs/files": "^1.2.0",
-    "@larksuiteoapi/node-sdk": "^1.71.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^15.0.0",
     "dotenv": "^17.4.0",
-    "grammy": "^1.45.1",
+    "grammy": "^1.46.0",
     "https-proxy-agent": "^9.1.0",
     "ink": "^7.1.1",
     "node-fetch": "^3.3.2",
     "qrcode-terminal": "^0.12.0",
-    "react": "^19.2.8",
+    "react": "^19.3.1",
     "telegramify-markdown": "^1.3.3",
-    "tsx": "^4.23.1",
-    "yaml": "^2.9.0",
-    "zod": "^4.4.3"
+    "tsx": "^4.23.15",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "overrides": {
     "axios": "^1.18.1",
-    "brace-expansion": "^5.0.9",
+    "brace-expansion": "^5.0.12",
     "esbuild": "^0.28.1",
-    "fast-uri": "^3.1.5",
-    "hono": "^4.13.1",
+    "fast-uri": "^3.1.8",
+    "hono": "^4.13.8",
     "ip-address": "^10.4.0",
-    "qs": "^6.15.2"
+    "nanoid": "^3.3.17",
+    "qs": "^6.16.0"
   },
   "lint-staged": {
     "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
+    "@biomejs/biome": "2.5.15",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.6.5",
     "@types/qrcode-terminal": "^0.12.2",
-    "@types/react": "^19.2.17",
-    "@vitest/coverage-v8": "^4.1.10",
-    "dependency-cruiser": "^18.1.0",
-    "eslint": "^10.8.0",
-    "fast-check": "^4.9.0",
+    "@types/react": "^19.3.0",
+    "@vitest/coverage-v8": "^5.0.5",
+    "dependency-cruiser": "^18.6.0",
+    "eslint": "^10.13.0",
+    "fast-check": "^4.10.2",
     "husky": "^9.1.7",
-    "knip": "^6.29.0",
-    "lint-staged": "^17.2.0",
+    "knip": "^6.42.0",
+    "lint-staged": "^17.6.0",
     "node-pty": "^1.1.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
-    "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.8"
-  }
+    "typescript-eslint": "^8.71.2",
+    "vite": "8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "packageManager": "pnpm@10.13.1"
 }

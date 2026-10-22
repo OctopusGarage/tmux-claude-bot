@@ -12,6 +12,7 @@ import { allRunningSessions } from "../agents/runningSessions.js";
 import type { HandlerDeps } from "../deps.js";
 import { isReservedInfrastructureSession } from "../projects/operator.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
+import { clearRecoveryIntent, hasRecoveryIntent, recoveryIntentFor } from "./recovery-intent.js";
 
 const log = createLogger("recovery.recover");
 
@@ -43,6 +44,8 @@ export interface RecoverItem {
   command: string | null;
   /** Exact conversation id to resume, or null → resume the most recent (--continue). */
   sessionId: string | null;
+  /** Task id that authorizes boot-only recovery, or null for roster/manual recovery. */
+  recoveryTaskId: string | null;
   /** The tmux session is gone and must be recreated before launching. */
   needsRecreate: boolean;
   action: RecoverAction;
@@ -72,7 +75,10 @@ let recovering = false;
  * is the agent running) plus on-disk records (path/kind/command/id), exactly the
  * resolve-from-live-then-fall-back-to-recorded pattern the rest of the bot uses.
  */
-export async function planRecovery(deps: HandlerDeps): Promise<RecoverItem[]> {
+export async function planRecovery(
+  deps: HandlerDeps,
+  opts: { autoOnly?: boolean } = {},
+): Promise<RecoverItem[]> {
   // Roster = the sessions the bot last knew to be RUNNING (not every recorded
   // project), so recovery restores the pre-reboot running state rather than
   // blindly relaunching everything. A running session with no recorded path
@@ -80,8 +86,19 @@ export async function planRecovery(deps: HandlerDeps): Promise<RecoverItem[]> {
   // excluded: their lifecycle is owned by their boot provisioners, not generic
   // recovery.
   const prefix = deps.config.projectSessionPrefix;
-  const roster = allRunningSessions()
-    .filter((session) => !isReservedInfrastructureSession(session, prefix))
+  const runningRoster = allRunningSessions().filter(
+    (session) => !isReservedInfrastructureSession(session, prefix),
+  );
+  const idleRosterCount = opts.autoOnly
+    ? runningRoster.filter((session) => !hasRecoveryIntent(session)).length
+    : 0;
+  if (opts.autoOnly && idleRosterCount > 0) {
+    log.info("auto-recover skipped idle roster entries", {
+      data: { skippedIdle: idleRosterCount },
+    });
+  }
+  const roster = runningRoster
+    .filter((session) => !opts.autoOnly || hasRecoveryIntent(session))
     .map((session) => ({ session, path: getPathBySession(session) }))
     .filter((r): r is { session: string; path: string } => r.path !== null);
   // Each session's classification is independent and each does its own tmux /
@@ -103,6 +120,7 @@ async function classifySession(
     kind: record.kind,
     command: record.startCommand,
     sessionId: record.liveSessionId,
+    recoveryTaskId: recoveryIntentFor(session)?.taskId ?? null,
   };
   if (await deps.bridge.isPaneAlive(session)) {
     // Session is present. If its agent is already running there's nothing to do;
@@ -131,7 +149,7 @@ async function classifySession(
  */
 export async function recoverProjects(
   deps: HandlerDeps,
-  opts: { dryRun?: boolean; staggerMs?: number } = {},
+  opts: { dryRun?: boolean; staggerMs?: number; autoOnly?: boolean } = {},
 ): Promise<RecoverResult> {
   const staggerMs = opts.staggerMs ?? RECOVER_STAGGER_MS;
   // Refuse a second concurrent execute before doing any work (a dry-run preview is
@@ -146,7 +164,9 @@ export async function recoverProjects(
       busy: true,
     };
   }
-  const plan = await planRecovery(deps);
+  const plan = await planRecovery(deps, {
+    ...(opts.autoOnly !== undefined ? { autoOnly: opts.autoOnly } : {}),
+  });
   // Bucket the plan by action once, then reuse the buckets everywhere below
   // (preview, result skeleton, and the execute list) instead of re-filtering.
   const launch = plan.filter((i) => i.action === "launch");
@@ -205,11 +225,20 @@ async function runRecovery(
       } else {
         await deps.agent.start(item.session, command);
       }
+      if (item.recoveryTaskId) {
+        clearRecoveryIntent(item.session, item.recoveryTaskId);
+      }
       deps.configResolver.invalidate(item.session);
       result.launched.push(item);
       log.info("recovered project", {
         session: item.session,
-        data: { kind: item.kind, resume: item.sessionId ? "exact-id" : "continue" },
+        data: {
+          kind: item.kind,
+          resume: item.sessionId ? "exact-id" : "continue",
+          ...(item.recoveryTaskId
+            ? { reason: "unfinished-task", taskId: item.recoveryTaskId }
+            : {}),
+        },
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -260,7 +289,7 @@ function shellToken(value: string): string {
  */
 export async function autoRecoverOnBoot(deps: HandlerDeps): Promise<void> {
   try {
-    const res = await recoverProjects(deps);
+    const res = await recoverProjects(deps, { autoOnly: true });
     if (res.busy) return;
     if (res.launched.length === 0 && res.shellOnly.length === 0) {
       log.info("auto-recover: nothing to restore", {

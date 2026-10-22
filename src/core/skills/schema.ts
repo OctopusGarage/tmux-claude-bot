@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const skillIdSchema = z.string().min(1);
-export type SkillId = z.infer<typeof skillIdSchema>;
 
 export const skillAgentSchema = z.enum(["claude", "codex"]);
 

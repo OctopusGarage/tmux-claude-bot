@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
 import { promisify } from "node:util";
-import { createLogger, logger } from "../../shared/utils/logger.js";
+import { createLogger } from "../../shared/utils/logger.js";
 import { getFromCache, saveToCache } from "../../shared/utils/media-cache.js";
 import { withRetry } from "../../shared/utils/retry.js";
 
@@ -64,9 +64,9 @@ export async function transcribeOgg(
   // has no "yue"/Cantonese → ValueError). Retry once with auto-detect so a bad
   // language code degrades to a best-effort transcript instead of hard-failing.
   if (!fs.existsSync(txtFile) && langArgs.length > 0 && !opts?.noFallback) {
-    log.warn(
-      `no output with --language ${language}; retrying auto-detect — ${whisperReason(result)}`,
-    );
+    log.warn("forced-language transcription produced no output; retrying auto-detect", {
+      data: { language, reason: whisperReason(result) },
+    });
     result = await execFileAsync(MLX_WHISPER_BIN, baseArgs);
   }
 
@@ -137,13 +137,13 @@ export async function transcribeWithCache(opts: {
   let tmpToDelete: string | null = null;
   const cached = getFromCache(cacheKey);
   if (cached) {
-    logger.info(`[${label}] voice cache hit key=${cacheKey}`);
+    log.debug("voice cache hit", { data: { label, cacheKey } });
     audioPath = cached;
   } else {
     try {
       await withRetry(() => download(tmpPath));
     } catch (err) {
-      logger.error(`[${label}] voice download failed: ${err instanceof Error ? err.message : err}`);
+      log.error("voice download failed", { err, data: { label, cacheKey } });
       return { ok: false, reason: "download" };
     }
     audioPath = saveToCache(cacheKey, tmpPath);
@@ -162,9 +162,7 @@ export async function transcribeWithCache(opts: {
   try {
     transcribed = await transcribeOgg(audioPath, bin, language);
   } catch (err) {
-    logger.error(
-      `[${label}] voice transcription failed: ${err instanceof Error ? err.message : err}`,
-    );
+    log.error("voice transcription failed", { err, data: { label, cacheKey, language } });
     return { ok: false, reason: "transcribe" };
   } finally {
     if (tmpToDelete) {

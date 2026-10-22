@@ -12,7 +12,7 @@ directly via `tsx`** (`node --import tsx … src/index.ts`); `dist/` is built by
 `tsc` but is not used by the running service. User-facing operations are spread
 across separate entry points: `tsx src/scripts/setup.ts`, `tsx
 src/scripts/doctor.ts`, and a set of `scripts/*.sh` wrappers invoked through
-`npm run service:*`.
+`pnpm service:*`.
 
 This works but is not the shape a developer-facing tool is expected to take in
 2025/2026. It has no presence on a registry, no `npx` entry, no provenance, runs
@@ -58,7 +58,7 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
 
 - **Stage 1 — foundation (no risk):** add tsup + `src/cli.ts` (commander)
   dispatching to the existing `run`/`setup`/`doctor`/`service` logic; add
-  `bin`/`files`/`exports`/`build` to `package.json`. Verified by `npm run build`,
+  `bin`/`files`/`exports`/`build` to `package.json`. Verified by `pnpm build`,
   `node dist/cli.js --help`, `… doctor`, `npm pack --dry-run`. Does **not** change
   the launchd wrapper or the live service.
 - **Stage 2 — rewire runtime (touches live service):** point
@@ -72,7 +72,7 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
 - **Stage 4 — npm as a first-class full install (done):** `tmux-claude-bot
   install` **materializes** the prebuilt package into the stable
   `~/.tmux-claude-bot` (a new `TCB_MATERIALIZE_FROM` mode in `install.sh`: rsync
-  the package's prebuilt `dist`/`scripts`/manifests, `npm install --omit=dev`, no
+  the package's prebuilt `dist`/`scripts`/manifests, `pnpm install --omit=dev`, no
   rebuild) and registers launchd there. This is the daemon convention (à la
   Homebrew's Cellar): the launchd service runs from a stable managed runtime, not
   from the volatile global `node_modules` path (which moves with node versions /
@@ -95,12 +95,12 @@ mature developer daemons use (PM2, wrangler, vercel). Concretely:
 ## Consequences
 
 - Operations converge behind one discoverable command with `--help`/`--version`
-  for free; the `scripts/*.sh` + `npm run service:*` surface can shrink to thin
+  for free; the `scripts/*.sh` + `pnpm service:*` surface can shrink to thin
   shims (or be removed) once the CLI covers them.
 - The launchd **service runtime** no longer loads `tsx` (it runs the prebuilt
   `dist/` bundle): faster cold start, runtime decoupled from the dev toolchain.
   `tsx` stays a dependency only because the source-run management scripts
-  (`npm run setup`/`doctor`/`setup:lark`) still execute TypeScript directly in
+  (`pnpm setup`/`doctor`/`setup:lark`) still execute TypeScript directly in
   the pruned prod install; routing those through the dist CLI to fully drop `tsx`
   is a possible follow-up.
 - A new maintenance surface appears (the published package + release pipeline);

@@ -13,20 +13,37 @@ import {
   sessionNameFromPath,
   setPathForSession,
 } from "../projects/sessionPathMap.js";
+import {
+  claimDelegationAttempt,
+  type DelegationAttempt,
+  prepareDelegationAttempt,
+  settleDelegationAttempt,
+} from "./delegation-attempt.js";
+import { readFreshSupervisorFinalSummary } from "./final-summary-freshness.js";
 import type {
   LoopAgentEvalInvocation,
   LoopAgentTaskInvocation,
   LoopRunCommandResult,
 } from "./run.js";
-import type { SupervisorDispatchRequest } from "./supervised-runner.js";
+import type { SupervisorDispatchRequest, SupervisorDispatchResult } from "./supervised-runner.js";
+import {
+  leaseLoopSupervisorWorker,
+  readLoopSupervisorWorkerLeaseState,
+  releaseLoopSupervisorWorker,
+  writeLoopSupervisorWorkerLeaseState,
+} from "./supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
 import {
   loopSupervisorControlRestore,
   restoredLoopSupervisorMessage,
+  shouldDiscardRestoredLoopSupervisorMessage,
 } from "./supervisor-work-restore.js";
-import type { LoopWorkOrder } from "./work-order.js";
+import { type LoopWorkOrder, parseSupervisorFinalSummary } from "./work-order.js";
 
 const log = createLogger("loop.agent-queue");
+const DEFAULT_WORKER_FAILURE_RETAIN_MS = 72 * 60 * 60 * 1000;
+const SUPERVISOR_WORKER_CONSUMPTION_TIMEOUT_MS = 30_000;
+const DEFERRED_SUPERVISOR_QUEUE_TIMEOUT_MS = 7_200_000;
 
 type QueueDeps = {
   bridge: {
@@ -205,7 +222,8 @@ async function enqueueLoopAgentPromptToSession(
   contextReset?: SupervisorDispatchRequest["contextReset"],
   signal?: AbortSignal,
   timeoutMs?: number,
-): Promise<LoopRunCommandResult> {
+  deferLeaseUntilConsumption = false,
+): Promise<SupervisorDispatchResult> {
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
@@ -220,14 +238,121 @@ async function enqueueLoopAgentPromptToSession(
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
 
+  const messageId = newMessageId();
+  let attempt: DelegationAttempt | undefined;
+  try {
+    attempt = prepareDelegationAttempt({
+      workOrder,
+      attemptId: messageId,
+      supervisorSession: sessionName,
+      prompt,
+      now: Date.now(),
+    });
+  } catch {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "delegation attempt preparation failed",
+      finalSummaryRecovery: "disabled",
+    };
+  }
+  const settlePreparationFailure = (result: SupervisorDispatchResult): SupervisorDispatchResult => {
+    if (attempt !== undefined) {
+      try {
+        settleDelegationAttempt(
+          workOrder,
+          attempt,
+          result,
+          signal?.aborted ?? false,
+          Date.now(),
+          false,
+        );
+      } catch {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "delegation attempt settlement failed",
+          finalSummaryRecovery: "disabled",
+        };
+      }
+    }
+    return result;
+  };
+
+  let leaseAcquired = false;
+  const acquireLease = (): { status: "acquired" } | { status: "unavailable"; reason: string } => {
+    const lease = leaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      supervisorSession: sessionName,
+      workOrder,
+      now: Date.now(),
+      retainFailureForMs:
+        (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000,
+    });
+    writeLoopSupervisorWorkerLeaseState(lease.state);
+    if (lease.status === "unavailable") {
+      log.info("loop supervisor worker lease unavailable", {
+        session: sessionName,
+        data: { workOrderId: workOrder.id, projectId: workOrder.projectId, reason: lease.reason },
+      });
+      return { status: "unavailable", reason: lease.reason };
+    }
+    leaseAcquired = !lease.reusedExisting;
+    log.info("loop supervisor worker leased", {
+      session: sessionName,
+      data: {
+        workOrderId: workOrder.id,
+        projectId: workOrder.projectId,
+        projectPath: workOrder.projectPath,
+        reusedExisting: lease.reusedExisting,
+      },
+    });
+    return { status: "acquired" };
+  };
+  const releaseFailureLease = (): void => {
+    if (leaseAcquired) {
+      releaseSupervisorWorkerLease(workOrder, "failure");
+      return;
+    }
+    if (!deferLeaseUntilConsumption) return;
+    const hasPreReservedLease = readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workerSession === sessionName &&
+        lease.workOrderId === workOrder.id,
+    );
+    if (hasPreReservedLease) releaseSupervisorWorkerLease(workOrder, "failure");
+  };
+  if (!deferLeaseUntilConsumption) {
+    const lease = acquireLease();
+    if (lease.status === "unavailable") {
+      return settlePreparationFailure({
+        status: 1,
+        stdout: "",
+        stderr: lease.reason,
+      });
+    }
+  }
+
   const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
-  if (resetResult !== null && resetResult.status !== 0) return resetResult;
+  if (resetResult !== null && resetResult.status !== 0) {
+    releaseFailureLease();
+    return settlePreparationFailure(resetResult);
+  }
   if (signal?.aborted) {
-    return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
+    releaseFailureLease();
+    return settlePreparationFailure({
+      status: 1,
+      stdout: "",
+      stderr: "loop supervisor task was cancelled before enqueue",
+    });
   }
 
   return new Promise((resolve) => {
-    const messageId = newMessageId();
+    let consumed = false;
+    let settled = false;
+    let ownsAttempt = true;
+    let consumptionTimer: ReturnType<typeof setTimeout> | undefined;
     const abort = (): void => {
       // Cancellation can remove only not-yet-started queue items. In-flight
       // supervisor turns remain serialized by the per-session queue and must
@@ -235,8 +360,37 @@ async function enqueueLoopAgentPromptToSession(
       deps.queue.cancelQueued(sessionName, messageId, "loop supervisor task was cancelled");
     };
     signal?.addEventListener("abort", abort, { once: true });
-    const settle = (result: LoopRunCommandResult): void => {
+    const clearConsumptionTimer = (): void => {
+      if (consumptionTimer !== undefined) clearTimeout(consumptionTimer);
+    };
+    const settle = (result: SupervisorDispatchResult): void => {
+      if (settled) return;
+      settled = true;
+      if (!ownsAttempt) result = { ...result, status: 1, finalSummaryRecovery: "disabled" };
+      if (attempt !== undefined && signal?.aborted)
+        result = { status: 1, stdout: result.stdout, stderr: "loop supervisor task was cancelled" };
+      if (attempt !== undefined && ownsAttempt) {
+        try {
+          settleDelegationAttempt(
+            workOrder,
+            attempt,
+            result,
+            signal?.aborted ?? false,
+            Date.now(),
+            consumed,
+          );
+        } catch {
+          result = {
+            status: 1,
+            stdout: "",
+            stderr: "delegation attempt settlement failed",
+            finalSummaryRecovery: "disabled",
+          };
+        }
+      }
       signal?.removeEventListener("abort", abort);
+      clearConsumptionTimer();
+      if (result.status !== 0 && ownsAttempt) releaseFailureLease();
       resolve(result);
     };
     const verdict = deps.queue.enqueue({
@@ -249,14 +403,47 @@ async function enqueueLoopAgentPromptToSession(
       origin: "system",
       promptSource: "control",
       ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
-      controlRestore: loopSupervisorControlRestore(workOrder, sessionName, Date.now()),
-      started: () =>
+      doneProbe: (output) =>
+        readFreshSupervisorFinalSummary(workOrder, attempt?.freshness).ok ||
+        parseSupervisorFinalSummary(output, workOrder.id).ok,
+      controlRestore: loopSupervisorControlRestore(
+        workOrder,
+        sessionName,
+        Date.now(),
+        attempt?.attemptId,
+      ),
+      started: () => {
+        if (deferLeaseUntilConsumption) {
+          const lease = acquireLease();
+          if (lease.status === "unavailable") return false;
+        }
+        if (attempt !== undefined) {
+          let claimed = false;
+          try {
+            claimed = claimDelegationAttempt(workOrder, attempt, Date.now());
+          } catch {
+            /* Reconciliation owns an uncertain claim. */
+          }
+          if (!claimed) {
+            ownsAttempt = false;
+            deps.queue.cancelQueued(
+              sessionName,
+              messageId,
+              "delegation attempt requires reconciliation",
+            );
+            return false;
+          }
+        }
+        consumed = true;
+        clearConsumptionTimer();
         writeLoopSupervisorWorkOrderState({
           workOrder,
           supervisorSession: sessionName,
           status: "in-flight",
           now: Date.now(),
-        }),
+        });
+        return true;
+      },
       resolve: (output) => settle({ status: 0, stdout: output, stderr: "" }),
       reject: (err) => settle({ status: 1, stdout: "", stderr: err.message }),
     });
@@ -275,7 +462,54 @@ async function enqueueLoopAgentPromptToSession(
         status: "queued",
         now: Date.now(),
       });
+      consumptionTimer = setTimeout(
+        () => {
+          if (consumed) return;
+          const cancelled = deps.queue.cancelQueued(
+            sessionName,
+            messageId,
+            "loop supervisor worker did not consume queued task before deadline",
+          );
+          if (!cancelled) {
+            settle({
+              status: 1,
+              stdout: "",
+              stderr: "loop supervisor worker did not consume queued task before deadline",
+            });
+          }
+        },
+        deferLeaseUntilConsumption
+          ? (timeoutMs ?? DEFERRED_SUPERVISOR_QUEUE_TIMEOUT_MS)
+          : SUPERVISOR_WORKER_CONSUMPTION_TIMEOUT_MS,
+      );
+      consumptionTimer.unref();
     }
+  });
+}
+
+function releaseSupervisorWorkerLease(
+  workOrder: LoopWorkOrder,
+  result: "success" | "failure",
+): void {
+  const retainFailureForMs =
+    (workOrder.executionIsolation?.cleanup.retainFailureForHours ?? 72) * 60 * 60 * 1000 ||
+    DEFAULT_WORKER_FAILURE_RETAIN_MS;
+  writeLoopSupervisorWorkerLeaseState(
+    releaseLoopSupervisorWorker({
+      state: readLoopSupervisorWorkerLeaseState(),
+      workOrderId: workOrder.id,
+      result,
+      now: Date.now(),
+      retainFailureForMs,
+    }),
+  );
+  log.info("loop supervisor worker lease settled", {
+    data: {
+      workOrderId: workOrder.id,
+      projectId: workOrder.projectId,
+      result,
+      retainFailureForMs,
+    },
   });
 }
 
@@ -306,7 +540,8 @@ export function createLoopQueueAgentEvalRunner(
 
 export function createLoopSupervisorTaskRunner(
   deps: QueueDeps,
-): (request: SupervisorDispatchRequest) => Promise<LoopRunCommandResult> {
+  options: { deferLeaseUntilConsumption?: boolean } = {},
+): (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult> {
   return (request) =>
     enqueueLoopAgentPromptToSession(
       deps,
@@ -316,6 +551,7 @@ export function createLoopSupervisorTaskRunner(
       request.contextReset,
       request.signal,
       request.timeoutMs,
+      options.deferLeaseUntilConsumption ?? request.deferLeaseUntilConsumption ?? false,
     );
 }
 
@@ -325,7 +561,11 @@ export function restoreLoopControlQueue(deps: ControlRestoreQueueDeps): number {
     loadPersisted: () => deps.queue.loadPersisted(),
     enqueue: (message) => deps.queue.enqueue(message),
     keepPersistedCarryover: (messages) => deps.queue.keepPersistedCarryover(messages),
-    restore: (persisted) => restoredLoopSupervisorMessage(persisted),
+    restore: (persisted) => {
+      const message = restoredLoopSupervisorMessage(persisted);
+      if (message !== null) return message;
+      return shouldDiscardRestoredLoopSupervisorMessage(persisted) ? "discard" : null;
+    },
   });
   return restored.restored;
 }

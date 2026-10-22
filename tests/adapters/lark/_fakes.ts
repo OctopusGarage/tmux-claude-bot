@@ -1,6 +1,5 @@
 import type { LarkChannel, NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import { vi } from "vitest";
-import { NotifierRegistry } from "../../../src/core/autopilot/notifier.js";
 import type { QueuedMessage } from "../../../src/core/command/queue.js";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
@@ -228,7 +227,6 @@ export function fakeDeps(overrides: DepsOverrides = {}): FakeDeps {
     currentProject,
     configResolver,
     activity,
-    notifier: new NotifierRegistry(),
     notifications: new NotificationGateway(),
     ownerActivity,
     channelSenders: new ChannelSenderRegistry(),

@@ -92,7 +92,7 @@ describe("readProjectSessionCatalog", () => {
     expect(rows.map((r) => r.entryKind)).toEqual(["recent-project", "project-session"]);
   });
 
-  it("sorts the live roster with the current session first and excludes the operator", async () => {
+  it("sorts the live roster with the current session first and excludes infrastructure sessions", async () => {
     const prefix = fakeDeps().config.projectSessionPrefix;
     const a = sessionNameFromPath(regularPath, prefix);
     const b = sessionNameFromPath(groupedPath, prefix);
@@ -104,7 +104,14 @@ describe("readProjectSessionCatalog", () => {
     const deps = fakeDeps({
       currentProject: { get: vi.fn(async () => b) },
       bridge: {
-        listProjectSessions: vi.fn(async () => [independent, operatorSessionName(prefix), a, b]),
+        listProjectSessions: vi.fn(async () => [
+          independent,
+          operatorSessionName(prefix),
+          "tmux_proj_loop-supervisor-1",
+          "tmux_proj_loop-worker-api",
+          a,
+          b,
+        ]),
       },
     });
 

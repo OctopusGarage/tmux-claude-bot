@@ -235,6 +235,7 @@ async function orphanBusyFromActivity(
   sessionId: string | null,
 ): Promise<boolean | null> {
   if (!sessionId || !profile.lastActivityAt) return null;
+  if (profile.kind === "codex" && configRoot === `${homedir()}/.codex`) return null;
   const resolver: ReadResolver = {
     resolveConfigRoot: async () => configRoot,
     resolveCodexHome: async () => configRoot,

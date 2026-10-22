@@ -99,6 +99,7 @@ type NotifyCliOpts = {
   channel?: string;
   level?: string;
   source?: string;
+  session?: string;
   attach?: string[];
   stdin?: boolean;
 };
@@ -135,6 +136,7 @@ export async function buildNotifyRequest(
       : {}),
     ...(opts.level !== undefined ? { level: opts.level as NotificationLevel } : {}),
     ...(opts.source !== undefined ? { source: opts.source } : {}),
+    ...(opts.session !== undefined ? { session: opts.session } : {}),
     ...(opts.attach !== undefined && opts.attach.length > 0
       ? {
           attachments: opts.attach.map((path) => ({
@@ -211,8 +213,9 @@ export async function cmdSend(
   await withClient(async (c) => {
     const session = await resolveSession(c, ref);
     // No-wait: ack and return. Wait (default): block for the reply event (or timeout).
+    const callerSession = currentTmuxSession();
     if (opts.wait === false) {
-      const ack = await c.send(session, text);
+      const ack = await c.send(session, text, callerSession ? { callerSession } : {});
       return opts.json ? json({ session, ...ack }) : out(`queued → ${ref}`);
     }
     const reply = new Promise<string>((resolve, reject) => {
@@ -238,7 +241,7 @@ export async function cmdSend(
       c.on("reply", onReply);
       c.on("error", onErr);
     });
-    await c.send(session, text);
+    await c.send(session, text, callerSession ? { callerSession } : {});
     const output = await reply;
     if (opts.json) return json({ session, reply: output });
     out(output);
@@ -284,6 +287,27 @@ export async function cmdOpen(
       fail(new Error(`cannot open "${ref}": ${res.error} (${res.resolvedPath})`));
     } else {
       fail(new Error(res.message ?? `open failed: ${res.status}`));
+    }
+  }).catch(fail);
+}
+
+export async function cmdOpenWorker(
+  session: string,
+  projectPath: string,
+  opts: { json?: boolean; agent?: string },
+): Promise<void> {
+  await withClient(async (c) => {
+    const agent = parseAgentOption(opts);
+    const openOpts = agent === undefined ? {} : { agent };
+    const abs = resolve(process.cwd(), expandTilde(projectPath));
+    const res = await c.openWorker(session, abs, openOpts);
+    if (opts.json) return json(res);
+    if (res.status === "created" || res.status === "switched") {
+      out(`open-worker ${session}: ${res.status}${res.started ? ` (${res.started})` : ""}`);
+    } else if (res.status === "invalid") {
+      fail(new Error(`cannot open worker at "${projectPath}": ${res.error} (${res.resolvedPath})`));
+    } else {
+      fail(new Error(res.message ?? `open-worker failed: ${res.status}`));
     }
   }).catch(fail);
 }

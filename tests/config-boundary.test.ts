@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { envSchema, loadConfig } from "../src/shared/config.js";
 
@@ -29,7 +30,9 @@ describe("no env var crashes startup when left blank", () => {
       TASK_AUDIT_TICK_MS: "60000",
       TASK_AUDIT_CHANNEL: "both",
       TASK_AUDIT_AUTO_REPAIR: "true",
+      TASK_AUDIT_REPO_PATH: "/repo/tmux-claude-bot",
       TASK_AUDIT_REPAIR_BRANCH: "dev",
+      TASK_AUDIT_REPAIR_WORKTREE_ISOLATION: "source",
     });
 
     expect(config.taskAudit).toEqual({
@@ -38,58 +41,51 @@ describe("no env var crashes startup when left blank", () => {
       tickMs: 60000,
       channel: "both",
       autoRepair: true,
+      repoPath: "/repo/tmux-claude-bot",
       repairBranch: "dev",
+      repairWorktreeIsolation: "source",
     });
   });
 
-  it("prefers BATCH_SCHEDULER_* over legacy AUTOPILOT_SCHEDULER_* aliases", () => {
-    const config = loadConfig({
-      TELEGRAM_BOT_TOKEN: "t",
-      BATCH_SCHEDULER_TICK_MS: "1234",
-      BATCH_SCHEDULER_QUOTA_PCT: "88",
-      BATCH_SCHEDULER_REPROBE_MS: "4321",
-      AUTOPILOT_SCHEDULER_TICK_MS: "9999",
-      AUTOPILOT_SCHEDULER_QUOTA_PCT: "77",
-      AUTOPILOT_SCHEDULER_REPROBE_MS: "999999",
+  it("parses hourly system self-heal config", () => {
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SYSTEM_SELF_HEAL_ENABLED: "true",
+        SYSTEM_SELF_HEAL_TICK_MS: "3600000",
+        SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: "true",
+      }).systemSelfHeal,
+    ).toEqual({
+      enabled: true,
+      tickMs: 3_600_000,
+      agentSweepEnabled: true,
     });
 
-    expect(config.scheduler).toEqual({
-      tickMs: 1234,
-      quotaPct: 88,
-      reprobeMs: 4321,
+    expect(
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: "t",
+        SYSTEM_SELF_HEAL_ENABLED: "false",
+        SYSTEM_SELF_HEAL_TICK_MS: "0",
+        SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED: "false",
+      }).systemSelfHeal,
+    ).toEqual({
+      enabled: false,
+      tickMs: 0,
+      agentSweepEnabled: false,
     });
   });
+});
 
-  it("keeps legacy AUTOPILOT_SCHEDULER_* aliases when BATCH_SCHEDULER_* is unset", () => {
-    const config = loadConfig({
-      TELEGRAM_BOT_TOKEN: "t",
-      AUTOPILOT_SCHEDULER_TICK_MS: "2222",
-      AUTOPILOT_SCHEDULER_QUOTA_PCT: "66",
-      AUTOPILOT_SCHEDULER_REPROBE_MS: "3333",
-    });
+describe("repository state boundary", () => {
+  it("does not version live runtime state", () => {
+    const trackedState = execFileSync("git", ["ls-files", "--", "state"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
 
-    expect(config.scheduler).toEqual({
-      tickMs: 2222,
-      quotaPct: 66,
-      reprobeMs: 3333,
-    });
-  });
-
-  it("does not let blank BATCH_SCHEDULER_* values mask legacy aliases", () => {
-    const config = loadConfig({
-      TELEGRAM_BOT_TOKEN: "t",
-      BATCH_SCHEDULER_TICK_MS: "",
-      BATCH_SCHEDULER_QUOTA_PCT: "",
-      BATCH_SCHEDULER_REPROBE_MS: "",
-      AUTOPILOT_SCHEDULER_TICK_MS: "4444",
-      AUTOPILOT_SCHEDULER_QUOTA_PCT: "55",
-      AUTOPILOT_SCHEDULER_REPROBE_MS: "5555",
-    });
-
-    expect(config.scheduler).toEqual({
-      tickMs: 4444,
-      quotaPct: 55,
-      reprobeMs: 5555,
-    });
+    expect(trackedState).toEqual([]);
   });
 });
