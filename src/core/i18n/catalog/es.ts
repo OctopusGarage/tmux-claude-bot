@@ -77,6 +77,12 @@ export const es: Messages = {
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
   btnRight: "➡️ right",
+  btnKeys: "⌨️ Teclas",
+  keyPaletteTitle: "Atajos de teclado",
+  keyUsage:
+    "Envía una tecla o combinación: /key Shift+Left · /key Ctrl+Left · /key Alt+B. Usa Ctrl, Alt, Shift separados por +, o pulsa un atajo. La aplicación activa determina su efecto.",
+  cmdKey: "Enviar una combinación o abrir el panel de teclas",
+  keySent: (chord: string) => `Tecla enviada: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 Estado",
   btnStart: "🚀 Iniciar",

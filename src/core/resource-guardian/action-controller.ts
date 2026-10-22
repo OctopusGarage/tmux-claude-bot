@@ -1,5 +1,4 @@
 import { sleep } from "../../shared/utils/sleep.js";
-import { createExecProbe } from "../agents/agent-config-resolver.js";
 import {
   type ActiveDelegatedTaskCancelResult,
   cancelActiveDelegatedTaskByRunId,
@@ -27,6 +26,7 @@ import {
   createBulkResourceProcessProbe,
   createSupervisorProcessOwnershipCollector,
 } from "./ownership.js";
+import { createBulkPaneSnapshotProbe, type PaneSnapshotProbe } from "./pane-snapshot.js";
 import type { DeepResourceProbe, PressureState, ResourceCircuitAdmission } from "./types.js";
 
 export type ResourceActionController = {
@@ -43,7 +43,7 @@ export type ResourceActionController = {
 
 export type ProductionResourceActionControllerOptions = {
   processProbe?: DeepResourceProbe;
-  panePid?: ReturnType<typeof createExecProbe>["panePid"];
+  paneSnapshot?: PaneSnapshotProbe;
   introspector?: Pick<ProcessIntrospector, "cwdOf">;
   readRegistry?: (now: number) => LoopSupervisorWorkOrderRegistry;
   readLeaseState?: () => LoopSupervisorWorkerLeaseState;
@@ -65,7 +65,7 @@ export function createProductionResourceActionController(
   options: ProductionResourceActionControllerOptions = {},
 ): ResourceActionController {
   const processProbe = options.processProbe ?? createBulkResourceProcessProbe({});
-  const probe = options.panePid ?? createExecProbe().panePid;
+  const paneSnapshot = options.paneSnapshot ?? createBulkPaneSnapshotProbe();
   const introspector = options.introspector ?? selectIntrospector();
   const now = options.now ?? Date.now;
   const collectCandidates = async (): Promise<ResourceActionCandidate[]> => {
@@ -81,7 +81,7 @@ export function createProductionResourceActionController(
     const collector = createSupervisorProcessOwnershipCollector({
       processProbe,
       sessions: [...sessions],
-      panePid: probe,
+      paneSnapshot,
       readRegistry: () => registry,
       readLeaseState: () => leaseState,
       introspector,

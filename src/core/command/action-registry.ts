@@ -74,6 +74,7 @@ export const ACTION_META: Partial<Record<MessageAction, ActionMeta>> = {
   left: { btnKey: "btnLeft", queuePolicy: "immediate", telegram: true },
   right: { btnKey: "btnRight", queuePolicy: "immediate", telegram: true },
   tab: { btnKey: "btnTab", queuePolicy: "immediate", telegram: true },
+  key: { btnKey: "btnKeys", queuePolicy: "immediate", telegram: true },
   exit: {
     btnKey: "btnExit",
     queuePolicy: "queued",
@@ -110,6 +111,7 @@ export const CONTROL_ROWS_FULL: MessageAction[][] = [
   CONTROL_INTERRUPTS,
   CONTROL_LIFECYCLE,
   CONTROL_NAV,
+  ["key"],
 ];
 
 /** Agent-action button rows for the help card "Session" section (adds start/status). */

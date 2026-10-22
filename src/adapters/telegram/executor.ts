@@ -8,7 +8,11 @@ import type { HandlerDeps } from "../../core/deps.js";
 import { messages } from "../../core/i18n/index.js";
 import { sessionShortId } from "../../shared/utils/hash.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { buildQueueCancelKeyboard, buildStartPickerKeyboard } from "./keyboards.js";
+import {
+  buildKeyPaletteKeyboard,
+  buildQueueCancelKeyboard,
+  buildStartPickerKeyboard,
+} from "./keyboards.js";
 import { MSG } from "./messages.js";
 import { reply } from "./replies.js";
 import { requireSession } from "./session.js";
@@ -100,6 +104,16 @@ export async function handleQueuedCommand(
     return;
   }
   const replyTo = ctx.message?.message_id;
+
+  if (action === "key" && !text?.trim()) {
+    await reply(ctx, "info", messages("telegram").keyUsage, {
+      session,
+      replyTo,
+      replyTarget,
+      replyMarkup: buildKeyPaletteKeyboard(sessionShortId(session)),
+    });
+    return;
+  }
 
   const planned = await planMessageAction({
     deps,

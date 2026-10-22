@@ -249,6 +249,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
               planned.action,
               replySession,
               msg.chatType === "p2p",
+              parsed.arg,
             );
           } else if (planned.kind === "queued") {
             await enqueueLarkAction(

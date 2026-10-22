@@ -110,6 +110,18 @@ function runCmd(name: string, text: string, deps: ReturnType<typeof depsFor>) {
   return handlers[`cmd:${name}`]?.(ctx(text));
 }
 
+it("/key preserves its chord argument", async () => {
+  const deps = depsFor();
+  await runCmd("key", "/key Ctrl+Shift+Left", deps);
+  expect(handleQueuedMock).toHaveBeenCalledWith(
+    expect.anything(),
+    deps,
+    "key",
+    "Ctrl+Shift+Left",
+    replyTarget,
+  );
+});
+
 function runCmdWithCtx(name: string, c: unknown, deps: ReturnType<typeof depsFor>) {
   const { bot, handlers } = captureBot();
   registerHandlers(bot as any, deps, replyTarget as never);

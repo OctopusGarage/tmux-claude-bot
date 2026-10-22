@@ -136,6 +136,68 @@ describe("selectResourceRepairCandidate", () => {
 });
 
 describe("resourceRepairQueueState", () => {
+  it.each(["leased", "running"])("reads the registry once for an attached %s repair", (status) => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/synthetic",
+      source: "resource-guardian",
+      taskFamily: "repair",
+      fingerprint: "active-probe",
+      taskId: "incident",
+      now: 1,
+    });
+    coordinator.claimIds([record.id], { now: 1, leaseId: "lease", limit: 1 });
+    coordinator.markRunning(record.id, "lease", 1);
+    coordinator.attachWorkOrder(record.id, "wo-1", 1);
+    if (status === "leased") {
+      coordinator.releaseToQueue(record.id, 1);
+      coordinator.claimIds([record.id], { now: 1, leaseId: "retry-lease", limit: 1 });
+    }
+    const readRegistry = vi.fn(() => ({ terminal: [] }));
+
+    reconcileResourceGuardianRepairQueue({ coordinator, now: 2, readRegistry });
+
+    expect(readRegistry).toHaveBeenCalledTimes(1);
+    expect(coordinator.list()[0]?.status).toBe(status);
+  });
+
+  it("does not read historical WorkOrders when the repair queue is empty", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const readRegistry = vi.fn(() => ({ terminal: [] }));
+
+    reconcileResourceGuardianRepairQueue({ coordinator, now: 2, readRegistry });
+
+    expect(readRegistry).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "unattached", "terminal", "other-source"])(
+    "does not read historical WorkOrders for a %s repair",
+    (scenario) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const record = coordinator.enqueue({
+        projectId: "bot",
+        projectPath: "/synthetic",
+        source: scenario === "other-source" ? "runtime-guardian" : "resource-guardian",
+        taskFamily: "repair",
+        fingerprint: "bounded-probe",
+        taskId: "incident",
+        now: 1,
+      });
+      if (scenario !== "pending") {
+        coordinator.claimIds([record.id], { now: 1, leaseId: "lease", limit: 1 });
+        coordinator.markRunning(record.id, "lease", 1);
+      }
+      if (scenario !== "unattached") coordinator.attachWorkOrder(record.id, "wo-1", 1);
+      if (scenario === "terminal") coordinator.markTerminal(record.id, "fixed", 1);
+      const readRegistry = vi.fn(() => ({ terminal: [] }));
+
+      reconcileResourceGuardianRepairQueue({ coordinator, now: 2, readRegistry });
+
+      expect(readRegistry).not.toHaveBeenCalled();
+    },
+  );
+
   it("projects durable retry cooldown and exhaustion before eligibility", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const record = coordinator.enqueue({

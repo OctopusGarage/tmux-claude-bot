@@ -63,6 +63,14 @@ const SESSION: readonly HelpRow[] = [
     { cmds: ["enter"], descKey: "cmdEnter" },
     { cmds: ["up", "down", "left", "right", "tab"], descKey: "cmdArrowsTab" },
   ],
+  [
+    {
+      cmds: ["key"],
+      descKey: "cmdKey",
+      argHint: " [Ctrl+Alt+Shift+Key]",
+      telegramDescription: "Send a key chord or open the key palette",
+    },
+  ],
 ];
 
 const PROJECTS: readonly HelpRow[] = [

@@ -77,6 +77,12 @@ export const ja: Messages = {
   btnDown: "⬇️ down",
   btnLeft: "⬅️ left",
   btnRight: "➡️ right",
+  btnKeys: "⌨️ キー",
+  keyPaletteTitle: "キーボードショートカット",
+  keyUsage:
+    "キーや組み合わせを送信：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修飾キー Ctrl、Alt、Shift を + でつなぎます。下のボタンも使えます。動作は実行中のアプリが決定します。",
+  cmdKey: "キーの組み合わせを送信、またはキーパネルを開く",
+  keySent: (chord: string) => `キー送信済み: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 状態",
   btnStart: "🚀 起動",

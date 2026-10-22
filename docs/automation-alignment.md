@@ -70,6 +70,24 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Remote keyboard alignment: Telegram and Feishu expose `/key [chord]` plus a Keys
+button on expanded control/help surfaces. `key-chord.ts` owns the common parser
+and palette presets; `key` is one immediate MessageAction carrying a chord in its
+text payload, validated again by the dispatcher. Generic chords require a live
+agent. Telegram palette callbacks retain the originating session; Feishu follows
+the existing current/bound-chat control routing and signed callback gate. There
+are no Codex-specific semantic bindings or per-chord actions. Legacy controls
+retain their preconditions. Parser, dispatch, both adapter command/callback tests
+and an isolated real-tmux byte test cover this contract. No new personal config
+or CLI/TUI/MCP chord entry point is introduced.
+
+Feishu Active sessions (`listalive` / `/list_alive_projects`) sends at most ten
+session rows per card to stay below the JSON 2.0 200-element limit, including
+nested button text and hover elements. All rows retain their existing private-chat
+actions and group read-only policy. Failed card delivery falls back to plain-text
+summaries for that batch. `tests/adapters/lark/views.test.ts` verifies large-list
+delivery, complete row coverage, and the fallback.
+
 Recovery alignment invariant: Daily Task Audit and Runtime Guardian must treat
 worker-consumption timeout as retryable delivery, deduplicate project recovery
 by project identity while an active recovery exists, and reconcile ledger plus
@@ -170,6 +188,12 @@ for the full healthy window.
 Resource Guardian host CPU samples without a reliable delta baseline are
 unavailable, not zero. Notifications and public status output must render them
 as unknown while preserving load-based pressure decisions.
+Resource Guardian ownership collection must use two independent bulk pane
+snapshots around its process snapshot. Retained WorkOrder history must not
+increase tmux subprocess count. Live terminal workers remain attributable, while
+failed or changed observations cannot authorize termination. Repair reconciliation
+must skip historical WorkOrder scans when no attached active Resource Guardian
+repair needs settlement.
 Failed or partially delivered Resource Guardian pressure notifications must retry
 at a bounded one-minute cadence while their typed transition remains current.
 Persist retry evidence in the incident so restart preserves the cadence; reuse

@@ -75,6 +75,7 @@ import {
   buildControlKeyboard,
   buildExpandedControlKeyboard,
   buildFreeLabelKeyboard,
+  buildKeyPaletteKeyboard,
   buildLangKeyboard,
   buildOpportunityNotificationKeyboard,
   buildProjectDeleteKeyboard,
@@ -700,6 +701,29 @@ export async function handleCallbackQuery(
             : messages("telegram").agentStartedWith(pick.label);
       }
       await reply(ctx, "ok", msg, { session: sessionName, replyTarget });
+      return;
+    }
+    if (parsed.kind === "key" || (parsed.kind === "act" && parsed.action === "key")) {
+      await safeAnswerCallback(ctx);
+      if (parsed.kind === "act") {
+        await reply(ctx, "info", messages("telegram").keyUsage, {
+          session: sessionName,
+          replyTarget,
+          replyMarkup: buildKeyPaletteKeyboard(parsed.sid),
+        });
+      } else {
+        const result = await executeMessage(
+          {
+            sessionName,
+            action: "key",
+            text: parsed.chord,
+            channel: "telegram",
+            id: "",
+          } as QueuedMessage,
+          deps,
+        );
+        await reply(ctx, "info", result, { session: sessionName, replyTarget });
+      }
       return;
     }
     const planned = await planMessageAction({

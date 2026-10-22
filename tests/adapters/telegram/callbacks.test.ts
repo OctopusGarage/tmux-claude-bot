@@ -81,6 +81,31 @@ const startActiveDelegatedTaskMock = vi.mocked(startActiveDelegatedTask);
 
 const SESSION = "tmux_proj_cbtest";
 const SID = sessionShortId(SESSION);
+
+describe("key palette callbacks", () => {
+  it("opens a palette targeted at the button's session", async () => {
+    const ctx = fakeCtx({ callbackData: `a:key:${SID}` });
+    const deps = aliveDeps();
+    await handleCallbackQuery(ctx, deps, createReplyTargetMap());
+    expect(JSON.stringify(ctx.replies)).toContain(`k:Shift+Left:${SID}`);
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+
+  it("sends the selected chord to the button's session immediately", async () => {
+    const ctx = fakeCtx({ callbackData: `k:Shift+Left:${SID}` });
+    const deps = aliveDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await handleCallbackQuery(ctx, deps, createReplyTargetMap());
+    expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", SESSION);
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("refuses a stale session button", async () => {
+    const ctx = fakeCtx({ callbackData: "k:Shift+Left:missing" });
+    const deps = aliveDeps();
+    await handleCallbackQuery(ctx, deps, createReplyTargetMap());
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+});
 const originalStateDir = process.env.TCB_STATE_DIR;
 
 const replyTarget = createReplyTargetMap(`/tmp/tg-cb-rt-${Date.now()}`);

@@ -19,6 +19,7 @@ import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPat
 import { recoveryStartCommand } from "../recovery/recover.js";
 import { getActionPrecondition, isMessageAction } from "./actions.js";
 import { sendContextReset } from "./context-reset.js";
+import { parseKeyChord } from "./key-chord.js";
 import type { QueuedMessage } from "./queue.js";
 
 const log = createLogger("command.dispatch");
@@ -234,6 +235,8 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     throw new Error(`Unknown action: ${msg.action}`);
   }
   const text = queuedMessageText(msg);
+  const chord = msg.action === "key" ? parseKeyChord(text) : null;
+  if (msg.action === "key" && !chord) return m.keyUsage;
 
   log.info("message action dispatch started", {
     data: { action: msg.action, session, textLength: text.length, origin: msg.origin },
@@ -467,6 +470,11 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       log.info(`sending right session=${session}`);
       await deps.bridge.sendRawKey("Right", session);
       return m.sentRight;
+    }
+    case "key": {
+      if (!chord) return m.keyUsage;
+      await deps.bridge.sendRawKey(chord.tmuxKey, session);
+      return m.keySent(chord.label);
     }
     case "tab": {
       log.info(`sending tab session=${session}`);

@@ -18,7 +18,7 @@ import {
   userPromptQueueFields,
 } from "../../core/read/user-prompt-intake.js";
 import { createLogger } from "../../shared/utils/logger.js";
-import { queueAckCard, recoveryCard, resultCard } from "./cards.js";
+import { keyPaletteCard, queueAckCard, recoveryCard, resultCard } from "./cards.js";
 import { markDone, markWorking } from "./reactions.js";
 import { sendCard, sendText } from "./replies.js";
 import { recordReplyTarget } from "./reply-target.js";
@@ -218,13 +218,19 @@ export async function runImmediateLarkAction(
   action: MessageAction,
   sessionOverride?: string,
   operatorFallbackOk = false,
+  text = "",
 ): Promise<void> {
   const session = await resolveSession(channel, deps, chatId, sessionOverride, operatorFallbackOk);
   if (!session) return;
 
+  if (action === "key" && !text.trim()) {
+    await sendCard(channel, chatId, keyPaletteCard());
+    return;
+  }
+
   const msg: QueuedMessage = {
     id: "",
-    text: "",
+    text,
     chatId,
     channel: "lark",
     sessionName: session,

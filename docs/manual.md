@@ -99,6 +99,28 @@ Lifecycle buttons that can interrupt work or reset context (`restart`, `clear`,
   load / heat / runaway processes / Resource Guardian state) · `/logs` · `/doctor`. Owner-only; on Feishu these
   are 1:1-chat only.
 
+### Remote keyboard shortcuts (`/key`)
+
+Telegram and Feishu support `/key Shift+Left`, `/key Ctrl+Left`, and
+`/key Alt+B`. Use `/key` without an argument, or the **Keys** button in the
+expanded control/help panel, to open common shortcuts. Each request sends exactly
+one key immediately, even while the agent is busy; it does not submit a prompt.
+Generic chords require a running agent. Existing navigation commands still work.
+
+Combine `Ctrl` (or `Control`), `Alt` (or `Meta`), and `Shift` with `+`. Supported
+base keys are arrows, Home, End, PageUp, PageDown, Tab, Enter, Esc, Backspace,
+Delete, Insert, Space, F1–F12, ASCII letters, and digits. Names are case-insensitive;
+unmodified letters preserve their case. Shift+Tab sends reverse Tab, shifted
+letters send uppercase, and shifted digits are rejected because their meaning
+depends on the keyboard layout. Sequences and raw terminal escapes are rejected.
+
+These are physical key intents, not Codex-specific actions. The running
+application and its terminal protocol determine the effect; some combinations
+(such as Shift+Enter) may alias another key unless the application negotiates
+extended keyboard support. A delivery acknowledgment confirms the key was handed
+to tmux, not that an application action completed. The bot does not change global
+terminal settings.
+
 ### Prompt Library (`/prompts`)
 
 Browse and copy prompts saved in a configured MCP prompt server.

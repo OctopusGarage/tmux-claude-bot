@@ -6,6 +6,24 @@ import {
 import { createReplyTargetMap } from "../../../src/adapters/telegram/reply-target.js";
 import { fakeCtx, fakeDeps } from "./_fakes.js";
 
+describe("key chord commands", () => {
+  it("forwards a typed chord immediately", async () => {
+    const ctx = fakeCtx();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await handleQueuedCommand(ctx, deps, "key", "Shift+Left");
+    expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", "proj-1");
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("opens the palette without sending a key", async () => {
+    const ctx = fakeCtx();
+    const deps = fakeDeps();
+    await handleQueuedCommand(ctx, deps, "key");
+    expect(JSON.stringify(ctx.replies)).toContain("k:Shift+Left:");
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+});
+
 describe("enqueueSessionCommand", () => {
   beforeEach(() => vi.clearAllMocks());
 

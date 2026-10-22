@@ -1156,6 +1156,7 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
             planned.action,
             undefined,
             isP2p,
+            cmd === "key" ? (value.arg ?? "") : "",
           );
           return;
         }

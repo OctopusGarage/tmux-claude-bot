@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ResolverProbe } from "../agents/agent-config-resolver.js";
 import { isLoopSupervisorWorkerLeaseExpired } from "../loop/supervisor-pool.js";
 import type { ProcessIntrospector } from "../platform/introspector.js";
+import type { PaneSnapshotProbe } from "./pane-snapshot.js";
 import type {
   DeepResourceProbe,
   DeepResourceSnapshot,
@@ -336,8 +336,6 @@ export function createBulkResourceProcessProbe(input: {
   };
 }
 
-type PanePids = (session: string) => Promise<readonly number[]>;
-
 function samePids(before: readonly number[], after: readonly number[]): boolean {
   return before.length === after.length && before.every((pid, index) => pid === after[index]);
 }
@@ -360,8 +358,7 @@ async function mapWithConcurrency<T>(
 export function createProductionProcessOwnershipCollector(input: {
   processProbe: DeepResourceProbe;
   sessions: readonly string[];
-  panePid: ResolverProbe["panePid"];
-  panePids?: PanePids;
+  paneSnapshot: PaneSnapshotProbe;
   readWorkOrders: () => readonly WorkOrderEvidence[];
   readLeases: () => readonly LeaseEvidence[];
   readLaunches?: () => readonly LaunchEvidence[];
@@ -375,23 +372,16 @@ export function createProductionProcessOwnershipCollector(input: {
   const highCpuPct = input.highCpuPct ?? 25;
   const cwdLimit = input.cwdLimit ?? 16;
   const cwdConcurrency = input.cwdConcurrency ?? 2;
-  const panePids: PanePids =
-    input.panePids ??
-    (async (session) => {
-      const pid = await input.panePid(session);
-      return pid === null ? [] : [pid];
-    });
   return {
     async collect() {
-      const beforePanes = await Promise.all(
-        input.sessions.map(async (session) => ({ session, pids: await panePids(session) })),
-      );
+      const before = await input.paneSnapshot();
+      const beforePanes = input.sessions.map((session) => ({
+        session,
+        pids: before.get(session) ?? [],
+      }));
       const snapshot = await input.processProbe();
       const byPid = new Map(snapshot.processes.map((process) => [process.pid, process]));
-      const afterPanes = await Promise.all(
-        input.sessions.map(async (session) => ({ session, pids: await panePids(session) })),
-      );
-      const afterBySession = new Map(afterPanes.map((entry) => [entry.session, entry.pids]));
+      const afterBySession = await input.paneSnapshot();
       const unstablePanePids = beforePanes.flatMap(({ session, pids }) => {
         const after = afterBySession.get(session) ?? [];
         return samePids(pids, after) ? [] : [...pids, ...after];
@@ -487,15 +477,13 @@ export function normalizeSupervisorLeaseEvidence(
 }
 
 /**
- * Adapter boundary for Task 7 wiring. Callers supply the existing ResolverProbe
- * pane lookup and the one-per-snapshot supervisor registry/pool readers; Task 8
- * can compose it into service lifecycle handling without granting action rights.
+ * Compose independent bulk pane observations with durable supervisor evidence
+ * without granting action rights or probing historical sessions individually.
  */
 export function createSupervisorProcessOwnershipCollector(input: {
   processProbe: DeepResourceProbe;
   sessions: readonly string[];
-  panePid: ResolverProbe["panePid"];
-  panePids?: PanePids;
+  paneSnapshot: PaneSnapshotProbe;
   readRegistry: () => SupervisorRegistryEvidence;
   readLeaseState: () => SupervisorLeaseStateEvidence;
   readLaunches?: () => readonly LaunchEvidence[];
@@ -508,8 +496,7 @@ export function createSupervisorProcessOwnershipCollector(input: {
   return createProductionProcessOwnershipCollector({
     processProbe: input.processProbe,
     sessions: input.sessions,
-    panePid: input.panePid,
-    ...(input.panePids === undefined ? {} : { panePids: input.panePids }),
+    paneSnapshot: input.paneSnapshot,
     readWorkOrders: () => normalizeSupervisorWorkOrderEvidence(input.readRegistry().records),
     readLeases: () => normalizeSupervisorLeaseEvidence(input.readLeaseState().leases),
     ...(input.readLaunches === undefined ? {} : { readLaunches: input.readLaunches }),

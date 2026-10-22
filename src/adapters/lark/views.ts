@@ -40,7 +40,10 @@ import {
   projectPickerRows,
   projectPickerRowsFromRecentRows,
 } from "../../core/projects/project-session-picker.js";
-import { formatCurrentProjectSummary } from "../../core/projects/project-summary-view.js";
+import {
+  formatCurrentProjectSummary,
+  formatProjectSummaryBlock,
+} from "../../core/projects/project-summary-view.js";
 import { getPathBySession } from "../../core/projects/sessionPathMap.js";
 import { runWorkspaceCommand } from "../../core/projects/workspace-command.js";
 import { getRecentInputs, storeInputList } from "../../core/read/recent-inputs.js";
@@ -130,7 +133,11 @@ export async function sendDoctor(
  * create the project the way the Telegram `/add_project` handler does.
  */
 
-/** The alive-projects list as a tappable switch/remove card. */
+// Each row can contain three buttons, with nested column/text/hover elements.
+// Ten rows leave headroom below Feishu JSON 2.0's 200-element limit.
+const ALIVE_LIST_ROWS_PER_CARD = 10;
+
+/** The alive-projects list as bounded tappable switch/remove cards. */
 export async function sendAliveList(
   channel: LarkChannel,
   deps: HandlerDeps,
@@ -138,7 +145,21 @@ export async function sendAliveList(
 ): Promise<void> {
   try {
     const buttons = await projectPickerRows(deps, chatScope("lark", chatId), "project-sessions");
-    await sendCard(channel, chatId, projectListCard(buttons, isProjectGroup(chatId)));
+    const group = isProjectGroup(chatId);
+    for (let offset = 0; offset < Math.max(1, buttons.length); offset += ALIVE_LIST_ROWS_PER_CARD) {
+      const batch = buttons.slice(offset, offset + ALIVE_LIST_ROWS_PER_CARD);
+      const messageId = await sendCard(channel, chatId, projectListCard(batch, group));
+      if (!messageId) {
+        const m = messages("lark");
+        await sendText(
+          channel,
+          chatId,
+          batch.length
+            ? `${m.aliveListTitle(batch.length)}\n\n${formatProjectSummaryBlock(batch)}`
+            : m.aliveListEmpty,
+        );
+      }
+    }
   } catch (err) {
     await sendError(channel, chatId, err);
   }

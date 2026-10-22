@@ -19,6 +19,7 @@ import {
   getActionConfirmation,
 } from "../../core/command/action-registry.js";
 import { isMessageAction, type MessageAction } from "../../core/command/actions.js";
+import { KEY_CHORD_PRESETS, parseKeyChord } from "../../core/command/key-chord.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
@@ -55,6 +56,7 @@ type TelegramAutopilotCallbackAction = {
  *   r:<sid>           remove project
  */
 export type CallbackAction =
+  | { kind: "key"; chord: string; sid: string }
   | { kind: "act"; action: MessageAction; sid: string }
   | { kind: "actconfirm"; action: MessageAction; sid: string }
   | { kind: "switch"; sid: string }
@@ -147,6 +149,12 @@ export function parseCallbackData(data: string): CallbackAction | null {
   if (data === "ulm") return { kind: "uilangmenu" };
   const parts = data.split(":");
   const [tag] = parts;
+  if (tag === "k") {
+    const chord = parts[1];
+    const sid = parts[2];
+    if (parts.length !== 3 || !chord || !sid || !parseKeyChord(chord)) return null;
+    return { kind: "key", chord, sid };
+  }
   if (tag === "pp") {
     const sid = parts[1];
     if (parts.length !== 2 || !sid) return null;
@@ -493,6 +501,15 @@ export function buildControlKeyboard(sid: string, running = true): InlineKeyboar
     .text(m.btnQueue, "qs")
     .row()
     .text(m.btnMore, `m:${sid}`);
+}
+
+export function buildKeyPaletteKeyboard(sid: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const row of KEY_CHORD_PRESETS) {
+    for (const chord of row) kb.text(chord, `k:${chord}:${sid}`);
+    kb.row();
+  }
+  return kb;
 }
 
 /** Expanded control panel: the full canonical control rows (interrupts → lifecycle

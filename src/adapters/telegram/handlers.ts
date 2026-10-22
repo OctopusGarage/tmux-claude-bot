@@ -210,7 +210,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
           }
         }
       }
-      await handleQueuedCommand(ctx, deps, a, undefined, replyTarget);
+      const keyArg =
+        a === "key" ? (ctx.message?.text ?? "").replace(/^\S+\s*/, "").trim() : undefined;
+      await handleQueuedCommand(ctx, deps, a, keyArg, replyTarget);
     });
   }
 

@@ -82,6 +82,26 @@ describe("makeCardActionHandler", () => {
     vi.clearAllMocks();
   });
 
+  it("key opens the palette and a palette choice sends the chord immediately", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    const handle = makeCardActionHandler(channel, deps);
+    await handle(evt({ cmd: "key" }));
+    expect(JSON.stringify(channel.cards())).toContain('"arg":"Shift+Left"');
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+    await handle(evt({ cmd: "key", arg: "Shift+Left" }));
+    expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", "proj-1");
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("does not send malformed chord callback payloads", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await makeCardActionHandler(channel, deps)(evt({ cmd: "key", arg: "-X;kill-session" }));
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+    expect(channel.texts().join("\n")).toContain("/key");
+  });
+
   it("voicelangmenu → sends the voice-install card when voice is missing", async () => {
     const channel = fakeChannel();
     const handle = makeCardActionHandler(channel, fakeDeps());

@@ -14,6 +14,7 @@ export const MESSAGE_ACTIONS = [
   "left",
   "right",
   "tab",
+  "key",
   "status",
 ] as const;
 
@@ -52,6 +53,7 @@ const ACTION_PRECONDITION: Record<MessageAction, ActionPrecondition> = {
   left: null,
   right: null,
   tab: null,
+  key: "running",
   status: null,
 };
 

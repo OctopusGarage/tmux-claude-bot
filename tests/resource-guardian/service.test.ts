@@ -455,7 +455,7 @@ describe("resource guardian coordinator", () => {
           },
         ],
       }),
-      panePid: async () => 10,
+      paneSnapshot: async () => new Map([["worker-1", [10]]]),
       introspector: { cwdOf: async () => null },
       readRegistry,
       readLeaseState: () => ({

@@ -55,6 +55,29 @@ function deps(claudeOver: Record<string, unknown> = {}) {
   });
 }
 
+describe("generic key action", () => {
+  it("sends a chord immediately without submitting text", async () => {
+    const d = deps();
+    const output = await executeMessage(msg("key", { text: "Shift+Left" }), d);
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", "proj-1");
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    expect(d.agent.waitUntilInputReady).not.toHaveBeenCalled();
+    expect(output).toContain("Shift+Left");
+  });
+
+  it("rejects malformed chords before touching the pane", async () => {
+    const d = deps();
+    await executeMessage(msg("key", { text: "Left;kill-session" }), d);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+
+  it("requires a running agent for arbitrary chords", async () => {
+    const d = deps({ checkIfRunning: vi.fn(async () => false) });
+    await executeMessage(msg("key", { text: "Ctrl+D" }), d);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+});
+
 function writeTestWorkOrder(input: {
   id: string;
   projectPath: string;

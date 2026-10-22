@@ -18,6 +18,7 @@ import {
   HELP_SESSION_ROWS,
 } from "../../core/command/action-registry.js";
 import type { MessageAction } from "../../core/command/actions.js";
+import { KEY_CHORD_PRESETS } from "../../core/command/key-chord.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
 import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
 import type { OpportunitySuggestion } from "../../core/opportunities/types.js";
@@ -95,6 +96,21 @@ function gridRows(btns: ButtonSpec[], maxPerRow = MAX_BUTTONS_PER_ROW): object[]
 }
 
 const HR = { tag: "hr" } as const;
+
+export function keyPaletteCard(): object {
+  const m = messages("lark");
+  return shell(m.keyPaletteTitle, [
+    md(m.keyUsage),
+    ...KEY_CHORD_PRESETS.map((row) =>
+      gridRow(
+        row.map((chord) => ({
+          text: chord,
+          value: { cmd: "key", arg: chord },
+        })),
+      ),
+    ),
+  ]);
+}
 
 const shell = (title: string, elements: object[]): object => ({
   schema: "2.0",
@@ -304,6 +320,7 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
     // without opening /help (it's a common autocomplete/confirm key); the arrow
     // nav keys stay help-only so the always-stamped panel doesn't bloat.
     ...[[...CONTROL_INTERRUPTS, "tab" as MessageAction], CONTROL_LIFECYCLE].map(actionRow),
+    actionRow(["key"]),
     // Read.
     [
       { text: m.btnPeek, value: { cmd: "peek" } },

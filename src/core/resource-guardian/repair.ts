@@ -24,19 +24,23 @@ export type ResourceRepairQueueState = {
 export function reconcileResourceGuardianRepairQueue(input: {
   coordinator: RepairCoordinator;
   now: number;
-  readRegistry?: typeof readLoopSupervisorWorkOrderRegistry;
+  readRegistry?: () => Pick<ReturnType<typeof readLoopSupervisorWorkOrderRegistry>, "terminal">;
 }): void {
+  const records = input.coordinator
+    .list()
+    .filter(
+      (record) =>
+        record.source === "resource-guardian" &&
+        (record.status === "leased" || record.status === "running") &&
+        record.workOrderId !== undefined,
+    );
+  if (records.length === 0) return;
   const registry = (input.readRegistry ?? readLoopSupervisorWorkOrderRegistry)();
   const terminalByRunId = new Map(
     registry.terminal.map((record) => [record.workOrder.id, record.state.status]),
   );
-  for (const record of input.coordinator.list()) {
-    if (
-      record.source !== "resource-guardian" ||
-      (record.status !== "leased" && record.status !== "running") ||
-      record.workOrderId === undefined
-    )
-      continue;
+  for (const record of records) {
+    if (record.workOrderId === undefined) continue;
     const terminalStatus = terminalByRunId.get(record.workOrderId);
     if (terminalStatus === undefined) continue;
     input.coordinator.markTerminal(

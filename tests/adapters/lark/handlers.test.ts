@@ -22,6 +22,24 @@ vi.mock("../../../src/adapters/lark/resource.js", async (importOriginal) => ({
 }));
 
 const { makeMessageHandler } = await import("../../../src/adapters/lark/handlers.js");
+
+describe("key chord commands", () => {
+  it("forwards a typed chord immediately", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+    await makeMessageHandler(channel, deps)(fakeMessage({ content: "/key Shift+Left" }));
+    expect(deps.bridge.sendRawKey).toHaveBeenCalledWith("S-Left", "proj-1");
+    expect(deps.queue.enqueued).toHaveLength(0);
+  });
+
+  it("opens the palette without sending a key", async () => {
+    const channel = fakeChannel();
+    const deps = fakeDeps();
+    await makeMessageHandler(channel, deps)(fakeMessage({ content: "/key" }));
+    expect(JSON.stringify(channel.cards())).toContain("Shift+Left");
+    expect(deps.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+});
 const { recordReplyTarget, removeReplyTargetSession } = await import(
   "../../../src/adapters/lark/reply-target.js"
 );
