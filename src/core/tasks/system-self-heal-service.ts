@@ -194,6 +194,13 @@ function recordBlockedAgentSweep(now: number, reason: string): void {
     summary: "System self-heal attempted to queue the broad active-agent sweep.",
   });
   ledger.start(taskId, now);
+  if (reason.startsWith("automation admission deferred:")) {
+    ledger.skip(taskId, {
+      endedAt: now,
+      summary: `System self-heal agent sweep admission wait before WorkOrder creation: ${reason}`,
+    });
+    return;
+  }
   ledger.fail(taskId, {
     endedAt: now,
     error: reason,

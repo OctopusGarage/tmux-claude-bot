@@ -626,7 +626,11 @@ export async function readRuntimeOverview(input: {
       domain(
         "daily-task-audit",
         "Daily Task Audit",
-        !value.enabled ? "disabled" : (summary?.attention ?? 0) > 0 ? "attention" : "healthy",
+        !value.enabled
+          ? "disabled"
+          : (summary?.attention ?? 0) > 0 || (summary?.repairPending ?? 0) > 0
+            ? "attention"
+            : "healthy",
         summary === undefined
           ? value.lastFiredAt === undefined
             ? "no completed run recorded"

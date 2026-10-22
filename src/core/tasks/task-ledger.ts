@@ -289,6 +289,42 @@ export class DailyTaskLedger {
     return updated;
   }
 
+  reconcileSystemSelfHealAdmissionWaits(
+    now: number,
+    protectedTaskIds: ReadonlySet<string>,
+  ): number {
+    let updated = 0;
+    this.store.update((records) => {
+      for (const [taskId, record] of Object.entries(records)) {
+        if (
+          record.source !== "system-self-heal" ||
+          !/^system-self-heal:agent-sweep:\d+$/.test(taskId)
+        )
+          continue;
+        if (protectedTaskIds.has(taskId)) continue;
+        if (record.status !== "failed" || record.repairStatus !== "pending") continue;
+        const reason = record.error;
+        if (reason === undefined || !reason.startsWith("automation admission deferred:")) continue;
+        // Only direct pre-WorkOrder evidence can be reclassified. Appended repair
+        // evidence and existing ownership decisions remain authoritative.
+        if (record.summary !== `${SYSTEM_SELF_HEAL_DEFERRED_PREFIX}${reason}`) continue;
+        const normalized: ScheduledTaskRecord = {
+          ...record,
+          status: "skipped",
+          repairStatus: "not-needed",
+          summary: `System self-heal agent sweep admission wait before WorkOrder creation: ${reason}`,
+          updatedAt: now,
+        };
+        delete normalized.error;
+        delete normalized.failureKind;
+        records[taskId] = normalized;
+        updated++;
+      }
+      return updated > 0;
+    });
+    return updated;
+  }
+
   reconcileStaleRunning(
     now: number,
     input: { timeoutMs?: number; sources?: ScheduledTaskSource[] } = {},

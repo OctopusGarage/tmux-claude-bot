@@ -2874,6 +2874,77 @@ projects:
     });
   });
 
+  it("logs readiness state changes once across ticks and store restoration without consuming repair cooldown", async () => {
+    const repoPath = "/repo/tmux-claude-bot";
+    let readiness: { ok: true } | { ok: false; reason: string } = {
+      ok: false,
+      reason: "runtime guardian repo has uncommitted changes",
+    };
+    const dispatchRepair = vi.fn(async () => ({ status: "queued" as const, detail: "queued" }));
+    const tick = (now: number) =>
+      runRuntimeGuardianTick({
+        now,
+        config: runtimeConfig({ repoPath }),
+        store: new RuntimeGuardianStore(),
+        discover: () => [finding()],
+        dispatchRepair,
+        checkRepairReadiness: () => readiness,
+      });
+
+    await tick(10_000);
+    await tick(11_000);
+    await tick(12_000);
+    expect(
+      readLogEntries().filter(
+        (entry) =>
+          entry.level === "WARN" &&
+          entry.msg === "runtime guardian repair blocked by readiness check",
+      ),
+    ).toHaveLength(1);
+    expect(new RuntimeGuardianStore().lastRepairAttemptAt(repoPath)).toBeUndefined();
+    expect(
+      new RuntimeGuardianStore().lastHandledAt("missing-system-gate:tmux-claude-bot:run-1"),
+    ).toBeUndefined();
+
+    readiness = {
+      ok: false,
+      reason: "runtime guardian source repair requires branch dev; current branch is main",
+    };
+    await tick(13_000);
+    expect(
+      readLogEntries().filter(
+        (entry) =>
+          entry.level === "WARN" &&
+          entry.msg === "runtime guardian repair blocked by readiness check",
+      ),
+    ).toHaveLength(2);
+
+    readiness = { ok: true };
+    await tick(14_000);
+    expect(dispatchRepair).toHaveBeenCalledTimes(1);
+    expect(readLogEntries()).toContainEqual(
+      expect.objectContaining({
+        level: "INFO",
+        msg: "runtime guardian repair readiness recovered",
+      }),
+    );
+  });
+
+  it("rejects a configured subdirectory before assessing its parent repository", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-root-"));
+    try {
+      execFileSync("git", ["init", "-b", "dev"], { cwd: repo, stdio: "ignore" });
+      const nested = join(repo, "nested");
+      mkdirSync(nested);
+      expect(checkRuntimeGuardianRepairReadiness(nested)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("configured path is not its expected Git root"),
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("discovers completed supervisor work orders that are missing system gate evidence", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "tcb-runtime-guardian-project-"));
     const runDir = join(

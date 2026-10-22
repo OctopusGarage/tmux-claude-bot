@@ -263,6 +263,13 @@ Keep these documents aligned with code and tests when changing:
 - Feishu/Lark, Telegram, TUI, CLI, and control API surfaces.
 
 Treat Runtime Guardian readiness failures as transient admission deferrals.
+Verify the configured path is the Git toplevel before checking readiness.
+`runtime_guardian_readiness.json` stores internal first-blocked evidence and the
+repair branch/isolation policy; it is not operator configuration. Emit the first
+or changed blockage at WARN, repeats at DEBUG, and recovery at INFO. Preserve
+immediate retry once readiness returns. Never discard, stash, or commit unknown
+source changes to satisfy this gate. Finish authorized changes in a verified
+commit, or execute a separately authorized isolated slice from a clean source.
 Do not mark findings handled or start the repository repair cooldown before a
 dispatch is attempted; durable Repair Coordinator `nextAttemptAt` remains the
 authoritative retry clock for an already admitted repair.
@@ -460,6 +467,13 @@ not shorten the independent local failure-worktree retention window.
 Before pushing or claiming CI readiness, run `pnpm verify:local`. If remote
 CI finds a class of issue not covered locally, update the local verification
 script, hook, or instructions.
+
+Local tests use one isolated worker thread to reduce process-startup failures
+under host memory pressure. The `process-api` project retains forked workers for
+process-global permission and timezone tests. Coverage and pre-commit select
+`--project '!integration'` to exclude only the existing tmux/PTY environment-gated
+suites; `pnpm test` still includes all projects. Keep this selection identical
+across both gates and preserve the complete test inventory.
 
 Release tags must not bypass the local gate. Keep `scripts/release.sh` running
 `pnpm verify:local` before `npm version`; `TCB_RELEASE_SKIP_VERIFY=1` is a

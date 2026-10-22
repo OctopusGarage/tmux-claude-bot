@@ -95,6 +95,18 @@ export type ResourceRepairEligibilityInput = {
 
 export type ResourceRepairEligibility = { eligible: true } | { eligible: false; reason: string };
 
+function unstableRecoveryReason(
+  input: Pick<ResourceRepairEligibilityInput, "now" | "pressure" | "circuit" | "stableSince">,
+): string | null {
+  if (input.pressure !== "healthy" || input.circuit !== "open")
+    return "resource recovery is not healthy and open";
+  if (input.stableSince === null || input.now < input.stableSince)
+    return "stable recovery time is unavailable";
+  if (input.now - input.stableSince < RESOURCE_REPAIR_STABLE_MS)
+    return "stable recovery window has not elapsed";
+  return null;
+}
+
 /** Select only a durably ended bot incident whose deterministic cleanup remained unresolved. */
 export function selectResourceRepairCandidate(
   incidents: readonly ResourceIncident[],
@@ -122,12 +134,8 @@ export function selectResourceRepairCandidate(
 export function resourceRepairEligibility(
   input: ResourceRepairEligibilityInput,
 ): ResourceRepairEligibility {
-  if (input.pressure !== "healthy" || input.circuit !== "open")
-    return { eligible: false, reason: "resource recovery is not healthy and open" };
-  if (input.stableSince === null || input.now < input.stableSince)
-    return { eligible: false, reason: "stable recovery time is unavailable" };
-  if (input.now - input.stableSince < RESOURCE_REPAIR_STABLE_MS)
-    return { eligible: false, reason: "stable recovery window has not elapsed" };
+  const recoveryReason = unstableRecoveryReason(input);
+  if (recoveryReason !== null) return { eligible: false, reason: recoveryReason };
   if (input.incident?.attribution !== "bot-owned")
     return { eligible: false, reason: "incident is not strongly bot-owned" };
   if (!input.hasRepairNeededEvidence)
@@ -170,6 +178,9 @@ export async function dispatchStableResourceRepair(input: {
   if (input.coordinator !== undefined) {
     reconcileResourceGuardianRepairQueue({ coordinator: input.coordinator, now: input.now });
   }
+  // Do not repeatedly scan long-lived incident archives while recovery is impossible.
+  // Queue settlement above still runs so terminal repair ownership can be released.
+  if (unstableRecoveryReason(input) !== null) return;
   const incident = selectResourceRepairCandidate(input.store.listIncidents());
   const queue =
     input.coordinator === undefined

@@ -31,12 +31,16 @@ export function createRepositoryPullRequestGitHub(input: {
     observe: ({ repository, number, account }) => {
       assertRepository(repository);
       assertNumber(number, "pull request number");
+      const actor = requiredString(
+        record(runJson(account, "api user")).login,
+        "authenticated GitHub login",
+      );
       const pull = record(runJson(account, `api repos/${repository}/pulls/${number}`));
       const repositoryData = record(runJson(account, `api repos/${repository} --jq '.'`));
       const permission = record(
         runJson(
           account,
-          `api repos/${repository}/collaborators/${encodeURIComponent(account)}/permission`,
+          `api repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`,
         ),
       );
       const head = record(pull.head);
@@ -81,7 +85,7 @@ export function createRepositoryPullRequestGitHub(input: {
         mergeStateStatus:
           typeof pull.mergeable_state === "string" ? pull.mergeable_state.toLowerCase() : "unknown",
         repositoryPrivate: privateRepository,
-        actor: account,
+        actor,
         actorPermission: parsePermission(permission.permission),
         workflowRuns: array(runs.workflow_runs)
           .map(parseWorkflowRun)

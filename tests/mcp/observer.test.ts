@@ -2,7 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSnapshot } from "../../src/core/dashboard/dashboard.js";
-import type { ScheduledTaskRecord } from "../../src/core/tasks/task-ledger.js";
+import {
+  SCHEDULED_TASK_SOURCES,
+  type ScheduledTaskRecord,
+} from "../../src/core/tasks/task-ledger.js";
 import {
   createObserverMcpServer,
   OBSERVER_MCP_TOOLS,
@@ -267,10 +270,10 @@ describe("observer MCP server", () => {
     }
   });
 
-  it("returns Daily Task Audit ledger summaries without running repair", async () => {
+  it.each(SCHEDULED_TASK_SOURCES)("returns Daily Task Audit records from %s", async (source) => {
     const record: ScheduledTaskRecord = {
       taskId: "daily-audit:test",
-      source: "daily-audit",
+      source,
       name: "Daily scheduled task audit",
       scheduledAt: 1_785_571_200_000,
       status: "success",
@@ -307,7 +310,7 @@ describe("observer MCP server", () => {
           observedAt: 1_785_657_600_000,
           lastFiredAt: 1_785_571_200_000,
           summary: { counts: { success: 1 } },
-          recentRecords: [{ taskId: "daily-audit:test", status: "success" }],
+          recentRecords: [{ taskId: "daily-audit:test", source, status: "success" }],
           recentLimit: 50,
           recentTotal: 1,
           recentTruncated: false,
@@ -315,6 +318,59 @@ describe("observer MCP server", () => {
         evidence: ["control:daily-task-audit"],
       });
       expect(dailyTaskAuditStatus).toHaveBeenCalledWith();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it.each([
+    { failureKind: "dependency-audit-unavailable" as const },
+    { repairStatus: "completed" as const },
+  ])("preserves canonical Daily Task Audit evidence %j", async (evidence) => {
+    const record: ScheduledTaskRecord = {
+      taskId: "audit-contract:test",
+      source: "daily-audit",
+      name: "Audit evidence",
+      scheduledAt: 1,
+      status: "failed",
+      updatedAt: 2,
+      ...evidence,
+    };
+    const { client, server } = await connectObserverClient({}, () =>
+      fakeClient({
+        dailyTaskAuditStatus: vi.fn(async () => ({
+          observedAt: 3,
+          lastFiredAt: 2,
+          summary: {
+            window: null,
+            counts: {
+              success: 0,
+              failed: 1,
+              missing: 0,
+              running: 0,
+              runningTimeout: 0,
+              skipped: 0,
+            },
+            items: [{ ...record, status: "failed" as const }],
+          },
+          recentWindow: { start: 0, end: 3, label: "recent" },
+          recentRecords: [record],
+          recentLimit: 50,
+          recentTotal: 1,
+          recentTruncated: false,
+        })),
+      }),
+    );
+    try {
+      const result = await client.callTool({
+        name: "tcb.observer.daily_task_audit",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        data: { summary: { items: [evidence] }, recentRecords: [evidence] },
+      });
     } finally {
       await client.close();
       await server.close();

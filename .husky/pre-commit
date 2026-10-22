@@ -11,4 +11,4 @@ pnpm exec tsc -p tsconfig.tests.json --noEmit
 # composer-pty needs a pty): they self-skip on CI and are flaky/absent across
 # dev machines, so running them here only makes the hook unreliable — which
 # pushes people to --no-verify and bypasses every gate. Run them via `pnpm test`.
-pnpm exec vitest run --exclude '**/tmux-live.test.ts' --exclude '**/composer-pty.test.ts'
+pnpm exec vitest run --project '!integration'

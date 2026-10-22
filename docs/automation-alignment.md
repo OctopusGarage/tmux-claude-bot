@@ -70,6 +70,25 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Repair visibility and task-ledger alignment: Observer task sources derive from
+`SCHEDULED_TASK_SOURCES`; its output accepts completed repairs and unavailable
+dependency-audit evidence. Daily Audit's Runtime Overview domain requires
+attention while repairs remain pending, even when an owned queue or admission
+deferral suppresses a duplicate operator card. Resolved historical failures alone
+remain healthy. GitHub credential selection remains command-local; repository
+recovery permission checks use the selected token's authenticated login rather
+than assuming the local credential selector is a remote user name.
+
+Runtime Guardian readiness validates the configured Git root and retains source
+cleanliness and branch gates. Durable readiness evidence records the first
+blockage, reason/policy changes, and recovery; repeated refusals are DEBUG and do
+not consume finding handling or repair cooldown. Expected self-heal admission
+waits before WorkOrder creation are skipped/not-needed, not new repair failures.
+Daily Audit normalizes only exact historical admission-only sweep failures and
+preserves active repair ownership and actual preparation failures. Resource repair
+queue settlement still runs under pressure, but incident-history scanning waits
+until the existing stable healthy recovery gate can permit dispatch.
+
 Main promotion alignment: GitHub requires pull requests into `main`, up-to-date
 GitHub Actions checks (`verify`, `scan`, `Analyze (javascript-typescript)`, and
 `Analyze (actions)`), and administrator compliance; force pushes and deletion

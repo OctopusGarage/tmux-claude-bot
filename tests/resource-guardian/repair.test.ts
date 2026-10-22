@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../src/core/deps.js";
 import {
   createProductionResourceRepairDispatcher,
   dispatchResourceGuardianRepair,
+  dispatchStableResourceRepair,
   reconcileResourceGuardianRepairQueue,
   resourceRepairEligibility,
   resourceRepairQueueState,
@@ -15,6 +16,23 @@ import {
 } from "../../src/core/tasks/repair-coordinator.js";
 
 describe("resourceRepairEligibility", () => {
+  it.each([
+    { pressure: "critical" as const, circuit: "background-closed" as const, stableSince: null },
+    { pressure: "healthy" as const, circuit: "open" as const, stableSince: 650_000 },
+    { pressure: "healthy" as const, circuit: "open" as const, stableSince: 800_000 },
+  ])("avoids reading incident history before stable recovery: %j", async (state) => {
+    const listIncidents = vi.fn(() => []);
+    const dispatch = vi.fn();
+    await dispatchStableResourceRepair({
+      now: 700_000,
+      ...state,
+      store: { listIncidents, writeIncident: vi.fn() },
+      dispatch,
+    });
+    expect(listIncidents).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("allows only a bot-owned incident with durable unresolved cleanup evidence after ten healthy minutes", () => {
     expect(
       resourceRepairEligibility({

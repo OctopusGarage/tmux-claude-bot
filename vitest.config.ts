@@ -1,21 +1,44 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+// These suites verify process-global APIs that worker threads cannot mutate.
+const processApiTests = [
+  "tests/adapters/control/server.test.ts",
+  "tests/core/power-schedule.test.ts",
+];
+const integrationTests = ["tests/integration/tmux-live.test.ts", "tests/tui/composer-pty.test.ts"];
+const excludedTests = [
+  ".claude/worktrees/**",
+  ".stryker-tmp/**",
+  "**/node_modules/**",
+];
 
 export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Avoid repeated OS process startup under host memory pressure. Keep each
+    // suite isolated and serialize worker threads rather than forking processes.
+    pool: "threads",
     // Keep full local/coverage gates within the host's CPU and memory envelope.
     // Several suites spawn real child processes, so high coverage parallelism
     // causes scheduler starvation and false 30-second timeouts on busy hosts.
     maxWorkers: 1,
     setupFiles: ["tests/setup.ts"],
     testTimeout: 30_000,
-    exclude: [
-      // Prevent git worktrees nested under .claude/worktrees/ from being picked
-      // up as additional test suites — they are independent branches/sandboxes.
-      ".claude/worktrees/**",
-      ".stryker-tmp/**",
-      "**/node_modules/**",
+    // Nested worktrees are independent branches, not additional test suites.
+    exclude: excludedTests,
+    projects: [
+      {
+        test: {
+          name: "unit",
+          include: [
+            ...configDefaults.include,
+            ...[...processApiTests, ...integrationTests].map((file) => `!${file}`),
+          ],
+        },
+      },
+      { test: { name: "process-api", pool: "forks", include: processApiTests } },
+      { test: { name: "integration", pool: "forks", include: integrationTests } },
     ],
     coverage: {
       provider: "v8",

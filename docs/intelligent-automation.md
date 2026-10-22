@@ -168,6 +168,13 @@ target worktrees, branch-policy conflicts, GitHub permission failures, and
 network/TLS failures are terminalized as blocked; stale invalid-output records
 are reconciled from later gate artifacts as fixed or not-reproducible. Only
 confirmed bot-owned runtime findings enter the bot self-repair WorkOrder.
+An hourly system self-heal sweep waiting for ordinary automation admission before
+creating a WorkOrder records an explicit skipped admission wait with no repair
+needed; the hourly producer retries while underlying project repairs retain
+their own queue ownership. Such a wait must not recursively become another
+self-heal failure. Daily Audit may normalize exact historical direct admission
+wait failures, but must preserve real preparation failures, delegated execution
+evidence, and occurrences owned by active repairs.
 A completed repair WorkOrder fixes its durable queue record. A failed, timed-out,
 or cancelled repair WorkOrder is detached and returned to bounded retry so a
 service restart cannot leave global repair ownership stuck in `running`.

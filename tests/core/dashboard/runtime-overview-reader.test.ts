@@ -60,6 +60,55 @@ function readers(overrides: Partial<RuntimeOverviewReaders> = {}): RuntimeOvervi
 }
 
 describe("Runtime Overview reader", () => {
+  it("keeps managed pending Daily Task Audit repairs visible without another owner warning", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        dailyAudit: () => ({
+          enabled: true,
+          summary: { active: 0, failed: 3, attention: 0, repairPending: 1, fixed: 2 },
+        }),
+      }),
+    });
+
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({ id: "daily-task-audit", status: "attention" }),
+    );
+    expect(overview.health.status).toBe("attention");
+    expect(overview.attention.items).not.toContainEqual(
+      expect.objectContaining({ id: "daily-task-audit:repair-pending" }),
+    );
+  });
+
+  it("keeps resolved Daily Task Audit failure history healthy", async () => {
+    const overview = await readRuntimeOverview({
+      now: 2_000,
+      sessions: [],
+      readers: readers({
+        dailyAudit: () => ({
+          enabled: true,
+          summary: {
+            active: 0,
+            failed: 5,
+            attention: 0,
+            repairPending: 0,
+            fixed: 1,
+            completed: 1,
+            notNeeded: 1,
+            superseded: 1,
+            notReproducible: 1,
+          },
+        }),
+      }),
+    });
+
+    expect(overview.runtimeDomains).toContainEqual(
+      expect.objectContaining({ id: "daily-task-audit", status: "healthy" }),
+    );
+    expect(overview.health.status).toBe("healthy");
+  });
+
   it("contains one failed domain while preserving the other authoritative reads", async () => {
     const overview = await readRuntimeOverview({
       now: 1_000,

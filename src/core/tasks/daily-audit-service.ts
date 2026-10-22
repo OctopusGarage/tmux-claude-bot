@@ -133,6 +133,21 @@ async function runDailyTaskAuditServiceTickInternal(
       data: { ledger: prunedLedger, repairQueue: prunedRepair },
     });
   }
+  const protectedSelfHealTaskIds = new Set(
+    coordinator
+      .list()
+      .filter((record) => record.status === "leased" || record.status === "running")
+      .flatMap((record) => record.linkedTaskIds),
+  );
+  const normalizedSelfHealWaits = ledger.reconcileSystemSelfHealAdmissionWaits(
+    input.now,
+    protectedSelfHealTaskIds,
+  );
+  if (normalizedSelfHealWaits > 0) {
+    log.info("normalized system self-heal admission waits", {
+      data: { count: normalizedSelfHealWaits },
+    });
+  }
   const reopenedSelfHealSweeps = ledger.reconcileDeferredSystemSelfHealSweeps(input.now);
   if (reopenedSelfHealSweeps > 0) {
     log.warn("reopened legacy deferred system self-heal sweeps", {

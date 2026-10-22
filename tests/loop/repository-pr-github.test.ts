@@ -22,8 +22,9 @@ function fakeRun(responses: Record<string, unknown>): {
 }
 
 describe("repository PR GitHub adapter", () => {
-  it("observes one exact PR head through the configured account", () => {
+  it("observes the authenticated actor while binding every command to the configured account", () => {
     const fake = fakeRun({
+      "api user": { login: "example-authenticated-owner" },
       "/pulls/22": {
         number: 22,
         state: "open",
@@ -33,7 +34,7 @@ describe("repository PR GitHub adapter", () => {
         head: { sha: "abc123", repo: { full_name: "OctopusGarage/fluent-frame" } },
         base: { repo: { full_name: "OctopusGarage/fluent-frame" } },
       },
-      "/collaborators/example-owner/permission": { permission: "admin" },
+      "/collaborators/example-authenticated-owner/permission": { permission: "admin" },
       "actions/runs": {
         workflow_runs: [
           { id: 55, head_sha: "old", status: "completed", conclusion: "action_required" },
@@ -61,10 +62,11 @@ describe("repository PR GitHub adapter", () => {
       number: 22,
       headSha: "abc123",
       repositoryPrivate: true,
+      actor: "example-authenticated-owner",
       actorPermission: "admin",
       workflowRuns: [{ id: 56, headSha: "abc123", conclusion: "action_required" }],
     });
-    expect(fake.commands).toHaveLength(5);
+    expect(fake.commands).toHaveLength(6);
     expect(fake.commands).toContainEqual(
       expect.stringContaining("actions/permissions/fork-pr-workflows-private-repos"),
     );
@@ -75,6 +77,41 @@ describe("repository PR GitHub adapter", () => {
     expect(
       fake.commands.every((command) => command.includes("gh auth token --user 'example-owner'")),
     ).toBe(true);
+  });
+
+  it("refuses permission lookup when the selected credential has no authenticated login", () => {
+    const fake = fakeRun({ "api user": {} });
+    const github = createRepositoryPullRequestGitHub({ run: fake.run });
+
+    expect(() =>
+      github.observe({
+        repository: "example-org/example-repo",
+        number: 22,
+        account: "example-owner",
+      }),
+    ).toThrow("missing authenticated GitHub login");
+    expect(fake.commands).toEqual([
+      "GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh api user",
+    ]);
+  });
+
+  it("does not fall back to another actor when authenticated-user lookup fails", () => {
+    const commands: string[] = [];
+    const github = createRepositoryPullRequestGitHub({
+      run: (command) => {
+        commands.push(command);
+        return { status: 1, stdout: "", stderr: "authentication rejected" };
+      },
+    });
+
+    expect(() =>
+      github.observe({
+        repository: "example-org/example-repo",
+        number: 22,
+        account: "example-owner",
+      }),
+    ).toThrow("authentication rejected");
+    expect(commands).toEqual(["GH_TOKEN=\"$(gh auth token --user 'example-owner')\" gh api user"]);
   });
 
   it("writes only the safe private-fork policy and verifies it", () => {

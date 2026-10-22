@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ControlClient } from "../adapters/control/client.js";
 import type { DashboardSnapshot } from "../core/dashboard/dashboard.js";
 import { OBSERVER_MCP_TOOLS } from "../core/mcp/profiles.js";
+import { SCHEDULED_TASK_SOURCES } from "../core/tasks/task-ledger.js";
 import { tildeifyHomeDeep } from "../shared/utils/path.js";
 import { appVersion } from "../shared/version.js";
 
@@ -266,15 +267,7 @@ const loopReportsSchema = z.object({
 });
 const scheduledTaskSchema = z.object({
   taskId: z.string(),
-  source: z.enum([
-    "loop-engineering",
-    "article-monitor",
-    "radar-monitor",
-    "external-monitor",
-    "launchd",
-    "daily-audit",
-    "autopilot-delegate",
-  ]),
+  source: z.enum(SCHEDULED_TASK_SOURCES),
   name: z.string(),
   scheduledAt: z.number(),
   status: z.enum([
@@ -301,6 +294,7 @@ const scheduledTaskSchema = z.object({
       "agent-timeout",
       "missing-instrumentation",
       "external-service",
+      "dependency-audit-unavailable",
       "unknown",
     ])
     .optional(),
@@ -310,6 +304,7 @@ const scheduledTaskSchema = z.object({
       "not-needed",
       "pending",
       "running",
+      "completed",
       "fixed",
       "blocked",
       "failed",

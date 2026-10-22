@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AppConfig } from "../../shared/types.js";
 import { createLogger } from "../../shared/utils/logger.js";
@@ -64,6 +65,27 @@ export type RuntimeGuardianRepairReadinessCheck = (
 
 export class RuntimeGuardianStore {
   private readonly handled = new JsonMapStore<number>("runtime_guardian_handled_findings.json");
+  private readonly readiness = new JsonMapStore<{
+    reason: string;
+    firstBlockedAt: number;
+    repairBranch: string;
+    worktreeIsolation: AppConfig["runtimeGuardian"]["worktreeIsolation"];
+  }>("runtime_guardian_readiness.json");
+
+  lastReadinessBlock(repoPath: string) {
+    return this.readiness.get(resolve(repoPath));
+  }
+
+  markReadinessBlocked(
+    repoPath: string,
+    block: NonNullable<ReturnType<RuntimeGuardianStore["lastReadinessBlock"]>>,
+  ): void {
+    this.readiness.set(resolve(repoPath), block);
+  }
+
+  clearReadinessBlock(repoPath: string): void {
+    this.readiness.delete(resolve(repoPath));
+  }
 
   lastHandledAt(fingerprint: string): number | undefined {
     return this.handled.get(fingerprint);
@@ -182,18 +204,36 @@ export async function runRuntimeGuardianTick(input: {
   }
 
   const worktreeIsolation = runtimeGuardianRepairWorktreeIsolation(input.config);
+  const previousReadinessBlock = store.lastReadinessBlock(repoPath);
   const readiness = (input.checkRepairReadiness ?? checkRuntimeGuardianRepairReadiness)(repoPath, {
     repairBranch: input.config.repairBranch,
     worktreeIsolation,
   });
   if (!readiness.ok) {
-    log.warn("runtime guardian repair blocked by readiness check", {
+    const changed =
+      previousReadinessBlock?.reason !== readiness.reason ||
+      previousReadinessBlock?.repairBranch !== input.config.repairBranch ||
+      previousReadinessBlock?.worktreeIsolation !== worktreeIsolation;
+    if (changed) {
+      store.markReadinessBlocked(repoPath, {
+        reason: readiness.reason,
+        firstBlockedAt: input.now,
+        repairBranch: input.config.repairBranch,
+        worktreeIsolation,
+      });
+    }
+    const context = {
       data: {
         reason: readiness.reason,
         repoPath,
+        repairBranch: input.config.repairBranch,
+        worktreeIsolation,
+        firstBlockedAt: changed ? input.now : previousReadinessBlock?.firstBlockedAt,
         findings: repairableFindings.map(loggableFinding),
       },
-    });
+    };
+    if (changed) log.warn("runtime guardian repair blocked by readiness check", context);
+    else log.debug("runtime guardian repair blocked by readiness check", context);
     return {
       fired: true,
       mode: input.config.mode,
@@ -201,6 +241,13 @@ export async function runRuntimeGuardianTick(input: {
       repairDispatch: "blocked",
       detail: readiness.reason,
     };
+  }
+
+  if (previousReadinessBlock !== undefined) {
+    store.clearReadinessBlock(repoPath);
+    log.info("runtime guardian repair readiness recovered", {
+      data: { repoPath, ...previousReadinessBlock, recoveredAt: input.now },
+    });
   }
 
   try {
@@ -334,6 +381,24 @@ export function checkRuntimeGuardianRepairReadiness(
     worktreeIsolation: AppConfig["runtimeGuardian"]["worktreeIsolation"];
   },
 ): { ok: true } | { ok: false; reason: string } {
+  const root = spawnSync("git", ["-C", repoPath, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+  });
+  if (root.status !== 0) {
+    return {
+      ok: false,
+      reason: `cannot verify runtime guardian repo root: ${
+        root.stderr.trim() || root.stdout.trim() || `exit ${root.status ?? "unknown"}`
+      }`,
+    };
+  }
+  try {
+    if (realpathSync(repoPath) !== realpathSync(root.stdout.trim())) {
+      return { ok: false, reason: "runtime guardian configured path is not its expected Git root" };
+    }
+  } catch {
+    return { ok: false, reason: "cannot resolve runtime guardian configured Git root" };
+  }
   const result = spawnSync("git", ["-C", repoPath, "status", "--porcelain"], {
     encoding: "utf8",
   });
