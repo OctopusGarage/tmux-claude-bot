@@ -98,7 +98,8 @@ runaway processes, and Resource Guardian state; `tcb resource status` or
 installations remain compatible until the operator runs `tcb security setup` in
 a trusted interactive local terminal. Do not enroll through a remotely controlled
 agent pane or send enrollment material through chat. Enrollment immediately
-requires short-lived grants for Telegram and Feishu: `/unlock` in the target
+requires grants for Telegram and Feishu (24 hours by default, configured with
+`tcb security grant-hours <hours>`): `/unlock` in the target
 chat, `/approve <request-id> <code>` privately, and `/lock` when finished. Local
 `tcb security revoke` suspends access; `resume` permits fresh verification.
 `reset` and `repair-lock` remain interactive and leave protection suspended.

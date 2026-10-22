@@ -8,6 +8,39 @@ import { registerSecurityCommands } from "../../src/cli/security-commands.js";
 import { RemoteAccessService } from "../../src/core/security/remote-access.js";
 
 describe("local security commands", () => {
+  it("configures grant hours through the dedicated local command", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "security-cli-duration-"));
+    try {
+      const service = new RemoteAccessService({ directory });
+      const program = new Command();
+      registerSecurityCommands(program, { service, write: vi.fn() });
+      await program.parseAsync(["node", "tcb", "security", "grant-hours", "24"]);
+      expect(service.status()).toMatchObject({
+        grantTtlSeconds: 86400,
+        enabled: false,
+        enrolled: false,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it.each(["0", "-1", "1.5", "24hours", "Infinity"])(
+    "rejects invalid CLI grant hours %s",
+    async (hours) => {
+      const directory = mkdtempSync(join(tmpdir(), "security-cli-duration-"));
+      try {
+        const service = new RemoteAccessService({ directory });
+        const program = new Command();
+        registerSecurityCommands(program, { service, write: vi.fn() });
+        await expect(
+          program.parseAsync(["node", "tcb", "security", "grant-hours", hours]),
+        ).rejects.toThrow("positive whole number");
+        expect(service.status().grantTtlSeconds).toBe(86400);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("refuses setup without local input and output TTYs before displaying secrets", async () => {
     const program = new Command();
     const output = vi.fn();

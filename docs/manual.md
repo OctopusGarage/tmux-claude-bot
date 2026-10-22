@@ -1087,8 +1087,10 @@ you add or change a user-facing command or feature:
 ## Remote Access Security
 
 Remote identity allowlists cannot detect a stolen allowed account. Optional
-local authenticator enrollment adds short-lived chat grants. Run `tcb security
-status --json` to inspect migration state and `tcb security setup` in a trusted
+local authenticator enrollment adds chat grants lasting 24 hours by default.
+Configure future grants with `tcb security grant-hours <hours>`. Authorization
+is checked once at ingress; queued and running work continues after locking or
+expiry. Run `tcb security status --json` to inspect migration state and `tcb security setup` in a trusted
 local terminal to enable protection immediately. Existing installs retain access
 until enrollment. In chat, use `/unlock`, approve privately with
 `/approve <request-id> <code>`, and `/lock` when finished. Local revoke, recovery,

@@ -30,16 +30,29 @@ commands cannot enroll an authenticator or disable protection.
 1. Send `/unlock` in the private or project-group chat you intend to use.
 2. Read the instructions sent privately. Check the target chat, then send
    `/approve <request-id> <code>` privately using a fresh authenticator code.
-3. Use the original chat normally for five minutes. Grants bind channel, user
-   and original chat; another chat needs its own grant.
+3. Use the original chat normally for the configured lifetime (24 hours by
+   default). Grants bind channel, user and original chat; another chat needs its
+   own grant.
 4. Send `/lock` when finished. It revokes your grants and pending requests in
-   that channel. `/security` reports enrollment/suspension without unlocking.
+   that channel. Queued and running work continues. `/security` reports
+   enrollment/suspension without unlocking.
 
 All other remote updates, including reads, buttons, voice, images, project
 management and delegation, require authorization after enrollment. Approval
 messages and bare codes receive best-effort deletion, which cannot remove copies
 from notifications, platform infrastructure or other devices. Never post a code
 to a group.
+
+Configure the lifetime of future approvals locally:
+
+```sh
+tcb security grant-hours 24
+tcb security status --json
+```
+
+Use a positive whole number of hours. The setting survives restarts, appears as
+`grantTtlSeconds` in status, and does not shorten or extend existing approvals.
+Existing security state without this setting defaults to 24 hours.
 
 Requests expire after one minute. Codes have 30-second periods, tolerate at most
 one period of clock drift, and cannot be reused across restarts. Five incorrect
@@ -49,18 +62,19 @@ Requests and grants are bounded in memory and never survive a backend restart.
 
 ## Queue And Automation Boundary
 
-Queued work retains its original remote provenance, including before enrollment.
-Delivery rechecks the same grant after readiness waits; expiry, locking, local
-revocation or a replacement unlock cannot authorize the old item. An internal
-system-origin label does not erase remote provenance. Remote-derived queued
-input is not persisted for replay. Queue items isolate authorization context.
+Authorization is checked once when a remote update enters the bot. Once admitted,
+input and derived work follow their normal lifecycle without authorization
+rechecks at enqueue, dispatch, delegation, or after readiness waits. Expiry,
+manual locking, local suspension, enrollment and renewal do not cancel or reject
+already admitted work. New updates still require a valid grant. This deliberate
+policy prioritizes continuity and accepts that previously admitted malicious
+input may still execute after locking; stop affected work explicitly when needed.
 
 Proactive notifications retain their existing delivery routes; this feature
 does not hide notifications until a chat is unlocked. Independent scheduled
-maintenance and trusted local CLI/TUI retain their own authority. Already accepted or running work is not undone by locking or expiry:
-an accepted autonomous WorkOrder can finish and follow its existing recovery
-policy. Authorization controls admission, not process termination. Stop affected
-work explicitly when an incident requires it.
+maintenance and trusted local CLI/TUI retain their own authority. Accepted
+autonomous WorkOrders retain their existing recovery policy. Authorization
+controls admission, not process termination.
 
 ## Local Suspension And Recovery
 

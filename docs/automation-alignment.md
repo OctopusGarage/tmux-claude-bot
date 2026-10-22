@@ -73,11 +73,13 @@ Use the smallest durable surface that matches the scope:
 Remote-access security alignment: identity allowlists and Feishu card signatures
 precede the shared remote guard. Existing installs remain compatible until
 interactive `tcb security setup` enrolls TOTP, immediately requiring channel/user/
-chat-scoped five-minute grants for remote reads, writes, media and callbacks.
-`/unlock` sends instructions privately, `/approve` is private-only, `/lock`
-revokes channel grants, and `/security` reports enrollment/suspension. Queues
-retain original volatile grants and pre-enrollment remote provenance, recheck
-after readiness, isolate context, and never gain authority from a system label.
+chat-scoped grants for remote reads, writes, media and callbacks. Grants default
+to 24 hours; `tcb security grant-hours <hours>` configures future grants and
+status exposes the persisted lifetime. `/unlock` sends instructions privately,
+`/approve` is private-only, `/lock` blocks future input, and `/security` reports
+enrollment/suspension. Authorization is checked only at remote ingress. Already
+admitted input continues through queues, delegation and readiness waits after
+expiry, locking or local suspension; no downstream grant context is propagated.
 Independent scheduled/local work stays separate; accepted autonomous WorkOrders
 retain their lifecycle policy. Recovery uses dedicated local `tcb security`
 commands. `docs/security.md` owns migration and host-compromise limitations.

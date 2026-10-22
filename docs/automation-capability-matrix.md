@@ -81,7 +81,10 @@ When changing a capability above:
 
 
 Remote authorization applies to Telegram and Feishu messages, media and buttons
-using the same channel/user/chat-scoped grant policy. Enrollment, suspension,
+using the same channel/user/chat-scoped grant policy: 24 hours by default,
+configurable locally through `tcb security grant-hours <hours>`. Authorization
+is checked only at ingress; locking does not cancel queued or running work.
+Enrollment, suspension,
 reset and stale-lock repair are local `tcb security` commands. CLI/TUI and
 independent scheduled maintenance keep their existing authority; no new MCP
 remote-security mutation tools are added. See [security.md](security.md).

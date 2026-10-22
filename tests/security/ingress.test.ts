@@ -4,11 +4,15 @@ import type { RemoteAccessService } from "../../src/core/security/remote-access.
 
 function input(text?: string) {
   const service = {
-    status: vi.fn(() => ({ enabled: true, enrolled: true, suspended: false })),
+    status: vi.fn(() => ({
+      enabled: true,
+      enrolled: true,
+      suspended: false,
+      grantTtlSeconds: 86400,
+    })),
     capture: vi.fn(() => {
       throw new Error("locked");
     }),
-    authorize: vi.fn(),
     request: vi.fn(() => ({ id: "request-id", expiresAt: Date.now() + 60_000 })),
     approve: vi.fn(),
     lock: vi.fn(),
@@ -51,6 +55,7 @@ describe("remote security ingress", () => {
     await runRemoteIngress(req);
     expect(req.mock.request).toHaveBeenCalledWith(req.principal);
     expect(req.sendPrivate).toHaveBeenCalledOnce();
+    expect(req.sendPrivate.mock.calls[0]?.[0]).toContain("24");
     expect(req.run).not.toHaveBeenCalled();
     expect(req.mock.approve).not.toHaveBeenCalled();
   });
@@ -68,6 +73,7 @@ describe("remote security ingress", () => {
     const req = input("/approve request-id 123456");
     await runRemoteIngress(req);
     expect(req.mock.approve).toHaveBeenCalledWith(req.principal, "request-id", "123456");
+    expect(req.reply.mock.calls[0]?.[0]).toContain("24");
     expect(req.removeSensitive).toHaveBeenCalled();
     expect(req.run).not.toHaveBeenCalled();
   });

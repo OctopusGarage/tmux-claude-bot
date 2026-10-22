@@ -1,5 +1,4 @@
 import { messages } from "../i18n/index.js";
-import { withRemoteAccessContext } from "./context.js";
 import type { RemoteAccessService, RemotePrincipal } from "./remote-access.js";
 
 type RemoteIngress = {
@@ -50,7 +49,9 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
         await input.reply(m.securityRevoked);
       } else if (command === "unlock" && parts.length === 1) {
         const request = service.request(principal);
-        await input.sendPrivate(m.securityRequest(request.id, principal.chatId));
+        await input.sendPrivate(
+          m.securityRequest(request.id, principal.chatId, service.status().grantTtlSeconds / 3600),
+        );
         if (!input.privateChat) await input.reply(m.securityPrivateInstructions);
       } else if (command === "approve") {
         if (!input.privateChat) {
@@ -62,7 +63,7 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
           return false;
         }
         service.approve(principal, parts[1] ?? "", parts[2] ?? "");
-        await input.reply(m.securityApproved);
+        await input.reply(m.securityApproved(service.status().grantTtlSeconds / 3600));
       } else {
         await input.reply(m.securityUsage);
       }
@@ -83,13 +84,12 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
       return false;
     }
   }
-  let run: Promise<void>;
   try {
-    run = withRemoteAccessContext(service, principal, input.run);
+    service.capture(principal);
   } catch {
     await input.reply(m.securityLocked);
     return false;
   }
-  await run;
+  await input.run();
   return true;
 }

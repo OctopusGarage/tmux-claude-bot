@@ -8,22 +8,22 @@ export const ja: Messages = {
   securityPrivateApproval:
     "承認はボットとの個人チャットでのみ行ってください。グループに認証コードを送らないでください。",
   securityPrivateInstructions: "ボットとの個人チャットで承認手順を確認してください。",
-  securityApproved:
-    "元のチャットに5分間のアクセスを許可しました。終了時に /lock を使ってください。",
-  securityRevoked: "リモート認可と承認待ちの要求を取り消しました。実行中の処理は停止しません。",
+  securityApproved: (hours) =>
+    `元のチャットに${hours}時間のアクセスを許可しました。終了時は /lock を使用できます。`,
+  securityRevoked:
+    "リモート認可と承認待ちの要求を取り消しました。待機中と実行中の処理は継続します。",
   securityApprovalFailed:
     "承認失敗、有効期限切れ、または一時ロックです。ローカルで tcb security status を確認し、新しいコードを使ってください。",
   securityUsage:
     "/unlock、/approve <request-id> <code>、/lock、/security を使用します。認証器の登録はローカルの tcb security setup のみです。",
   securityCompatibility:
     "認証器は未登録です。従来のアクセスを維持しています。ローカルで tcb security setup を実行すると認証が有効になります。",
-  securityEnabled:
-    "二段階認証が有効です。チャットごとに短期間の認可が必要です。/unlock または /lock を使用してください。",
+  securityEnabled: "二段階認証が有効です。/unlock で認可し、/lock で新しい入力を停止できます。",
   securitySuspended:
     "ローカルでリモートアクセスが停止されています。信頼できる端末で tcb security resume または setup を使用してください。",
-  securityRequest: (id, chat) =>
-    `対象チャット：${chat}。認可は5分間、要求は1分で失効します。確認後 /approve ${id} <code> の <code> を認証器の新しいコードに置き換えて返信してください。コードを転送しないでください。`,
-  cmdSecurityUnlock: "短期間のリモート認可を要求",
+  securityRequest: (id, chat, hours) =>
+    `対象チャット：${chat}。認可は${hours}時間、要求は1分で失効します。確認後 /approve ${id} <code> の <code> を認証器の新しいコードに置き換えて返信してください。コードを転送しないでください。`,
+  cmdSecurityUnlock: "リモート認可を要求",
   cmdSecurityApprove: "個人チャットで認証要求を承認",
   cmdSecurityLock: "リモート認可を取り消す",
   cmdSecurityStatus: "リモートアクセスの安全状態",

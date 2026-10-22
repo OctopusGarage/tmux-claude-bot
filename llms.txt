@@ -20,7 +20,7 @@ control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
 - [AI tool surface governance](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/ai-tool-surface-governance.md): Role-based governance for exposing tmux-claude-bot capabilities through CLI, MCP tools, and skills.
 - [Testing standard](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/TESTING.md): Test strategy, local verification commands, and guardrails.
 
-- [Remote access security](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/security.md): Local authenticator enrollment, short-lived chat grants, queue authorization, suspension, recovery, and OS trust limits.
+- [Remote access security](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/security.md): Local authenticator enrollment, configurable daily chat grants, admission-only authorization, suspension, recovery, and OS trust limits.
 
 ## Architecture And Maintenance
 

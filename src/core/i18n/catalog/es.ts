@@ -8,10 +8,10 @@ export const es: Messages = {
   securityPrivateApproval:
     "Aprueba solo en un chat privado con el bot. Nunca publiques códigos en un grupo.",
   securityPrivateInstructions: "Consulta el chat privado con el bot para aprobar el acceso.",
-  securityApproved:
-    "Acceso concedido al chat original durante cinco minutos. Usa /lock al terminar.",
+  securityApproved: (hours) =>
+    `Acceso concedido al chat original durante ${hours} horas. Usa /lock al terminar.`,
   securityRevoked:
-    "Se revocaron tus autorizaciones remotas y solicitudes pendientes. Los trabajos en ejecución no se detienen.",
+    "Se revocaron tus autorizaciones remotas y solicitudes pendientes. Los trabajos en cola y en ejecución continuarán.",
   securityApprovalFailed:
     "La aprobación falló, caducó o está temporalmente bloqueada. Revisa tcb security status localmente y usa un código nuevo.",
   securityUsage:
@@ -19,12 +19,12 @@ export const es: Messages = {
   securityCompatibility:
     "El autenticador no está registrado: el acceso existente sigue disponible. Ejecuta tcb security setup localmente para activar la verificación.",
   securityEnabled:
-    "La verificación adicional está activada. Cada chat requiere una autorización temporal. Usa /unlock o /lock.",
+    "La verificación adicional está activada. Usa /unlock para acceder o /lock para bloquear nuevas entradas.",
   securitySuspended:
     "El acceso remoto se suspendió localmente. Usa tcb security resume o setup en un terminal de confianza.",
-  securityRequest: (id, chat) =>
-    `Chat de destino: ${chat}. Acceso de cinco minutos; solicitud válida un minuto. Comprueba el destino y responde /approve ${id} <code> con un código nuevo del autenticador. No reenvíes el código.`,
-  cmdSecurityUnlock: "Solicitar acceso remoto temporal",
+  securityRequest: (id, chat, hours) =>
+    `Chat de destino: ${chat}. Acceso de ${hours} horas; solicitud válida un minuto. Comprueba el destino y responde /approve ${id} <code> con un código nuevo del autenticador. No reenvíes el código.`,
+  cmdSecurityUnlock: "Solicitar acceso remoto",
   cmdSecurityApprove: "Aprobar una solicitud en privado",
   cmdSecurityLock: "Revocar tu acceso remoto",
   cmdSecurityStatus: "Mostrar el estado de seguridad remota",

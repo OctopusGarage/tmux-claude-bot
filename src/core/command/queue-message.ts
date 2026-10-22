@@ -1,5 +1,4 @@
 import type { Channel as ChatChannel } from "../projects/project-manager.js";
-import type { RemoteAuthorization, RemotePrincipal } from "../security/remote-access.js";
 
 export type Channel = ChatChannel | "control";
 
@@ -9,9 +8,6 @@ export type ControlRestoreMetadata = {
 };
 
 export type QueuedMessage = {
-  /** Volatile transport authorization; never included in persisted backlog. */
-  remoteAuthorization?: RemoteAuthorization | undefined;
-  remotePrincipal?: RemotePrincipal | undefined;
   id: string;
   text: string;
   chatId: string | number;

@@ -48,6 +48,7 @@ family registrars.
 
 - `tcb security status [--json]`
 - `tcb security setup`
+- `tcb security grant-hours <hours>`
 - `tcb security revoke`
 - `tcb security resume`
 - `tcb security reset`
@@ -57,7 +58,10 @@ family registrars.
 and immediately enables remote second-factor authorization. Existing installs
 remain compatible before enrollment. Revoke persists suspension; resume requires
 fresh verification. Reset and stale-lock repair are interactive and leave access
-suspended. Status never prints secrets or grants. See [security.md](security.md).
+suspended. `grant-hours` accepts positive whole hours (default 24), affects future
+approvals, and is reflected by `grantTtlSeconds` in status. Locking and suspension
+block new input; admitted queued and running work continues. Status never prints
+secrets or grants. See [security.md](security.md).
 
 - `tcb service install`
 - `tcb service uninstall`

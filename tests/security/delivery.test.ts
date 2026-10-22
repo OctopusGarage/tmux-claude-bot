@@ -1,47 +1,38 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TOTP } from "otpauth";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startActiveDelegatedTask } from "../../src/core/autopilot/delegated-task.js";
 import { executeMessage } from "../../src/core/command/dispatch.js";
 import { MessageQueue, type QueuedMessage } from "../../src/core/command/queue.js";
-import {
-  captureRemoteAuthorization,
-  checkRemoteAuthorization,
-  withAcceptedWorkOrderContext,
-  withRemoteAccessContext,
-} from "../../src/core/security/context.js";
-import { RemoteAccessError, RemoteAccessService } from "../../src/core/security/remote-access.js";
+import { runRemoteIngress } from "../../src/core/security/ingress.js";
+import { RemoteAccessService } from "../../src/core/security/remote-access.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
 
 const directories: string[] = [];
 afterEach(() => {
   for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
-
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "tcb-security-delivery-"));
   directories.push(directory);
   let now = 60_000;
   const service = new RemoteAccessService({ directory, now: () => now });
   const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
-  const totp = new TOTP({ secret, algorithm: "SHA1", digits: 6, period: 30 });
-  service.enroll(secret, totp.generate({ timestamp: now }));
+  const code = () => new TOTP({ secret, digits: 6, period: 30 }).generate({ timestamp: now });
+  service.enroll(secret, code());
   now += 30_000;
   const principal = { channel: "telegram" as const, userId: "123", chatId: "123" };
-  const request = service.request(principal);
-  service.approve(principal, request.id, totp.generate({ timestamp: now }));
+  service.approve(principal, service.request(principal).id, code());
   return {
     service,
     principal,
     directory,
     expire: () => {
-      now += 301_000;
+      now += 86_400_000;
     },
   };
 }
-
 function message(overrides: Partial<QueuedMessage> = {}): QueuedMessage {
   return {
     id: "remote",
@@ -55,88 +46,19 @@ function message(overrides: Partial<QueuedMessage> = {}): QueuedMessage {
     ...overrides,
   };
 }
-
-describe("remote terminal delivery", () => {
-  it("rejects a revoked delegation before inspecting or reserving project resources", async () => {
-    const f = fixture();
-    const deps = fakeDeps();
-    deps.remoteAccess = f.service;
-    await withRemoteAccessContext(f.service, f.principal, async () => {
-      f.service.revoke();
-      await expect(
-        startActiveDelegatedTask(deps, { session: "proj-1", requirement: "maintain this project" }),
-      ).rejects.toBeInstanceOf(RemoteAccessError);
-    });
-    expect(deps.queue.enqueued).toHaveLength(0);
-    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
+function ingress(f: ReturnType<typeof fixture>, run: () => Promise<void>) {
+  return runRemoteIngress({
+    service: f.service,
+    principal: f.principal,
+    privateChat: true,
+    text: "hello",
+    reply: async () => {},
+    sendPrivate: async () => {},
+    run,
   });
-
-  it("allows accepted lifecycle work after expiry while retaining the caller's expired grant", async () => {
-    const f = fixture();
-    await withRemoteAccessContext(f.service, f.principal, async () => {
-      await withAcceptedWorkOrderContext(async () => {
-        await Promise.resolve();
-        f.expire();
-        expect(captureRemoteAuthorization()).toBeUndefined();
-        expect(() =>
-          checkRemoteAuthorization({ channel: "control", origin: "system" }, f.service),
-        ).not.toThrow();
-      });
-      expect(() => captureRemoteAuthorization()).toThrow(RemoteAccessError);
-    });
-  });
-
-  it("does not grandfather legacy remote-derived work after enrollment", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "tcb-security-migration-"));
-    directories.push(directory);
-    const service = new RemoteAccessService({ directory, now: () => 60_000 });
-    const principal = { channel: "telegram" as const, userId: "123", chatId: "123" };
-    const queue = new MessageQueue(30, join(directory, "queue.json"));
-    let release!: () => void;
-    const waiting = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const deps = fakeDeps();
-    deps.remoteAccess = service;
-    let settled!: () => void;
-    const done = new Promise<void>((resolve) => {
-      settled = resolve;
-    });
-    const reject = vi.fn(() => settled());
-    const remote = message({
-      id: "legacy-derived",
-      channel: "control",
-      origin: "system",
-      reject,
-      resolve: settled,
-    });
-    queue.setHandler(async (msg) => {
-      if (msg.id === "blocker") {
-        await waiting;
-        return;
-      }
-      try {
-        msg.resolve(await executeMessage(msg, deps));
-      } catch (error) {
-        msg.reject(error as Error);
-      }
-    });
-    queue.enqueue(message({ id: "blocker", channel: "control", action: "status" }));
-    withRemoteAccessContext(service, principal, () => queue.enqueue(remote));
-    expect(remote.remotePrincipal).toEqual(principal);
-    expect(remote.ephemeral).toBe(true);
-    const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
-    service.enroll(
-      secret,
-      new TOTP({ secret, digits: 6, period: 30 }).generate({ timestamp: 60_000 }),
-    );
-    release();
-    await done;
-    expect(reject).toHaveBeenCalledOnce();
-    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
-  });
-
-  it("rechecks authorization after waiting for the agent's input surface", async () => {
+}
+describe("admission-only remote authorization", () => {
+  it("delivers admitted input when authorization expires during readiness waits", async () => {
     const f = fixture();
     const deps = fakeDeps({
       bridge: { hasSession: vi.fn(async () => true) },
@@ -146,54 +68,57 @@ describe("remote terminal delivery", () => {
       },
     });
     deps.remoteAccess = f.service;
-    await withRemoteAccessContext(f.service, f.principal, async () => {
-      await expect(executeMessage(message(), deps)).rejects.toThrow();
-    });
-    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
+    await expect(
+      ingress(f, async () => {
+        await executeMessage(message(), deps);
+      }),
+    ).resolves.toBe(true);
+    expect(deps.bridge.sendKeys).toHaveBeenCalled();
+    const next = vi.fn(async () => {});
+    expect(await ingress(f, next)).toBe(false);
+    expect(next).not.toHaveBeenCalled();
   });
-
-  it("stamps queued system work from a remote request and rejects it after revocation", async () => {
-    const f = fixture();
-    const queuePath = join(f.directory, "queue.json");
-    const queue = new MessageQueue(30, queuePath);
-    let release!: () => void;
-    const waiting = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const deps = fakeDeps();
-    deps.remoteAccess = f.service;
-    let settled!: () => void;
-    const done = new Promise<void>((resolve) => {
-      settled = resolve;
-    });
-    const reject = vi.fn(() => settled());
-    const remote = message({
-      id: "derived",
-      channel: "control",
-      origin: "system",
-      reject,
-      resolve: settled,
-    });
-    queue.setHandler(async (msg) => {
-      if (msg.id === "blocker") {
-        await waiting;
-        return;
-      }
-      try {
-        msg.resolve(await executeMessage(msg, deps));
-      } catch (error) {
-        msg.reject(error as Error);
-      }
-    });
-    queue.enqueue(message({ id: "blocker", action: "status", channel: "control" }));
-    withRemoteAccessContext(f.service, f.principal, () => queue.enqueue(remote));
-    expect(remote.remoteAuthorization?.principal).toEqual(f.principal);
-    queue.flushPending();
-    expect(readFileSync(queuePath, "utf8")).not.toContain("derived");
-    f.service.revoke();
-    release();
-    await done;
-    expect(reject).toHaveBeenCalledOnce();
-    expect(deps.bridge.sendKeys).not.toHaveBeenCalled();
-  });
+  it.each(["lock", "revoke", "expire"] as const)(
+    "keeps admitted queued input after %s and blocks new input",
+    async (action) => {
+      const f = fixture();
+      const queue = new MessageQueue(30, join(f.directory, "queue.json"));
+      const deps = fakeDeps({ bridge: { hasSession: vi.fn(async () => true) } });
+      deps.remoteAccess = f.service;
+      let release!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let complete!: () => void;
+      const done = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const reject = vi.fn(() => complete());
+      queue.setHandler(async (msg) => {
+        if (msg.id === "blocker") {
+          await waiting;
+          return;
+        }
+        try {
+          msg.resolve(await executeMessage(msg, deps));
+        } catch (error) {
+          msg.reject(error as Error);
+        }
+      });
+      queue.enqueue(message({ id: "blocker", channel: "control", action: "status" }));
+      await ingress(f, async () => {
+        queue.enqueue(message({ resolve: complete, reject }));
+      });
+      if (action === "lock") f.service.lock(f.principal);
+      else if (action === "revoke") f.service.revoke();
+      else f.expire();
+      const next = vi.fn(async () => {});
+      expect(await ingress(f, next)).toBe(false);
+      expect(next).not.toHaveBeenCalled();
+      release();
+      await done;
+      expect(reject).not.toHaveBeenCalled();
+      expect(deps.bridge.sendKeys).toHaveBeenCalled();
+    },
+  );
 });

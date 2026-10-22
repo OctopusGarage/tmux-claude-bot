@@ -32,17 +32,63 @@ afterEach(() => {
 });
 
 describe("remote access security", () => {
+  it("defaults to a full day and expires new admissions exactly at the boundary", () => {
+    const f = fixture();
+    expect(f.service.status().grantTtlSeconds).toBe(86400);
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    f.service.approve(privateAlice, f.service.request(alice).id, f.code());
+    f.advance(86_399_999);
+    expect(() => f.service.capture(alice)).not.toThrow();
+    f.advance(1);
+    expect(() => f.service.capture(alice)).toThrow();
+  });
+  it("persists configured hours without changing existing grants or enrollment", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    f.service.approve(privateAlice, f.service.request(alice).id, f.code());
+    f.service.setGrantHours(48);
+    const other = new RemoteAccessService({ directory: f.directory, now: f.now });
+    expect(other.status()).toMatchObject({ grantTtlSeconds: 172800, enrolled: true });
+    f.advance(86_400_000);
+    expect(() => f.service.capture(alice)).toThrow();
+    f.service.approve(privateAlice, f.service.request(alice).id, f.code());
+    f.advance(172_799_999);
+    expect(() => f.service.capture(alice)).not.toThrow();
+    f.advance(1);
+    expect(() => f.service.capture(alice)).toThrow();
+  });
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER])(
+    "rejects invalid grant hours %s",
+    (hours) => {
+      const f = fixture();
+      expect(() => f.service.setGrantHours(hours)).toThrow();
+      expect(f.service.status().grantTtlSeconds).toBe(86400);
+    },
+  );
+  it("migrates existing state without a configured duration to one day", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    const path = join(f.directory, "remote-access.json");
+    const state = JSON.parse(readFileSync(path, "utf8"));
+    delete state.grantTtlSeconds;
+    writeFileSync(path, JSON.stringify(state));
+    expect(new RemoteAccessService({ directory: f.directory }).status()).toMatchObject({
+      enrolled: true,
+      grantTtlSeconds: 86400,
+    });
+  });
   it("preserves legacy access until enrollment and redacts status", () => {
     const f = fixture();
     expect(f.service.status()).toMatchObject({ enabled: false, enrolled: false, suspended: false });
     expect(f.service.capture(alice)).toBeUndefined();
-    expect(() => f.service.authorize(undefined)).not.toThrow();
     f.service.enroll(secret, f.code());
     expect(f.service.status()).toMatchObject({ enabled: true, enrolled: true });
     expect(JSON.stringify(f.service.status())).not.toContain(secret);
-    expect(() => f.service.authorize(undefined)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
   });
-  it("binds grants to the requesting identity/chat and expires queued authorization", () => {
+  it("binds access to the requesting identity/chat and expires new admissions", () => {
     const f = fixture();
     f.service.enroll(secret, f.code());
     f.advance(30_000);
@@ -51,13 +97,12 @@ describe("remote access security", () => {
     expect(f.service.approve(privateAlice, req.id, f.code()).principal).toEqual(alice);
     const auth = f.service.capture(alice);
     expect(auth).toBeDefined();
-    expect(() => f.service.authorize(auth, { channel: "telegram", chatId: "group" })).not.toThrow();
-    expect(() => f.service.authorize(auth, { channel: "lark", chatId: "group" })).toThrow();
+    expect(() => f.service.capture({ ...alice, channel: "lark" })).toThrow();
     expect(() => f.service.capture(privateAlice)).toThrow();
-    f.advance(300_000);
-    expect(() => f.service.authorize(auth)).toThrow();
+    f.advance(86_400_000);
+    expect(() => f.service.capture(alice)).toThrow();
   });
-  it("replaces a renewed principal grant without reviving queued work or changing other chats", () => {
+  it("renews access without changing other chats", () => {
     const f = fixture();
     f.service.enroll(secret, f.code());
     f.advance(30_000);
@@ -78,15 +123,15 @@ describe("remote access security", () => {
     f.service.approve(privateAlice, f.service.request(alice).id, f.code());
     const renewed = f.service.capture(alice);
     expect(renewed?.grantId).not.toBe(original?.grantId);
-    expect(() => f.service.authorize(original)).toThrow();
-    expect(() => f.service.authorize(otherChat)).not.toThrow();
-    expect(() => f.service.authorize(otherChannel)).not.toThrow();
+    expect(() => f.service.capture(alice)).not.toThrow();
+    expect(() => f.service.capture(privateAlice)).not.toThrow();
+    expect(() => f.service.capture(otherPrincipal)).not.toThrow();
     expect(f.service.capture(privateAlice)?.grantId).toBe(otherChat?.grantId);
     expect(f.service.capture(otherPrincipal)?.grantId).toBe(otherChannel?.grantId);
-    f.advance(299_999);
-    expect(() => f.service.authorize(renewed)).not.toThrow();
+    f.advance(86_399_999);
+    expect(() => f.service.capture(alice)).not.toThrow();
     f.advance(1);
-    expect(() => f.service.authorize(renewed)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
   });
   it("persists global replay detection and five-attempt lockout across instances", () => {
     const f = fixture();
@@ -107,23 +152,21 @@ describe("remote access security", () => {
     f.service.enroll(secret, f.code());
     f.advance(30_000);
     f.service.approve(privateAlice, f.service.request(alice).id, f.code());
-    const auth = f.service.capture(alice);
     const other = new RemoteAccessService({ directory: f.directory, now: f.now });
     other.revoke();
-    expect(() => f.service.authorize(auth)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
     other.resume();
-    expect(() => f.service.authorize(auth)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
     other.reset();
     expect(other.status()).toMatchObject({ enabled: true, suspended: true, enrolled: false });
     expect(() => other.resume()).toThrow();
-    expect(() => other.authorize(undefined)).toThrow();
+    expect(() => other.capture(alice)).toThrow();
   });
   it("accepts a replacement key after reset and invalidates every prior grant", () => {
     const f = fixture();
     f.service.enroll(secret, f.code());
     f.advance(30_000);
     f.service.approve(privateAlice, f.service.request(alice).id, f.code());
-    const old = f.service.capture(alice);
     f.service.reset();
     const replacement = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
     const code = new TOTP({ secret: replacement, digits: 6, period: 30 }).generate({
@@ -131,8 +174,8 @@ describe("remote access security", () => {
     });
     f.service.enroll(replacement, code);
     expect(f.service.status()).toMatchObject({ enabled: true, enrolled: true, suspended: false });
-    expect(() => f.service.authorize(old)).toThrow();
-    expect(() => f.service.authorize(undefined)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
   });
   it("expires requests and locks all grants and requests for a user", () => {
     const f = fixture();
@@ -142,10 +185,9 @@ describe("remote access security", () => {
     f.advance(60_000);
     expect(() => f.service.approve(privateAlice, req.id, f.code())).toThrow();
     f.service.approve(privateAlice, f.service.request(alice).id, f.code());
-    const auth = f.service.capture(alice);
     const pending = f.service.request(privateAlice);
     f.service.lock(alice);
-    expect(() => f.service.authorize(auth)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
     expect(() => f.service.approve(privateAlice, pending.id, f.code())).toThrow();
   });
   it("serializes failed OTP updates from concurrent processes", async () => {
@@ -202,7 +244,7 @@ describe("remote access security", () => {
     writeFileSync(join(lock, "owner.json"), JSON.stringify({ pid: 2147483647 }));
     f.service.repairLock();
     expect(f.service.status()).toMatchObject({ enabled: true, enrolled: true, suspended: true });
-    expect(() => f.service.authorize(undefined)).toThrow();
+    expect(() => f.service.capture(alice)).toThrow();
   });
   it("fails closed on corrupt or symlinked state without disclosing contents", () => {
     const f = fixture();
@@ -210,7 +252,7 @@ describe("remote access security", () => {
     const path = join(f.directory, "remote-access.json");
     expect(readFileSync(path, "utf8")).toContain(secret);
     writeFileSync(path, "sensitive-corruption");
-    expect(() => f.service.authorize(undefined)).toThrow("Remote security state is unavailable");
+    expect(() => f.service.capture(alice)).toThrow("Remote security state is unavailable");
     rmSync(path);
     symlinkSync(join(f.directory, "missing"), path);
     expect(() => f.service.status()).toThrow("Remote security state is unavailable");

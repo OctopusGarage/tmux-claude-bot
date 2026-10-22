@@ -67,7 +67,6 @@ import {
 import { markImplementedOpportunitiesForCompletedDelegation } from "../opportunities/delegation-completion.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
 import { cleanupWorkerSessionRecords } from "../recovery/worker-session-cleanup.js";
-import { captureRemoteAuthorization, withAcceptedWorkOrderContext } from "../security/context.js";
 import { DailyTaskLedger } from "../tasks/task-ledger.js";
 
 const log = createLogger("autopilot.delegated-task");
@@ -312,7 +311,6 @@ export async function startActiveDelegatedTask(
     trustedRunId?: string;
   },
 ): Promise<ActiveDelegatedTaskStartResult> {
-  captureRemoteAuthorization();
   if (!deps.config.loopEngineering.supervisor.enabled) {
     return {
       status: "blocked",
@@ -572,7 +570,6 @@ export async function startActiveDelegatedTask(
         };
       }
 
-      captureRemoteAuthorization();
       clearActiveDelegatedTerminalArtifacts(workOrder);
       writeLoopSupervisorWorkOrderState({
         workOrder,
@@ -838,66 +835,64 @@ function launchActiveDelegatedTask(
   }
   const lease = heldLease ?? (admission?.allowed === true ? admission.lease : undefined);
   if (lease === undefined) return false;
-  return withAcceptedWorkOrderContext(() => {
-    const projectPath = workOrder.projectPath;
-    const controller = new AbortController();
-    activeDelegatedTasks.set(projectPath, { workOrder, controller });
-    void runActiveDelegatedTaskInBackground(
-      deps,
-      workOrder,
-      supervisorSession,
-      startedAt,
-      controller.signal,
-    )
-      .catch(async (err) => {
-        const message = normalizeError(err).message;
-        log.error("active delegated task crashed", {
-          err,
-          data: { runId: workOrder.id, projectId: workOrder.projectId },
-        });
-        const endedAt = Date.now();
-        const taskLedger = new DailyTaskLedger();
-        const taskLedgerId = activeDelegatedTaskLedgerId(workOrder.id);
-        if (
-          taskLedger
-            .listAll()
-            .some((task) => task.taskId === taskLedgerId && task.status === "running")
-        ) {
-          taskLedger.fail(taskLedgerId, {
-            endedAt,
-            error: message,
-            summary: "Active delegated task crashed before completion.",
-          });
-        }
-        try {
-          writeLoopSupervisorWorkOrderState({
-            workOrder,
-            supervisorSession,
-            status: "failed",
-            now: endedAt,
-            resultStatus: "dispatch-failed",
-            revisionReasons: [message],
-          });
-        } catch (stateError) {
-          log.warn("failed to persist active delegated task failure state", { err: stateError });
-        }
-        if (workOrder.workerSession !== undefined) {
-          try {
-            await deps.bridge.killSession(workOrder.workerSession);
-          } catch (cleanupError) {
-            log.warn("failed to kill crashed active delegated worker", { err: cleanupError });
-          }
-          cleanupWorkerSessionRecords(workOrder.workerSession);
-        }
-      })
-      .finally(() => {
-        coordinator.settle(lease);
-        if (activeDelegatedTasks.get(projectPath)?.workOrder.id === workOrder.id) {
-          activeDelegatedTasks.delete(projectPath);
-        }
+  const projectPath = workOrder.projectPath;
+  const controller = new AbortController();
+  activeDelegatedTasks.set(projectPath, { workOrder, controller });
+  void runActiveDelegatedTaskInBackground(
+    deps,
+    workOrder,
+    supervisorSession,
+    startedAt,
+    controller.signal,
+  )
+    .catch(async (err) => {
+      const message = normalizeError(err).message;
+      log.error("active delegated task crashed", {
+        err,
+        data: { runId: workOrder.id, projectId: workOrder.projectId },
       });
-    return true;
-  });
+      const endedAt = Date.now();
+      const taskLedger = new DailyTaskLedger();
+      const taskLedgerId = activeDelegatedTaskLedgerId(workOrder.id);
+      if (
+        taskLedger
+          .listAll()
+          .some((task) => task.taskId === taskLedgerId && task.status === "running")
+      ) {
+        taskLedger.fail(taskLedgerId, {
+          endedAt,
+          error: message,
+          summary: "Active delegated task crashed before completion.",
+        });
+      }
+      try {
+        writeLoopSupervisorWorkOrderState({
+          workOrder,
+          supervisorSession,
+          status: "failed",
+          now: endedAt,
+          resultStatus: "dispatch-failed",
+          revisionReasons: [message],
+        });
+      } catch (stateError) {
+        log.warn("failed to persist active delegated task failure state", { err: stateError });
+      }
+      if (workOrder.workerSession !== undefined) {
+        try {
+          await deps.bridge.killSession(workOrder.workerSession);
+        } catch (cleanupError) {
+          log.warn("failed to kill crashed active delegated worker", { err: cleanupError });
+        }
+        cleanupWorkerSessionRecords(workOrder.workerSession);
+      }
+    })
+    .finally(() => {
+      coordinator.settle(lease);
+      if (activeDelegatedTasks.get(projectPath)?.workOrder.id === workOrder.id) {
+        activeDelegatedTasks.delete(projectPath);
+      }
+    });
+  return true;
 }
 
 function findRecoveryWorkspacePolicy(

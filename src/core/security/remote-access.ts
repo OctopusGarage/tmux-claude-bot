@@ -36,6 +36,7 @@ const stateSchema = z
     lastCounter: z.number().int().min(-1),
     failures: z.number().int().min(0).max(4),
     lockedUntil: z.number().nonnegative(),
+    grantTtlSeconds: z.number().int().positive().safe().default(86_400),
   })
   .strict();
 type State = z.infer<typeof stateSchema>;
@@ -119,6 +120,7 @@ export class RemoteAccessService {
               lastCounter: -1,
               failures: 0,
               lockedUntil: 0,
+              grantTtlSeconds: 86_400,
             };
         }
       }
@@ -208,10 +210,26 @@ export class RemoteAccessService {
       enabled: state.enabled,
       enrolled: state.secret !== null,
       suspended: state.suspended,
-      grantTtlSeconds: 300,
+      grantTtlSeconds: state.grantTtlSeconds,
       verificationLocked: state.lockedUntil > this.now(),
       verificationLockedUntil: state.lockedUntil > this.now() ? state.lockedUntil : null,
     }));
+  }
+  /** Configure future approvals without interrupting access already granted. */
+  setGrantHours(hours: number): void {
+    const milliseconds = hours * 3_600_000;
+    if (
+      !Number.isSafeInteger(hours) ||
+      hours <= 0 ||
+      !Number.isSafeInteger(milliseconds + this.now())
+    )
+      throw new RemoteAccessError(
+        "Grant hours must be a positive whole number within the supported timestamp range.",
+      );
+    this.transaction((state) => {
+      state.grantTtlSeconds = hours * 3600;
+      this.save(state);
+    });
   }
   private ensureActive(state: State): void {
     if (!state.enabled || state.suspended || !state.secret) throw new RemoteAccessError();
@@ -288,7 +306,7 @@ export class RemoteAccessService {
       this.save(state);
       this.requests.delete(requestId);
       const id = randomUUID();
-      const expiresAt = this.now() + 300_000;
+      const expiresAt = this.now() + state.grantTtlSeconds * 1000;
       for (const [grantId, grant] of this.grants) {
         if (samePrincipal(grant.principal, req.principal)) this.grants.delete(grantId);
       }
@@ -311,28 +329,6 @@ export class RemoteAccessService {
       );
       if (!grant) throw new RemoteAccessError();
       return { principal: { ...principal }, grantId: grant.id, generation: grant.generation };
-    });
-  }
-  authorize(
-    auth: RemoteAuthorization | undefined,
-    expected?: { channel: "telegram" | "lark"; chatId: string },
-  ): void {
-    this.transaction((state) => {
-      if (!state.enabled && !state.suspended && auth === undefined) return;
-      this.ensureActive(state);
-      this.prune();
-      const grant = auth && this.grants.get(auth.grantId);
-      if (
-        !auth ||
-        !grant ||
-        grant.generation !== state.generation ||
-        auth.generation !== state.generation ||
-        !samePrincipal(grant.principal, auth.principal) ||
-        (expected &&
-          (expected.channel !== auth.principal.channel ||
-            expected.chatId !== auth.principal.chatId))
-      )
-        throw new RemoteAccessError();
     });
   }
   lock(principal: RemotePrincipal): void {

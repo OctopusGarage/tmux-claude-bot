@@ -46,6 +46,16 @@ export function registerSecurityCommands(
       write(JSON.stringify(getService().status()));
     });
   security
+    .command("grant-hours <hours>")
+    .description("set the lifetime of future chat approvals in whole hours (default: 24)")
+    .action((hours: string) => {
+      if (!/^\d+$/.test(hours))
+        throw new RemoteAccessError("Grant hours must be a positive whole number.");
+      const service = getService();
+      service.setGrantHours(Number(hours));
+      write(JSON.stringify(service.status()));
+    });
+  security
     .command("setup")
     .description("enroll an authenticator using this local terminal")
     .action(async () => {

@@ -4,11 +4,6 @@ import { normalizeError } from "../../shared/utils/error.js";
 import { runWithLogContext } from "../../shared/utils/log-context.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { Queue } from "../../shared/utils/queue.js";
-import {
-  captureRemoteAuthorization,
-  captureRemotePrincipal,
-  withQueuedRemoteContext,
-} from "../security/context.js";
 import type { Channel, PersistedMessage, QueuedMessage } from "./queue-message.js";
 import { defaultQueueObserver, type QueueObserver } from "./queue-observer.js";
 
@@ -196,16 +191,6 @@ export class MessageQueue {
    * firing resolve/reject — callers holding resources tied to settlement
    * (e.g. a blocked debounce scope) must release them on "duplicate". */
   enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
-    const authorization = captureRemoteAuthorization();
-    const principal = captureRemotePrincipal();
-    if (principal) {
-      msg.remotePrincipal = principal;
-      msg.ephemeral = true;
-    }
-    if (authorization) {
-      msg.remoteAuthorization = authorization;
-      msg.ephemeral = true;
-    }
     if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
       log.info("duplicate message skipped", {
         data: { chatId: msg.chatId, session: msg.sessionName ?? "global", action: msg.action },
@@ -423,12 +408,7 @@ export class MessageQueue {
           chatId: msg.chatId,
           ...(msg.channel === "telegram" || msg.channel === "lark" ? { channel: msg.channel } : {}),
         },
-        () =>
-          withQueuedRemoteContext(
-            msg.remoteAuthorization,
-            () => this.handler?.(msg) ?? Promise.resolve(),
-            msg.remotePrincipal,
-          ),
+        () => this.handler?.(msg) ?? Promise.resolve(),
       );
       log.info("queue handler completed", {
         ...(sessionName === undefined ? {} : { session: sessionName }),

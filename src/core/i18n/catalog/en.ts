@@ -8,10 +8,10 @@ export const en: Messages = {
   securityPrivateApproval:
     "Approve only in a private chat with the bot. Never post verification codes in a group.",
   securityPrivateInstructions: "Check your private chat with the bot for approval instructions.",
-  securityApproved:
-    "Access granted for five minutes to the original chat. Use /lock when finished.",
+  securityApproved: (hours) =>
+    `Access granted to the original chat for ${hours} hours. Use /lock when finished.`,
   securityRevoked:
-    "Your remote grants and pending approvals have been revoked. Already running work is not stopped.",
+    "Your remote grants and pending approvals have been revoked. Queued and running work will continue.",
   securityApprovalFailed:
     "Approval failed, expired, or temporarily locked. Check tcb security status locally and use a fresh code.",
   securityUsage:
@@ -19,12 +19,12 @@ export const en: Messages = {
   securityCompatibility:
     "Protection is not enrolled: existing access remains available. Run tcb security setup locally to enable verification.",
   securityEnabled:
-    "Second-factor protection is enabled. Each chat requires a short-lived grant. Use /unlock or /lock.",
+    "Second-factor protection is enabled. Use /unlock for chat access or /lock to block new input.",
   securitySuspended:
     "Remote access is suspended locally. Recovery requires tcb security resume or setup in a trusted terminal.",
-  securityRequest: (id, chat) =>
-    `Target chat: ${chat}. Access lasts five minutes; this request expires in one minute. Check the target, then reply /approve ${id} <code> using a fresh authenticator code. Never forward the code.`,
-  cmdSecurityUnlock: "Request short-lived remote access",
+  securityRequest: (id, chat, hours) =>
+    `Target chat: ${chat}. Access lasts ${hours} hours; this request expires in one minute. Check the target, then reply /approve ${id} <code> using a fresh authenticator code. Never forward the code.`,
+  cmdSecurityUnlock: "Request remote access",
   cmdSecurityApprove: "Approve an authenticator request privately",
   cmdSecurityLock: "Revoke your remote access",
   cmdSecurityStatus: "Show remote access security status",
