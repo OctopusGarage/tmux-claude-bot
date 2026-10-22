@@ -31,6 +31,8 @@ const WAKE_RECONNECT_DEBOUNCE_MS = 5 * 60_000;
 export interface KeepaliveDeps {
   /** Snapshot of the WS state; undefined before the channel first connects. */
   getStatus: () => { state: string; reconnectAttempts: number } | undefined;
+  /** True only after an initial connect attempt failed without exposing status. */
+  shouldRecoverUninitialized?: (() => boolean) | undefined;
   /** HTTP probe target, e.g. https://open.feishu.cn or https://open.larksuite.com. */
   probeUrl: string;
   forceReconnect: () => Promise<void>;
@@ -98,7 +100,11 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     }
     lastTick = now;
 
-    const status = deps.getStatus();
+    const status =
+      deps.getStatus() ??
+      (deps.shouldRecoverUninitialized?.()
+        ? { state: "uninitialized", reconnectAttempts: 0 }
+        : undefined);
     if (!status) {
       // Channel not initialized yet (pre-connect). Skip.
       return;

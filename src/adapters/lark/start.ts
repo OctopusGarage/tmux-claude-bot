@@ -14,8 +14,6 @@ import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
 
 const log = createLogger("lark.start");
-const CONNECT_RETRY_INITIAL_MS = 5_000;
-const CONNECT_RETRY_MAX_MS = 60_000;
 
 export function logIncomingMessageBoundary(msg: NormalizedMessage): void {
   log.info(
@@ -66,6 +64,15 @@ export function larkChannelOptions(
   };
 }
 
+export async function reconnectLarkChannel(
+  channel: Pick<LarkChannel, "connect" | "disconnect" | "getConnectionStatus">,
+): Promise<void> {
+  if (channel.getConnectionStatus()) {
+    await channel.disconnect();
+  }
+  await channel.connect();
+}
+
 /**
  * Start the Lark adapter on the SDK's higher-level Lark channel (WebSocket
  * long-connection, no public callback URL needed). No-op when `config.lark`
@@ -91,33 +98,36 @@ export function startLark(deps: HandlerDeps): void {
   // Chat prompts are intentionally not restored across bot restarts. Replaying a
   // recovered user message can duplicate input that was already typed into the
   // agent pane before the process stopped.
+  let initialConnectFailed = false;
   // App-level WS watchdog — catches half-open sockets after laptop sleep /
-  // network flaps that the SDK's own reconnect loop can miss. Ticks are
-  // no-ops until connect() initializes the WS client.
+  // network flaps that the SDK's own reconnect loop can miss. While the initial
+  // connect is pending, ticks remain no-ops. If it rejects before the SDK exposes
+  // connection status, the normal probed/debounced reconnect path takes over.
   startKeepalive({
     getStatus: () => channel.getConnectionStatus(),
+    shouldRecoverUninitialized: () => initialConnectFailed,
     probeUrl: cfg.domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn",
     forceReconnect: async () => {
-      await channel.disconnect();
-      await channel.connect();
+      initialConnectFailed = false;
+      try {
+        await reconnectLarkChannel(channel);
+        log.info("reconnected");
+      } catch (err) {
+        initialConnectFailed = true;
+        throw err;
+      }
     },
   });
   registerLarkNotifications(deps, cfg, channel);
 
-  const connectWithRetry = (delayMs = CONNECT_RETRY_INITIAL_MS): void => {
-    channel
-      .connect()
-      .then(() => {
-        log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
-      })
-      .catch((err) => {
-        log.error("connect failed", { err, data: { retryInMs: delayMs } });
-        const timer = setTimeout(
-          () => connectWithRetry(Math.min(delayMs * 2, CONNECT_RETRY_MAX_MS)),
-          delayMs,
-        );
-        timer.unref?.();
-      });
-  };
-  connectWithRetry();
+  channel
+    .connect()
+    .then(() => {
+      initialConnectFailed = false;
+      log.info(`connected (domain=${cfg.domain}, app=${cfg.appId})`);
+    })
+    .catch((err) => {
+      initialConnectFailed = true;
+      log.error("connect failed", { err });
+    });
 }

@@ -64,6 +64,23 @@ describe("startKeepalive", () => {
     expect(f.reconnects()).toBe(0);
   });
 
+  it("recovers after the initial connection fails before the channel exposes status", async () => {
+    const probe = vi.fn(async () => true);
+    const f = makeDeps({
+      getStatus: () => undefined,
+      probe,
+      shouldRecoverUninitialized: () => true,
+    });
+    handle = startKeepalive(f.deps);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL * 2);
+    expect(f.reconnects()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(f.reconnects()).toBe(1);
+  });
+
   it("does nothing while connected", async () => {
     const probe = vi.fn(async () => true);
     const f = makeDeps({ probe });

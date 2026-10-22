@@ -132,7 +132,10 @@ emulation, an agent-hibernation protocol, or a durable host-power state machine.
 Telegram retains pending updates according to its provider contract.
 Feishu/Lark long-connection events that occur while the host sleeps are
 best-effort and may be missed; that limitation is intentionally accepted for
-this operating mode.
+this operating mode. If the initial Lark connection fails before the SDK exposes
+WebSocket status, the existing keepalive performs the same network-probed,
+debounced reconnect used for a later stuck connection; it does not require a
+service restart.
 
 Autonomous schedule variation is an execution-window policy, not an evasion or
 prompt-rewriting feature. Draw a random offset only once per durable occurrence,
