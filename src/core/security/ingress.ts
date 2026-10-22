@@ -1,8 +1,10 @@
 import { messages } from "../i18n/index.js";
+import type { SecurityAlerts } from "./alerts.js";
 import type { RemoteAccessService, RemotePrincipal } from "./remote-access.js";
 
 type RemoteIngress = {
   service?: RemoteAccessService | undefined;
+  alerts?: Pick<SecurityAlerts, "record"> | undefined;
   principal: RemotePrincipal;
   privateChat: boolean;
   text?: string | undefined;
@@ -55,6 +57,7 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
         if (!input.privateChat) await input.reply(m.securityPrivateInstructions);
       } else if (command === "approve") {
         if (!input.privateChat) {
+          input.alerts?.record(principal.channel, "approval");
           await input.reply(m.securityPrivateApproval);
           return false;
         }
@@ -62,7 +65,12 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
           await input.reply(m.securityUsage);
           return false;
         }
-        service.approve(principal, parts[1] ?? "", parts[2] ?? "");
+        try {
+          service.approve(principal, parts[1] ?? "", parts[2] ?? "");
+        } catch (error) {
+          input.alerts?.record(principal.channel, "approval");
+          throw error;
+        }
         await input.reply(m.securityApproved(service.status().grantTtlSeconds / 3600));
       } else {
         await input.reply(m.securityUsage);
@@ -87,6 +95,7 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
   try {
     service.capture(principal);
   } catch {
+    input.alerts?.record(principal.channel, "authorization");
     await input.reply(m.securityLocked);
     return false;
   }

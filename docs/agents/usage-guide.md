@@ -103,7 +103,10 @@ requires grants for Telegram and Feishu (24 hours by default, configured with
 chat, `/approve <request-id> <code>` privately, and `/lock` when finished. Local
 `tcb security revoke` suspends access; `resume` permits fresh verification.
 `reset` and `repair-lock` remain interactive and leave protection suspended.
-See [security.md](../security.md) for queue, recovery and OS trust boundaries.
+Five access denials within ten minutes send private warnings to configured
+allowlisted users across registered channels, at most once every ten minutes.
+Warnings add no access restrictions and do not contain submitted input or codes.
+See [security.md](../security.md) for alerts, queue, recovery and OS trust boundaries.
 
 **Inspect or change personal configuration safely** → use `tcb config list|get|set`
 instead of editing the durable `.env` directly. Reads redact secrets; generic

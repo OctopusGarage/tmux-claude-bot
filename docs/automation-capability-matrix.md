@@ -87,4 +87,7 @@ is checked only at ingress; locking does not cancel queued or running work.
 Enrollment, suspension,
 reset and stale-lock repair are local `tcb security` commands. CLI/TUI and
 independent scheduled maintenance keep their existing authority; no new MCP
-remote-security mutation tools are added. See [security.md](security.md).
+remote-security mutation tools are added. Passive denial warnings go privately
+to configured Telegram and Feishu allowlisted users, with shared counting and
+cooldown; they bypass project/group routes and never block ingress.
+See [security.md](security.md).

@@ -1,5 +1,6 @@
 import type { Context, NextFunction } from "grammy";
 import { isAllowListed } from "../../core/infra/allow-list.js";
+import type { SecurityAlerts } from "../../core/security/alerts.js";
 import { createLogger } from "../../shared/utils/logger.js";
 
 const log = createLogger("telegram.auth");
@@ -18,12 +19,13 @@ export function isAuthorized(userId: number | undefined, allowedIds: Set<string>
  * handler runs. Unauthorized senders get silence (no reply) to avoid leaking
  * the bot's existence/behavior to probers.
  */
-export function createAuthGuard(allowedIds: Set<string>) {
+export function createAuthGuard(allowedIds: Set<string>, alerts?: Pick<SecurityAlerts, "record">) {
   return async (ctx: Context, next: NextFunction): Promise<void> => {
     if (isAuthorized(ctx.from?.id, allowedIds)) {
       await next();
       return;
     }
+    alerts?.record("telegram", "identity");
     log.warn(
       `rejected unauthorized update from user=${ctx.from?.id ?? "unknown"} chat=${ctx.chat?.id ?? "unknown"}`,
     );

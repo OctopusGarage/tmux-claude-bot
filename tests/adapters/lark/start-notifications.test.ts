@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
+import { SecurityAlerts } from "../../../src/core/security/alerts.js";
 
 const mocks = vi.hoisted(() => ({
   notifyLarkOwner: vi.fn(async () => {}),
@@ -52,6 +53,25 @@ describe("registerLarkNotifications", () => {
     mocks.boundLarkGroupForSession.mockReturnValue(null);
   });
 
+  it("delivers security warnings privately to every configured owner without group routing", async () => {
+    const { registerLarkNotifications } = await import(
+      "../../../src/adapters/lark/notifications.js"
+    );
+    const d = deps();
+    d.securityAlerts = new SecurityAlerts();
+    const cfg = larkConfig();
+    cfg.allowedOpenIds.add("ou_second");
+    mocks.boundLarkGroupForSession.mockReturnValue({ chatId: "oc_group" });
+    registerLarkNotifications(d, cfg, channel as never);
+    for (let i = 0; i < 5; i++) d.securityAlerts.record("telegram", "identity");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(channel.send.mock.calls.map(([recipient]) => recipient)).toEqual([
+      "ou_owner",
+      "ou_second",
+    ]);
+    expect(mocks.boundLarkGroupForSession).not.toHaveBeenCalled();
+    expect(mocks.notifyLarkOwner).not.toHaveBeenCalled();
+  });
   it("registers a lark owner notification sender", async () => {
     const { registerLarkNotifications } = await import(
       "../../../src/adapters/lark/notifications.js"

@@ -3,6 +3,14 @@ import type { Messages } from "./zh.js";
 
 /** Japanese catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
 export const ja: Messages = {
+  securityAlert: (channel, reason) =>
+    `⚠️ セキュリティ警告：10分間でアクセスが5回拒否されました。直近のチャネル：${channel}。理由：${reason}。該当チャネルで /lock を実行して新規入力を停止するか、ローカルで tcb security revoke を実行し、ログイン端末を確認してください。待機中と実行中の処理は継続します。警告は10分に1回までです。`,
+  securityAlertReason: (reason) =>
+    reason === "identity"
+      ? "許可リストにないユーザー"
+      : reason === "authorization"
+        ? "ロック、有効期限切れ、状態の利用不可、またはカード署名の不一致"
+        : "承認の拒否、有効期限切れ、または個人チャット以外からの承認",
   securityLocked:
     "リモートアクセスはロック中です。/unlock を使ってください。初回は信頼できるローカル端末で tcb security setup を実行してください。",
   securityPrivateApproval:

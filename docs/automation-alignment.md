@@ -83,6 +83,11 @@ expiry, locking or local suspension; no downstream grant context is propagated.
 Independent scheduled/local work stays separate; accepted autonomous WorkOrders
 retain their lifecycle policy. Recovery uses dedicated local `tcb security`
 commands. `docs/security.md` owns migration and host-compromise limitations.
+Passive security alerts aggregate five denials in ten minutes with a ten-minute
+installation-wide cooldown. They go privately to configured allowlisted users
+across registered channels, never to project groups or rejected senders. Alert
+payloads contain fixed categories without user input or credentials. Delivery is
+detached and best effort; warnings add no admission checks or lockouts.
 Service, ingress, adapter and real delivery tests cover this contract.
 
 Remote keyboard alignment: Telegram and Feishu expose `/key [chord]` plus a Keys

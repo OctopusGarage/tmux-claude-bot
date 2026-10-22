@@ -3,6 +3,14 @@ import type { Messages } from "./zh.js";
 
 /** English catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
 export const en: Messages = {
+  securityAlert: (channel, reason) =>
+    `⚠️ Security alert: 5 access denials within 10 minutes. Latest channel: ${channel}. Reason: ${reason}. Use /lock in the affected channel to block new input, or run tcb security revoke locally and review account login sessions. Queued and running work continues. At most one alert per 10 minutes.`,
+  securityAlertReason: (reason) =>
+    reason === "identity"
+      ? "User is not allowlisted"
+      : reason === "authorization"
+        ? "Access is locked, expired, unavailable, or a card signature is invalid"
+        : "Approval was rejected, expired, or submitted outside private chat",
   securityLocked:
     "Remote access is locked. Use /unlock. First-time setup: run tcb security setup in a trusted local terminal.",
   securityPrivateApproval:

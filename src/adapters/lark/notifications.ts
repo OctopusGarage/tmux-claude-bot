@@ -13,6 +13,9 @@ export function registerLarkNotifications(
   cfg: LarkConfig,
   channel: LarkChannel,
 ): void {
+  deps.securityAlerts?.register("lark", cfg.allowedOpenIds, (recipient, text) =>
+    channel.send(recipient, { markdown: text }),
+  );
   if ([...cfg.allowedOpenIds][0] !== undefined) {
     deps.notifications.register("lark", async (message, req) => {
       const target = boundLarkGroupForSession(req?.session);

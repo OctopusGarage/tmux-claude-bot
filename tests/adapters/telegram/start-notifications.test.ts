@@ -3,6 +3,7 @@ import type { HandlerDeps } from "../../../src/core/deps.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 import { OwnerActivityTracker } from "../../../src/core/notifications/owner-activity.js";
 import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender.js";
+import { SecurityAlerts } from "../../../src/core/security/alerts.js";
 
 const sendMessage = vi.fn(async () => ({}));
 const sendTelegramAttachment = vi.fn(async () => {});
@@ -88,10 +89,19 @@ describe("startTelegram notification registration", () => {
 
     const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
     const d = deps();
+    d.securityAlerts = new SecurityAlerts();
+    const alertRegister = vi.spyOn(d.securityAlerts, "register");
     const register = vi.spyOn(d.notifications, "register");
     const registerAttachment = vi.spyOn(d.notifications, "registerAttachment");
 
     await startTelegram(d);
+    expect(alertRegister).toHaveBeenCalledWith(
+      "telegram",
+      d.config.telegramAllowedUserIds,
+      expect.any(Function),
+    );
+    await alertRegister.mock.calls[0]?.[2]("12345", "security warning");
+    expect(sendMessage).toHaveBeenCalledWith("12345", "security warning");
     expect(register).toHaveBeenCalledWith("telegram", expect.any(Function));
     expect(registerAttachment).toHaveBeenCalledWith("telegram", expect.any(Function));
 

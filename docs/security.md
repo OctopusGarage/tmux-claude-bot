@@ -76,6 +76,34 @@ maintenance and trusted local CLI/TUI retain their own authority. Accepted
 autonomous WorkOrders retain their existing recovery policy. Authorization
 controls admission, not process termination.
 
+## Passive Security Alerts
+
+Five access denials in a rolling ten-minute window trigger a private warning to
+all configured allowlisted users on registered Telegram and Feishu channels.
+The counter is installation-wide and covers rejected identities, locked/expired
+or unavailable access, invalid card signatures, and failed/expired or non-private
+approval attempts. Successful traffic, manual locking and command syntax errors
+do not count. This is a denial warning, not a classification of malicious intent.
+
+Warnings contain only the latest channel, a fixed denial category and recovery
+guidance (`/lock` in the affected channel or local `tcb security revoke`). They never include sender IDs,
+chat IDs, submitted text, commands, request IDs, verification codes or secrets.
+They bypass project/group notification routing and do not require an unlocked
+chat. Recipients must be reachable privately by the bot.
+
+There is at most one warning burst per ten minutes; events during cooldown are
+discarded. Counting and cooldown are bounded in memory and reset on restart.
+Delivery is best effort and detached from ingress: failed or slow sends do not
+block messages, change authorization or introduce additional lockouts. Failures
+are logged generically without provider exception details. The existing durable
+OTP failure lockout is unchanged.
+
+An attacker using an already valid grant may cause no denials and no alert.
+Warnings delivered to a compromised account are not an independent recovery
+channel. Other configured channels may provide additional visibility, but alerts
+do not guarantee takeover detection. Daily grants, manual locking and continued
+execution of already admitted work retain their existing behavior.
+
 ## Local Suspension And Recovery
 
 ```sh

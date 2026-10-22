@@ -19,6 +19,7 @@ import { NotificationGateway } from "./core/notifications/gateway.js";
 import { OwnerActivityTracker } from "./core/notifications/owner-activity.js";
 import { ChannelSenderRegistry } from "./core/projects/channel-sender.js";
 import { createProjectManager } from "./core/projects/project-manager.js";
+import { SecurityAlerts } from "./core/security/alerts.js";
 import { RemoteAccessService } from "./core/security/remote-access.js";
 import { createActivityWatcher } from "./core/session/activity-watcher.js";
 import { OutputProcessor } from "./core/session/output.js";
@@ -133,6 +134,7 @@ export function bootstrap(): HandlerDeps {
   const ownerActivity = new OwnerActivityTracker();
 
   const deps: HandlerDeps = {
+    securityAlerts: new SecurityAlerts(),
     remoteAccess: new RemoteAccessService({ directory: join(appStateDir(), "security") }),
     bridge,
     queue,

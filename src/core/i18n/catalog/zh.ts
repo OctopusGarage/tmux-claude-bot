@@ -11,6 +11,14 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
  */
 export const zh = {
   // ── acks / queue (executor) ──
+  securityAlert: (channel: string, reason: string) =>
+    `⚠️ 安全告警：十分钟内累计五次访问被拒绝。最近渠道：${channel}。原因：${reason}。可在受影响的渠道使用 /lock 阻止新输入，或在本机运行 tcb security revoke，并检查账号登录设备。排队中和运行中的任务继续执行。每十分钟最多告警一次。`,
+  securityAlertReason: (reason: string): string =>
+    reason === "identity"
+      ? "用户不在白名单中"
+      : reason === "authorization"
+        ? "访问已锁定、过期、状态不可用或卡片签名无效"
+        : "审批被拒绝、已过期或未在私聊中提交",
   securityLocked:
     "远程访问已锁定。使用 /unlock。首次使用请在可信的本机终端运行 tcb security setup。",
   securityPrivateApproval: "请仅在与机器人的私聊中批准，切勿在群聊发送验证码。",

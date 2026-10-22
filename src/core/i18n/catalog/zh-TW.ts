@@ -4,6 +4,14 @@ import type { Messages } from "./zh.js";
 /** Traditional Chinese (Taiwan) catalog. Typed `: Messages`, so it must
  * implement every key in zh.ts. Localized vocabulary belongs in string values. */
 export const zhTW: Messages = {
+  securityAlert: (channel, reason) =>
+    `⚠️ 安全告警：十分鐘內累計五次存取被拒絕。最近管道：${channel}。原因：${reason}。可在受影響的管道使用 /lock 阻止新輸入，或在本機執行 tcb security revoke，並檢查帳號登入裝置。排隊中和執行中的工作繼續執行。每十分鐘最多告警一次。`,
+  securityAlertReason: (reason) =>
+    reason === "identity"
+      ? "使用者不在白名單中"
+      : reason === "authorization"
+        ? "存取已鎖定、過期、狀態不可用或卡片簽章無效"
+        : "審批被拒絕、已過期或未在私人聊天中提交",
   securityLocked:
     "遠端存取已鎖定。使用 /unlock。首次使用請在可信的本機終端執行 tcb security setup。",
   securityPrivateApproval: "請僅在與機器人的私人聊天中批准，切勿在群組傳送驗證碼。",

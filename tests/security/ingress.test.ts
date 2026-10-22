@@ -27,6 +27,7 @@ function input(text?: string) {
     removeSensitive: vi.fn(async () => {}),
     run: vi.fn(async () => {}),
     mock: service,
+    alerts: { record: vi.fn() },
   };
 }
 
@@ -38,14 +39,39 @@ describe("remote security ingress", () => {
       await runRemoteIngress(req);
       expect(req.run).not.toHaveBeenCalled();
       expect(req.reply).toHaveBeenCalled();
+      expect(req.alerts.record).toHaveBeenCalledWith("telegram", "authorization");
     },
   );
 
+  it("counts failed approvals without including submitted text or codes", async () => {
+    const req = input("/approve secret-request 123456");
+    req.mock.approve.mockImplementation(() => {
+      throw new Error("invalid verification");
+    });
+    await runRemoteIngress(req);
+    expect(req.alerts.record).toHaveBeenCalledExactlyOnceWith("telegram", "approval");
+    expect(req.run).not.toHaveBeenCalled();
+  });
+  it.each(["/approve", "/unlock extra", "/lock", "/security"])(
+    "does not count ordinary controls or syntax errors: %s",
+    async (text) => {
+      const req = input(text);
+      await runRemoteIngress(req);
+      expect(req.alerts.record).not.toHaveBeenCalled();
+    },
+  );
+  it("does not treat failed delivery of a successful approval reply as a denial", async () => {
+    const req = input("/approve request-id 123456");
+    req.reply.mockRejectedValueOnce(new Error("delivery failed"));
+    await runRemoteIngress(req);
+    expect(req.alerts.record).not.toHaveBeenCalled();
+  });
   it("preserves legacy behavior when enrollment has not enabled protection", async () => {
     const req = input("hello");
     req.mock.capture.mockImplementation(() => undefined as never);
     await runRemoteIngress(req);
     expect(req.run).toHaveBeenCalledOnce();
+    expect(req.alerts.record).not.toHaveBeenCalled();
   });
 
   it("sends group unlock instructions privately without granting access", async () => {
@@ -65,6 +91,7 @@ describe("remote security ingress", () => {
     req.privateChat = false;
     await runRemoteIngress(req);
     expect(req.mock.approve).not.toHaveBeenCalled();
+    expect(req.alerts.record).toHaveBeenCalledWith("telegram", "approval");
     expect(req.removeSensitive).toHaveBeenCalled();
     expect(req.run).not.toHaveBeenCalled();
   });

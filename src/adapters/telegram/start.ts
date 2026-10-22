@@ -91,8 +91,11 @@ export async function startTelegram(
 
   // Authorization gate: drop updates from non-allowlisted users before any
   // handler runs. Without this the bot drives Claude for anyone who finds it.
-  bot.use(createAuthGuard(config.telegramAllowedUserIds));
-  bot.use(createRemoteAccessGuard(deps.remoteAccess));
+  deps.securityAlerts?.register("telegram", config.telegramAllowedUserIds, (recipient, text) =>
+    bot.api.sendMessage(recipient, text),
+  );
+  bot.use(createAuthGuard(config.telegramAllowedUserIds, deps.securityAlerts));
+  bot.use(createRemoteAccessGuard(deps.remoteAccess, deps.securityAlerts));
   if (config.telegramAllowedUserIds.size === 0) {
     log.warn("TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
   }

@@ -36,6 +36,13 @@ describe("createAuthGuard middleware", () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
+  it("records rejected identities without notifying or replying to the sender", async () => {
+    const alerts = { record: vi.fn() };
+    const next = vi.fn(async () => {});
+    await createAuthGuard(new Set(["123"]), alerts)(ctx(999), next);
+    expect(alerts.record).toHaveBeenCalledExactlyOnceWith("telegram", "identity");
+    expect(next).not.toHaveBeenCalled();
+  });
   it("drops (no next) for an unauthorized user", async () => {
     const next = vi.fn(async () => {}) as unknown as NextFunction;
     await createAuthGuard(new Set(["123"]))(ctx(999), next);
