@@ -14,6 +14,7 @@ import { registerHandlers } from "./handlers.js";
 import { buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
+import { createRemoteAccessGuard } from "./security.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
 import { createSmartFetch, type SmartFetchRoute } from "./transport/smart-fetch.js";
 import { registerVoiceHandler } from "./voice-handler.js";
@@ -91,6 +92,7 @@ export async function startTelegram(
   // Authorization gate: drop updates from non-allowlisted users before any
   // handler runs. Without this the bot drives Claude for anyone who finds it.
   bot.use(createAuthGuard(config.telegramAllowedUserIds));
+  bot.use(createRemoteAccessGuard(deps.remoteAccess));
   if (config.telegramAllowedUserIds.size === 0) {
     log.warn("TELEGRAM_ALLOWED_USER_IDS is empty — the bot will reject ALL messages.");
   }

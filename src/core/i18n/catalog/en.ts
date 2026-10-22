@@ -3,6 +3,31 @@ import type { Messages } from "./zh.js";
 
 /** English catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
 export const en: Messages = {
+  securityLocked:
+    "Remote access is locked. Use /unlock. First-time setup: run tcb security setup in a trusted local terminal.",
+  securityPrivateApproval:
+    "Approve only in a private chat with the bot. Never post verification codes in a group.",
+  securityPrivateInstructions: "Check your private chat with the bot for approval instructions.",
+  securityApproved:
+    "Access granted for five minutes to the original chat. Use /lock when finished.",
+  securityRevoked:
+    "Your remote grants and pending approvals have been revoked. Already running work is not stopped.",
+  securityApprovalFailed:
+    "Approval failed, expired, or temporarily locked. Check tcb security status locally and use a fresh code.",
+  securityUsage:
+    "Use /unlock, /approve <request-id> <code>, /lock or /security. Enroll only with tcb security setup locally.",
+  securityCompatibility:
+    "Protection is not enrolled: existing access remains available. Run tcb security setup locally to enable verification.",
+  securityEnabled:
+    "Second-factor protection is enabled. Each chat requires a short-lived grant. Use /unlock or /lock.",
+  securitySuspended:
+    "Remote access is suspended locally. Recovery requires tcb security resume or setup in a trusted terminal.",
+  securityRequest: (id, chat) =>
+    `Target chat: ${chat}. Access lasts five minutes; this request expires in one minute. Check the target, then reply /approve ${id} <code> using a fresh authenticator code. Never forward the code.`,
+  cmdSecurityUnlock: "Request short-lived remote access",
+  cmdSecurityApprove: "Approve an authenticator request privately",
+  cmdSecurityLock: "Revoke your remote access",
+  cmdSecurityStatus: "Show remote access security status",
   ackReceived: "Received",
   queuedAt: (pos) => `Queued · #${pos}`,
   queueFull: (max) => `Queue full (max ${max}) — try again shortly`,

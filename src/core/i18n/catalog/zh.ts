@@ -11,6 +11,26 @@ import { UI_ICONS } from "../../../shared/ui/icons.js";
  */
 export const zh = {
   // ── acks / queue (executor) ──
+  securityLocked:
+    "远程访问已锁定。使用 /unlock。首次使用请在可信的本机终端运行 tcb security setup。",
+  securityPrivateApproval: "请仅在与机器人的私聊中批准，切勿在群聊发送验证码。",
+  securityPrivateInstructions: "请查看与机器人的私聊，按说明完成授权。",
+  securityApproved: "已授权原始聊天访问五分钟。操作完成后请使用 /lock。",
+  securityRevoked: "已撤销你的远程授权和待审批请求。已经运行的任务不会被停止。",
+  securityApprovalFailed:
+    "审批失败、已过期或验证暂时锁定。请在本机检查 tcb security status 并使用新验证码。",
+  securityUsage:
+    "使用 /unlock、/approve <request-id> <code>、/lock 或 /security。验证器只能在本机通过 tcb security setup 绑定。",
+  securityCompatibility:
+    "尚未绑定验证器，现有访问方式保持可用。请在本机运行 tcb security setup 启用验证。",
+  securityEnabled: "已启用二次验证，每个聊天都需要短时授权。使用 /unlock 或 /lock。",
+  securitySuspended: "本机已暂停远程访问。请在可信终端使用 tcb security resume 或 setup 恢复。",
+  securityRequest: (id: string, chat: string) =>
+    `请确认要授权的聊天：${chat}。授权持续五分钟，此请求一分钟后过期。核对后回复 /approve ${id} <code>，将 <code> 替换为验证器中的新验证码。不要转发验证码。`,
+  cmdSecurityUnlock: "请求短时远程授权",
+  cmdSecurityApprove: "在私聊中验证授权请求",
+  cmdSecurityLock: "撤销你的远程授权",
+  cmdSecurityStatus: "查看远程访问安全状态",
   ackReceived: "已接收",
   queuedAt: (pos: number) => `已排队 · 第 ${pos} 位`,
   queueFull: (max: number) => `队列已满（上限 ${max}），请稍后再试`,

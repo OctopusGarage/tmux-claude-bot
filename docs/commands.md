@@ -9,6 +9,10 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-reg
 | Command | Description |
 |---------|-------------|
 | `help` | Show all commands |
+| `unlock` | Request a five-minute grant for this chat; instructions arrive privately. Requires local authenticator enrollment. |
+| `approve` | Privately approve `/approve <request-id> <code>` using a fresh code; never send codes to a group. |
+| `lock` | Revoke your remote grants and pending requests in this channel; already running work continues. |
+| `security` | Show enrollment/suspension status; see [security.md](security.md). |
 | `start` | Start the agent |
 | `resume` | Resume the last recorded agent session for the current project |
 | `status` | Check agent status |

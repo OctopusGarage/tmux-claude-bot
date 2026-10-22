@@ -12,6 +12,7 @@ family registrars.
 - `tcb setup:lark`
 - `tcb doctor`
 - `tcb config`
+- `tcb security`
 - `tcb automation`
 - `tcb power`
 - `tcb resource`
@@ -44,6 +45,19 @@ family registrars.
 - `tcb loop`
 
 ## Nested Commands
+
+- `tcb security status [--json]`
+- `tcb security setup`
+- `tcb security revoke`
+- `tcb security resume`
+- `tcb security reset`
+- `tcb security repair-lock`
+
+`security setup` enrolls an authenticator in a trusted interactive local terminal
+and immediately enables remote second-factor authorization. Existing installs
+remain compatible before enrollment. Revoke persists suspension; resume requires
+fresh verification. Reset and stale-lock repair are interactive and leave access
+suspended. Status never prints secrets or grants. See [security.md](security.md).
 
 - `tcb service install`
 - `tcb service uninstall`

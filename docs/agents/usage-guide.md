@@ -94,6 +94,16 @@ runaway processes, and Resource Guardian state; `tcb resource status` or
 `tcb logs --since 1h --run-id <id>`; `tcb doctor`
 (install health).
 
+**Protect remote chat access** → inspect `tcb security status --json`. Existing
+installations remain compatible until the operator runs `tcb security setup` in
+a trusted interactive local terminal. Do not enroll through a remotely controlled
+agent pane or send enrollment material through chat. Enrollment immediately
+requires short-lived grants for Telegram and Feishu: `/unlock` in the target
+chat, `/approve <request-id> <code>` privately, and `/lock` when finished. Local
+`tcb security revoke` suspends access; `resume` permits fresh verification.
+`reset` and `repair-lock` remain interactive and leave protection suspended.
+See [security.md](../security.md) for queue, recovery and OS trust boundaries.
+
 **Inspect or change personal configuration safely** → use `tcb config list|get|set`
 instead of editing the durable `.env` directly. Reads redact secrets; generic
 writes accept only allowlisted non-secret keys, validate typed values before

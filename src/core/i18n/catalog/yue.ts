@@ -6,6 +6,26 @@ import type { Messages } from "./zh.js";
  * written grammar, not colloquial spoken Cantonese. Typed `: Messages`, so it
  * must implement every key in zh.ts. */
 export const yue: Messages = {
+  securityLocked:
+    "遠端存取已鎖定。使用 /unlock。首次使用請在可信的本機終端執行 tcb security setup。",
+  securityPrivateApproval: "請僅在與機械人的私人聊天中批准，切勿在群組傳送驗證碼。",
+  securityPrivateInstructions: "請查看與機械人的私人聊天，依說明完成授權。",
+  securityApproved: "已授權原始聊天存取五分鐘。操作完成後請使用 /lock。",
+  securityRevoked: "已撤銷你的遠端授權和待審批請求。已經執行的工作不會被停止。",
+  securityApprovalFailed:
+    "審批失敗、已過期或驗證暫時鎖定。請在本機檢查 tcb security status 並使用新驗證碼。",
+  securityUsage:
+    "使用 /unlock、/approve <request-id> <code>、/lock 或 /security。驗證器只能在本機透過 tcb security setup 綁定。",
+  securityCompatibility:
+    "尚未綁定驗證器，現有存取方式保持可用。請在本機執行 tcb security setup 啟用驗證。",
+  securityEnabled: "已啟用二次驗證，每個聊天都需要短期授權。使用 /unlock 或 /lock。",
+  securitySuspended: "本機已暫停遠端存取。請在可信終端使用 tcb security resume 或 setup 恢復。",
+  securityRequest: (id, chat) =>
+    `請確認要授權的聊天：${chat}。授權持續五分鐘，此請求一分鐘後過期。核對後回覆 /approve ${id} <code>，將 <code> 替換為驗證器中的新驗證碼。不要轉發驗證碼。`,
+  cmdSecurityUnlock: "請求短期遠端授權",
+  cmdSecurityApprove: "在私人聊天驗證授權請求",
+  cmdSecurityLock: "撤銷你的遠端授權",
+  cmdSecurityStatus: "查看遠端存取安全狀態",
   ackReceived: "已接收",
   queuedAt: (pos) => `已排隊 · 第 ${pos} 位`,
   queueFull: (max) => `隊列已滿（上限 ${max}），請稍後再試`,

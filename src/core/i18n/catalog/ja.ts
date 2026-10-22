@@ -3,6 +3,30 @@ import type { Messages } from "./zh.js";
 
 /** Japanese catalog. Typed `: Messages`, so it must implement every key in zh.ts. */
 export const ja: Messages = {
+  securityLocked:
+    "リモートアクセスはロック中です。/unlock を使ってください。初回は信頼できるローカル端末で tcb security setup を実行してください。",
+  securityPrivateApproval:
+    "承認はボットとの個人チャットでのみ行ってください。グループに認証コードを送らないでください。",
+  securityPrivateInstructions: "ボットとの個人チャットで承認手順を確認してください。",
+  securityApproved:
+    "元のチャットに5分間のアクセスを許可しました。終了時に /lock を使ってください。",
+  securityRevoked: "リモート認可と承認待ちの要求を取り消しました。実行中の処理は停止しません。",
+  securityApprovalFailed:
+    "承認失敗、有効期限切れ、または一時ロックです。ローカルで tcb security status を確認し、新しいコードを使ってください。",
+  securityUsage:
+    "/unlock、/approve <request-id> <code>、/lock、/security を使用します。認証器の登録はローカルの tcb security setup のみです。",
+  securityCompatibility:
+    "認証器は未登録です。従来のアクセスを維持しています。ローカルで tcb security setup を実行すると認証が有効になります。",
+  securityEnabled:
+    "二段階認証が有効です。チャットごとに短期間の認可が必要です。/unlock または /lock を使用してください。",
+  securitySuspended:
+    "ローカルでリモートアクセスが停止されています。信頼できる端末で tcb security resume または setup を使用してください。",
+  securityRequest: (id, chat) =>
+    `対象チャット：${chat}。認可は5分間、要求は1分で失効します。確認後 /approve ${id} <code> の <code> を認証器の新しいコードに置き換えて返信してください。コードを転送しないでください。`,
+  cmdSecurityUnlock: "短期間のリモート認可を要求",
+  cmdSecurityApprove: "個人チャットで認証要求を承認",
+  cmdSecurityLock: "リモート認可を取り消す",
+  cmdSecurityStatus: "リモートアクセスの安全状態",
   ackReceived: "受信しました",
   queuedAt: (pos) => `キュー投入 · ${pos} 番目`,
   queueFull: (max) => `キューが満杯です（上限 ${max}）· しばらくして再試行してください`,

@@ -41,6 +41,7 @@ import { findLarkImageResource, handleLarkImage } from "./image.js";
 import { sendPrompts } from "./prompts.js";
 import { sendCard, sendText } from "./replies.js";
 import { resolveReplyTarget } from "./reply-target.js";
+import { secureLarkMessage } from "./security.js";
 import {
   addProject,
   handleWsCommand,
@@ -479,7 +480,7 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   // silently. A throw from reconcile (e.g. the tmux server briefly down) or a
   // failed session (re)create is logged and surfaced to the chat, so the user
   // gets feedback and can /restore — instead of an unhandled rejection.
-  return async (msg: NormalizedMessage): Promise<void> => {
+  return secureLarkMessage(channel, deps, async (msg: NormalizedMessage): Promise<void> => {
     try {
       await handle(msg);
     } catch (err) {
@@ -490,5 +491,5 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
         // best-effort reply — the original error is already logged
       }
     }
-  };
+  });
 }

@@ -18,6 +18,7 @@ import { registerConfigurationCommands } from "./cli/configuration-commands.js";
 import { registerPowerCommands } from "./cli/power-commands.js";
 import { registerResourceCommands } from "./cli/resource-commands.js";
 import { registerRuntimeGuardianCommands } from "./cli/runtime-guardian-commands.js";
+import { registerSecurityCommands } from "./cli/security-commands.js";
 import { createResourceGuardianStore } from "./core/resource-guardian/store.js";
 import { SCHEDULED_TASK_SOURCES } from "./core/tasks/task-ledger.js";
 import { appStateDir } from "./shared/state-dir.js";
@@ -103,6 +104,7 @@ program
   });
 
 registerConfigurationCommands(program);
+registerSecurityCommands(program);
 
 registerPowerCommands(program);
 

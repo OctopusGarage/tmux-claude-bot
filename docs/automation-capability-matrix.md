@@ -78,3 +78,10 @@ When changing a capability above:
    `docs/ai-tool-surface-governance.md`, or
    `docs/agents/usage-guide.md` as applicable.
 5. Add or update tests for any mechanical behavior that can drift.
+
+
+Remote authorization applies to Telegram and Feishu messages, media and buttons
+using the same channel/user/chat-scoped grant policy. Enrollment, suspension,
+reset and stale-lock repair are local `tcb security` commands. CLI/TUI and
+independent scheduled maintenance keep their existing authority; no new MCP
+remote-security mutation tools are added. See [security.md](security.md).

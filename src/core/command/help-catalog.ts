@@ -131,6 +131,33 @@ const PROJECTS: readonly HelpRow[] = [
 const SETTINGS: readonly HelpRow[] = [
   [
     {
+      cmds: ["unlock"],
+      descKey: "cmdSecurityUnlock",
+      telegramDescription: "Request short-lived remote access",
+    },
+    {
+      cmds: ["lock"],
+      descKey: "cmdSecurityLock",
+      telegramDescription: "Revoke your remote access",
+    },
+  ],
+  [
+    {
+      cmds: ["approve"],
+      descKey: "cmdSecurityApprove",
+      argHint: " <request-id> <code>",
+      telegramDescription: "Approve an authenticator request in private",
+    },
+  ],
+  [
+    {
+      cmds: ["security"],
+      descKey: "cmdSecurityStatus",
+      telegramDescription: "Show remote access security status",
+    },
+  ],
+  [
+    {
       cmds: ["home"],
       descKey: "cmdHome",
       telegramDescription: "Switch to the home operator session",

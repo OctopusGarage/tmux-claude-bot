@@ -70,6 +70,19 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Remote-access security alignment: identity allowlists and Feishu card signatures
+precede the shared remote guard. Existing installs remain compatible until
+interactive `tcb security setup` enrolls TOTP, immediately requiring channel/user/
+chat-scoped five-minute grants for remote reads, writes, media and callbacks.
+`/unlock` sends instructions privately, `/approve` is private-only, `/lock`
+revokes channel grants, and `/security` reports enrollment/suspension. Queues
+retain original volatile grants and pre-enrollment remote provenance, recheck
+after readiness, isolate context, and never gain authority from a system label.
+Independent scheduled/local work stays separate; accepted autonomous WorkOrders
+retain their lifecycle policy. Recovery uses dedicated local `tcb security`
+commands. `docs/security.md` owns migration and host-compromise limitations.
+Service, ingress, adapter and real delivery tests cover this contract.
+
 Remote keyboard alignment: Telegram and Feishu expose `/key [chord]` plus a Keys
 button on expanded control/help surfaces. `key-chord.ts` owns the common parser
 and palette presets; `key` is one immediate MessageAction carrying a chord in its

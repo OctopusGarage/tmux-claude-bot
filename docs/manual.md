@@ -1082,3 +1082,14 @@ you add or change a user-facing command or feature:
 2. `tests/docs-contract.test.ts` enforces the enumerable surfaces — every CLI command
    (`tcb …`) must be named here, every chat command must be in commands.md, and this
    manual must link the references — so drift fails CI rather than rotting silently.
+
+
+## Remote Access Security
+
+Remote identity allowlists cannot detect a stolen allowed account. Optional
+local authenticator enrollment adds short-lived chat grants. Run `tcb security
+status --json` to inspect migration state and `tcb security setup` in a trusted
+local terminal to enable protection immediately. Existing installs retain access
+until enrollment. In chat, use `/unlock`, approve privately with
+`/approve <request-id> <code>`, and `/lock` when finished. Local revoke, recovery,
+queue behavior and host-isolation limits are documented in [security.md](security.md).

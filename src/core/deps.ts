@@ -6,6 +6,7 @@ import type { NotificationGateway } from "./notifications/gateway.js";
 import type { OwnerActivityTracker } from "./notifications/owner-activity.js";
 import type { ChannelSenderRegistry } from "./projects/channel-sender.js";
 import type { CurrentProjectManager } from "./projects/project-manager.js";
+import type { RemoteAccessService } from "./security/remote-access.js";
 import type { ActivityWatcher } from "./session/activity-watcher.js";
 import type { OutputProcessor } from "./session/output.js";
 import type { TmuxBridge } from "./session/tmux.js";
@@ -16,6 +17,8 @@ import type { TmuxBridge } from "./session/tmux.js";
  * to `executeMessage`. Carries no platform/UI concepts.
  */
 export type HandlerDeps = {
+  /** Shared remote ingress and delivery guard; local/system authority is separate. */
+  remoteAccess?: RemoteAccessService | undefined;
   bridge: TmuxBridge;
   queue: MessageQueue;
   /** The agent run loop — an AgentRunnerDispatcher that routes each call to the

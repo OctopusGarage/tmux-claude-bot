@@ -17,6 +17,7 @@ import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
 import { recoveryStartCommand } from "../recovery/recover.js";
+import { checkRemoteAuthorization } from "../security/context.js";
 import { getActionPrecondition, isMessageAction } from "./actions.js";
 import { sendContextReset } from "./context-reset.js";
 import { parseKeyChord } from "./key-chord.js";
@@ -228,6 +229,7 @@ export async function performRestart(
  */
 
 export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Promise<string> {
+  checkRemoteAuthorization(msg, deps.remoteAccess);
   const m = messages(chatChannelOrDefault(msg.channel));
   let session = msg.sessionName;
   if (!session) return m.doneShort;
@@ -267,6 +269,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
   }
 
+  checkRemoteAuthorization(msg, deps.remoteAccess);
   switch (msg.action) {
     case "text": {
       if (msg.origin !== "system") {
@@ -302,6 +305,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return m.agentInputNotReady;
       }
       const promptText = text;
+      checkRemoteAuthorization(msg, deps.remoteAccess);
       log.debug("sending prompt to agent", { data: { session } });
       await deps.bridge.sendKeys(promptText, session);
       log.debug("prompt sent; waiting for agent completion", { data: { session } });

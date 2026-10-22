@@ -102,6 +102,7 @@ import {
 import { sendPrompts } from "./prompts.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
+import { secureLarkCard } from "./security.js";
 import {
   addRecentBySid,
   replyCreateProject,
@@ -1062,7 +1063,7 @@ const CARD_HANDLERS: Record<string, CardHandler> = {
 export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
   const allowed = deps.config.lark?.allowedOpenIds ?? new Set<string>();
 
-  return async (evt: CardActionEvent): Promise<void> =>
+  const handle = async (evt: CardActionEvent): Promise<void> =>
     runWithLogContext({ traceId: newTraceId(), channel: "lark", chatId: evt.chatId }, async () => {
       if (!isOpenIdAllowed(evt.operator.openId, allowed)) {
         log.info(`drop cardAction from open_id=${evt.operator.openId || "?"}`);
@@ -1181,4 +1182,5 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
         await sendError(channel, evt.chatId, err);
       }
     });
+  return secureLarkCard(channel, deps, handle);
 }
