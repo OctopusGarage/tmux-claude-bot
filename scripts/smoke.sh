@@ -54,6 +54,7 @@ for cmd in \
   sessions \
   projects \
   send \
+  schedule \
   notify \
   prompt-translate \
   peek \

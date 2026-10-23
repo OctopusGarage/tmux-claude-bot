@@ -20,6 +20,7 @@ import {
 import type { MessageAction } from "../../core/command/actions.js";
 import { KEY_CHORD_PRESETS } from "../../core/command/key-chord.js";
 import { type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
+import { scheduleMessages } from "../../core/i18n/scheduled-messages.js";
 import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
 import type { OpportunitySuggestion } from "../../core/opportunities/types.js";
 import type { BrowseView } from "../../core/projects/dir-browser.js";
@@ -279,6 +280,14 @@ function actionRow(actions: MessageAction[]): ButtonSpec[] {
   }));
 }
 
+function scheduleButtons(): ButtonSpec[] {
+  const m = scheduleMessages("lark");
+  return [
+    { text: m.create, value: { cmd: "schedule" } },
+    { text: m.list, value: { cmd: "schedule_list" } },
+  ];
+}
+
 function controlRows(group = false, running = true): ButtonSpec[][] {
   const m = messages("lark");
   if (!running) {
@@ -344,7 +353,7 @@ function controlRows(group = false, running = true): ButtonSpec[][] {
 }
 
 export function controlActions(group = false, running = true): object[] {
-  return controlRows(group, running).flatMap((row) => gridRows(row));
+  return [...controlRows(group, running), scheduleButtons()].flatMap((row) => gridRows(row));
 }
 
 /**
@@ -840,6 +849,7 @@ export function helpCard(
       ];
   return shell(m.helpTitle, [
     md(buildHelpBody("lark", "lark")),
+    ...gridRows(scheduleButtons()),
     HR,
     md(m.helpRunning),
     ...HELP_SESSION_ROWS.flatMap((row) => gridRows(actionRow(row))),

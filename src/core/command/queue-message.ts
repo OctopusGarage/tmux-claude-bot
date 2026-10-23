@@ -9,6 +9,17 @@ export type ControlRestoreMetadata = {
 
 export type QueuedMessage = {
   id: string;
+  /** Stable identity overrides ordinary text deduplication for distinct durable intents. */
+  dedupeKey?: string | undefined;
+  delivery?:
+    | {
+        pinnedTarget?: { paneId: string; serverPid: string } | undefined;
+        claim: () => Promise<boolean>;
+        sent: () => void;
+        blocked: (reason: string) => void;
+        uncertain: (reason: string) => void;
+      }
+    | undefined;
   text: string;
   chatId: string | number;
   channel?: Channel | undefined;

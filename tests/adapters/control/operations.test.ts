@@ -196,6 +196,7 @@ describe("control operation registry", () => {
       "snapshot",
       "peek",
       "send",
+      "schedule",
       "control",
       "projects",
       "open",

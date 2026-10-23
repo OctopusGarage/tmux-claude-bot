@@ -110,6 +110,7 @@ export const yue: Messages = {
   keyUsage:
     "傳送一個按鍵或組合鍵：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修飾鍵支援 Ctrl、Alt、Shift，用 + 連接；亦可以撳下面嘅快捷項。實際效果由目前應用程式決定。",
   cmdKey: "傳送組合鍵，或開啟快捷鍵面板",
+  cmdSchedule: "設定、查看或者取消定時訊息",
   keySent: (chord: string) => `已傳送按鍵: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 狀態",

@@ -27,6 +27,7 @@ family registrars.
 - `tcb sessions`
 - `tcb projects`
 - `tcb send`
+- `tcb schedule`
 - `tcb notify`
 - `tcb prompt-translate`
 - `tcb prompts`
@@ -45,6 +46,16 @@ family registrars.
 - `tcb loop`
 
 ## Nested Commands
+
+- `tcb schedule create --session <session> (--at <ISO-time> | --in <duration>) --text <text> [--json]`
+- `tcb schedule list [--json]`
+- `tcb schedule show <id> [--json]`
+- `tcb schedule cancel <id> [--json]`
+
+Schedule messages through the running bot's shared queue. `--at` requires an
+explicit timezone offset or `Z`; `--in` accepts a positive delay such as `30m`,
+`2h` or `1d`. Inspect delivery state with `show`. See
+[scheduled-messages.md](scheduled-messages.md) for button workflows and recovery.
 
 - `tcb security status [--json]`
 - `tcb security setup`
@@ -121,6 +132,10 @@ secrets or grants. See [security.md](security.md).
 
 ## Options
 
+- `--at`: scheduled message ISO timestamp with explicit offset or `Z`.
+- `--in`: scheduled message positive delay (`m`, `h`, `d`).
+- `--session`: target managed session name or unique friendly label.
+- `--text`: scheduled instruction body; quote multiline text.
 - `--agent`
 - `--all`
 - `--attach`

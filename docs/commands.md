@@ -28,6 +28,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-reg
 | `right` | Send Right arrow |
 | `tab` | Send Tab key |
 | `key` | Send one key or chord immediately, e.g. `/key Shift+Left`, `/key Ctrl+Left`, `/key Alt+B`; with no argument, open the key palette. Available in Telegram and Feishu, including bound project groups. Requires a running agent. |
+| `schedule` | Open the button-based scheduled-message composer, or use `/schedule <30m\|HH:mm\|offset-bearing-ISO-time> <message>`. Manage with `/schedule list`, `/schedule show <id>`, `/schedule cancel <id>`. Telegram and Feishu expose matching creation/list/detail/cancel buttons. See [scheduled-messages.md](scheduled-messages.md). |
 | `exit` | Exit the agent |
 | `restart` | Restart the running agent in-place (Claude `--continue` / Codex `resume --last`) |
 | `list_alive_projects` | List alive projects. Feishu's **Active sessions** button uses the same list, split into cards of up to ten rows; failed cards fall back to text summaries. |

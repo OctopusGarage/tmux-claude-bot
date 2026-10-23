@@ -7,6 +7,7 @@ export const QUEUED = getQueuedActions();
 /** Read-side / project-management commands that render or mutate project state
  * rather than driving the Claude session. */
 export type ViewName =
+  | "schedule"
   | "peek"
   | "history"
   | "inputs"
@@ -43,6 +44,7 @@ export type ViewName =
 /** Slash token → ViewName. `/list_alive_projects` etc. are spelled out so the
  * Lark command surface matches Telegram's. */
 const VIEW_COMMANDS: Record<string, ViewName> = {
+  schedule: "schedule",
   peek: "peek",
   history: "history",
   inputs: "inputs",

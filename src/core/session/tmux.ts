@@ -119,6 +119,21 @@ export class TmuxBridge {
    */
   async sendKeys(text: string, sessionName?: string): Promise<void> {
     const target = await this.formatTarget(sessionName);
+    await this.pastePrompt(text, target);
+  }
+
+  /** Pinned pane IDs cannot redirect to a replacement session. Each write also
+   * checks the server PID inside tmux, so a server restart cannot reuse the ID. */
+  async sendKeysToPinnedPane(
+    text: string,
+    pinned: { paneId: string; serverPid: string },
+  ): Promise<void> {
+    if (!/^%\d+$/.test(pinned.paneId) || !/^\d+$/.test(pinned.serverPid))
+      throw new Error("Invalid pinned tmux target");
+    await this.pastePrompt(text, pinned.paneId, pinned.serverPid);
+  }
+
+  private async pastePrompt(text: string, target: string, serverPid?: string): Promise<void> {
     await this.cancelCopyMode(target);
     const bufferName = nextSendBufferName();
     const bufferFile = sendBufferFilePath(bufferName);
@@ -127,11 +142,12 @@ export class TmuxBridge {
       await this.execFile("tmux", ["load-buffer", "-b", bufferName, bufferFile], {
         timeout: 10000,
       });
-      await this.execFile("tmux", ["paste-buffer", "-p", "-b", bufferName, "-t", target], {
-        timeout: 10000,
-      });
+      await this.writePromptCommand(
+        ["paste-buffer", "-p", "-b", bufferName, "-t", target],
+        serverPid,
+      );
       if (this.submitSettleMs > 0) await this.sleep(this.submitSettleMs);
-      await this.execFile("tmux", ["send-keys", "-t", target, "C-m"], { timeout: 10000 });
+      await this.writePromptCommand(["send-keys", "-t", target, "C-m"], serverPid);
     } finally {
       try {
         await this.execFile("tmux", ["delete-buffer", "-b", bufferName], { timeout: 10000 });
@@ -144,6 +160,28 @@ export class TmuxBridge {
         // Best-effort cleanup; a send failure should surface as the original error.
       }
     }
+  }
+
+  private async writePromptCommand(args: string[], serverPid?: string): Promise<void> {
+    if (serverPid === undefined) {
+      await this.execFile("tmux", args, { timeout: 10000 });
+      return;
+    }
+    // Arguments are entirely generated tokens or validated numeric pane IDs.
+    // -F evaluates a tmux format condition; no shell command is executed.
+    const result = await this.execFile(
+      "tmux",
+      [
+        "if-shell",
+        "-F",
+        `#{==:#{pid},${serverPid}}`,
+        args.join(" "),
+        "display-message -p TCB_TARGET_REPLACED",
+      ],
+      { timeout: 10000 },
+    );
+    if (result.stdout.includes("TCB_TARGET_REPLACED"))
+      throw new Error("Pinned tmux server was replaced");
   }
 
   async sendRawKey(key: string, sessionName?: string): Promise<void> {

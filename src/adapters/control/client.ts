@@ -4,6 +4,7 @@ import type { DashboardSnapshot } from "../../core/dashboard/dashboard.js";
 import type { queryLoopReports } from "../../core/loop/report.js";
 import type { NotificationRequest } from "../../core/notifications/gateway.js";
 import type { RuntimeGuardianFinding } from "../../core/runtime-guardian/findings.js";
+import type { ScheduledMessageRecord } from "../../core/scheduled-messages/types.js";
 import type { DailyTaskAuditServiceTickResult } from "../../core/tasks/daily-audit-service.js";
 import type {
   ScheduledTaskRecord,
@@ -202,6 +203,38 @@ export class ControlClient extends EventEmitter {
       { op: "control", session, action },
       { timeoutMs: LONG_RUNNING_REQUEST_TIMEOUT_MS },
     ) as Promise<{ status: string }>;
+  }
+  scheduleCreate(
+    session: string,
+    when: string,
+    text: string,
+    requestId: string,
+  ): Promise<ScheduledMessageRecord> {
+    return this.req({
+      op: "schedule",
+      command: "create",
+      session,
+      when,
+      text,
+      requestId,
+    }) as Promise<ScheduledMessageRecord>;
+  }
+  scheduledMessages(): Promise<ScheduledMessageRecord[]> {
+    return this.req({ op: "schedule", command: "list" }) as Promise<ScheduledMessageRecord[]>;
+  }
+  scheduledMessage(scheduleId: string): Promise<ScheduledMessageRecord> {
+    return this.req({
+      op: "schedule",
+      command: "show",
+      scheduleId,
+    }) as Promise<ScheduledMessageRecord>;
+  }
+  cancelScheduledMessage(scheduleId: string): Promise<ScheduledMessageRecord> {
+    return this.req({
+      op: "schedule",
+      command: "cancel",
+      scheduleId,
+    }) as Promise<ScheduledMessageRecord>;
   }
   projects(): Promise<{ sid: string; label: string; alive: boolean; active: boolean }[]> {
     return this.req({ op: "projects" }) as Promise<

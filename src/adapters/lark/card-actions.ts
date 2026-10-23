@@ -102,6 +102,7 @@ import {
 import { sendPrompts } from "./prompts.js";
 import { sendCard, sendError, sendText } from "./replies.js";
 import { removeReplyTargetSession } from "./reply-target.js";
+import { handleLarkScheduleCard } from "./scheduled-messages.js";
 import { secureLarkCard } from "./security.js";
 import {
   addRecentBySid,
@@ -1085,6 +1086,11 @@ export function makeCardActionHandler(channel: LarkChannel, deps: HandlerDeps) {
 
       try {
         if (cmd === "noop") return;
+        if (cmd === "schedule" || cmd.startsWith("schedule_")) {
+          const kind = await resolveCardChatKind(channel, evt.chatId, cmd);
+          if (kind) await handleLarkScheduleCard(channel, deps, evt, kind === "p2p");
+          return;
+        }
 
         const handler = CARD_HANDLERS[cmd];
         if (handler) {

@@ -121,6 +121,7 @@ export const zh = {
   keyUsage:
     "发送一个按键或组合键：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修饰键支持 Ctrl、Alt、Shift，以 + 连接；也可点击下方快捷项。具体效果由当前应用决定。",
   cmdKey: "发送组合键，或打开快捷键面板",
+  cmdSchedule: "设置、查看或取消定时消息",
   keySent: (chord: string) => `已发送按键: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 状态",

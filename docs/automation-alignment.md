@@ -70,6 +70,19 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Scheduled session messages are durable one-time admitted user input, separate
+from autonomous WorkOrders and task-audit repair. Telegram and Feishu expose
+button-first draft/review/confirm, target/time selection, list/details and cancel;
+`/schedule` and `tcb schedule` use the same core service. Draft prompts are isolated
+from ordinary input, ownership is channel/chat/user scoped, callbacks are signed
+where applicable, and repeated confirmation is idempotent. A pinned target and
+durable submission claim guard the ordinary queue/dispatcher path. Unclaimed
+records recover after restart; interrupted submissions are uncertain and never
+automatically replayed. No MCP/TUI editor, host wake, privilege, provider-client
+or autonomous admission bypass is added. `docs/scheduled-messages.md` owns usage
+and recovery semantics; schedule, adapter, dispatcher and control tests enforce
+the shared contract.
+
 Repair visibility and task-ledger alignment: Observer task sources derive from
 `SCHEDULED_TASK_SOURCES`; its output accepts completed repairs and unavailable
 dependency-audit evidence. Daily Audit's Runtime Overview domain requires

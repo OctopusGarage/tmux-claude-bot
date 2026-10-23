@@ -101,6 +101,8 @@ describe("resultCard", () => {
       "adoptlist",
       "current",
       "help",
+      "schedule",
+      "schedule_list",
     ]);
   });
 
@@ -129,6 +131,8 @@ describe("resultCard", () => {
       "ap_delegate",
       "current",
       "help",
+      "schedule",
+      "schedule_list",
     ]);
     expect(allCmds(card)).not.toContain("listalive");
     expect(allCmds(card)).not.toContain("dashboard");
@@ -172,6 +176,8 @@ describe("viewCard", () => {
       "adoptlist",
       "current",
       "help",
+      "schedule",
+      "schedule_list",
     ]);
   });
 
@@ -182,7 +188,15 @@ describe("viewCard", () => {
 
   it("idle (running=false): swaps control keys for start/projects/recover/help", () => {
     const card = cardOf(viewCard("👁 会话画面", "pane body", false, false));
-    expect(allCmds(card)).toEqual(["start", "resume", "listalive", "recover", "help"]);
+    expect(allCmds(card)).toEqual([
+      "start",
+      "resume",
+      "listalive",
+      "recover",
+      "help",
+      "schedule",
+      "schedule_list",
+    ]);
     expect(allCmds(card)).not.toContain("esc"); // no dead control keys when idle
   });
 });
@@ -353,6 +367,8 @@ describe("helpCard", () => {
     expect(card.header?.title?.content).toBe("使用帮助");
 
     expect(allCmds(card)).toEqual([
+      "schedule",
+      "schedule_list",
       // Session rows (canonical control order: interrupts → lifecycle → nav → start/resume/status)
       "esc",
       "enter",

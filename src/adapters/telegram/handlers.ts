@@ -87,6 +87,12 @@ import { sendPromptsPage } from "./prompts.js";
 import type { Tone } from "./replies.js";
 import { reply } from "./replies.js";
 import type { ReplyTargetMap } from "./reply-target.js";
+import {
+  handleScheduleCallback,
+  handleScheduleCommand,
+  handleScheduleReply,
+  scheduleEntryKeyboard,
+} from "./scheduled-messages.js";
 import { tgScope } from "./scope.js";
 import { resolveSessionFromReply } from "./session.js";
 import {
@@ -107,6 +113,8 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   // Chat prompts are intentionally not restored across bot restarts. Replaying a
   // recovered user message can duplicate input that was already typed into the
   // agent pane before the process stopped.
+
+  bot.command("schedule", (ctx) => handleScheduleCommand(ctx, deps, replyTarget));
 
   bot.command("lang", async (ctx) => {
     const arg = (ctx.message?.text ?? "").split(/\s+/)[1]?.trim();
@@ -174,7 +182,9 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
   });
 
   bot.command("help", async (ctx) => {
-    await reply(ctx, "help", buildHelpBody("telegram", "telegram"));
+    await reply(ctx, "help", buildHelpBody("telegram", "telegram"), {
+      replyMarkup: scheduleEntryKeyboard(),
+    });
   });
 
   for (const action of getTelegramActions()) {
@@ -519,7 +529,10 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
 
   // Inline-button taps: control panel (esc/interrupt/enter/restart) and the
   // project list's switch/remove buttons.
-  bot.on("callback_query:data", (ctx) => handleCallbackQuery(ctx, deps, replyTarget));
+  bot.on("callback_query:data", async (ctx) => {
+    if (await handleScheduleCallback(ctx, deps, replyTarget)) return;
+    await handleCallbackQuery(ctx, deps, replyTarget);
+  });
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
@@ -535,6 +548,8 @@ export function registerHandlers(bot: Bot, deps: HandlerDeps, replyTarget: Reply
       );
       return;
     }
+
+    if (await handleScheduleReply(ctx, replyTarget)) return;
 
     // Independent-session naming: if a new independent-session label is awaited
     // for this chat, this message IS the label ("-" = skip name).

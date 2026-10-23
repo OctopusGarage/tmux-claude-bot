@@ -20,6 +20,13 @@ interface HelpSection {
 
 const SESSION: readonly HelpRow[] = [
   [
+    {
+      cmds: ["schedule"],
+      descKey: "cmdSchedule",
+      telegramDescription: "Schedule a session message or manage scheduled messages",
+    },
+  ],
+  [
     { cmds: ["start"], descKey: "cmdStart", telegramDescription: "Start the agent" },
     { cmds: ["resume"], descKey: "cmdResume", telegramDescription: "Resume the last session" },
   ],

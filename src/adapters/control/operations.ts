@@ -34,9 +34,11 @@ import {
   runWithLogContext,
 } from "../../shared/utils/log-context.js";
 import { createLogger, redactSecrets } from "../../shared/utils/logger.js";
+import { tildeifyHome } from "../../shared/utils/path.js";
 import { createControlDiagnosticsHandlers } from "./operations-diagnostics.js";
 import { createControlObservationHandlers } from "./operations-observation.js";
 import { createControlProjectSessionHandlers } from "./operations-project-sessions.js";
+import { createControlScheduledMessageHandlers } from "./operations-scheduled-messages.js";
 import type { ControlOperationHandler, ControlOperationHandlers } from "./operations-types.js";
 import type { ControlRequest, ServerMessage } from "./protocol.js";
 
@@ -59,6 +61,7 @@ export const controlOperationNames = [
   "snapshot",
   "peek",
   "send",
+  "schedule",
   "control",
   "projects",
   "open",
@@ -88,6 +91,7 @@ export function createControlOperationHandlers(
     ...createControlDiagnosticsHandlers(deps),
     ...createControlProjectSessionHandlers(deps),
     ...createControlObservationHandlers(deps),
+    ...createControlScheduledMessageHandlers(deps),
     send: async (req, { ok, fail }) => {
       if (isOperator(req.session, deps.config.projectSessionPrefix)) {
         fail("cannot send to the operator session");
@@ -183,7 +187,8 @@ export async function handleControlRequest(
     { traceId: newTraceId(), ...(session !== undefined ? { session } : {}) },
     async () => {
       const ok = (data: unknown): void => send({ id: req.id, ok: true, data });
-      const fail = (error: string): void => send({ id: req.id, ok: false, error });
+      const fail = (error: string): void =>
+        send({ id: req.id, ok: false, error: tildeifyHome(error) });
       try {
         const handler = handlers[req.op] as ControlOperationHandler<ControlRequest> | undefined;
         if (handler === undefined) {

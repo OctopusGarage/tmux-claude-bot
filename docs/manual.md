@@ -4,6 +4,13 @@ The single, comprehensive guide to using tmux-claude-bot. It links out to the
 detailed references where they exist: the full command table in
 [docs/commands.md](commands.md) and the terminal UI in [docs/tui.md](tui.md).
 
+To send an instruction later, use **Schedule message** in Telegram or Feishu's
+control/help panel. Select the target, enter text, choose a time, then confirm.
+The **Scheduled messages** list supports details and cancellation. `/schedule`
+opens the same composer; `tcb schedule` provides local management. See
+[Scheduled Session Messages](scheduled-messages.md) for time, restart and delivery
+semantics. A busy or unavailable target may prevent delivery at the requested time.
+
 > Kept in sync with the code: a contract test (`tests/docs-contract.test.ts`) fails
 > CI if a CLI command or chat command is added without being documented here / in the
 > linked references. See "Keeping this in sync" at the bottom.

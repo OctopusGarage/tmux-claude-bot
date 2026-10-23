@@ -245,6 +245,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
   const liveSession = await resolveLiveSessionName(deps.bridge, session);
   if (!liveSession) {
     log.warn(`${msg.action} rejected: tmux session not found session=${session}`);
+    msg.delivery?.blocked(m.agentNotRunningRestart);
     return m.agentNotRunningRestart;
   }
   if (liveSession !== session) {
@@ -259,6 +260,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     const running = await deps.agent.checkIfRunning(session);
     if (precond === "running" && !running) {
       log.warn(`${msg.action} rejected: agent not running session=${session}`);
+      msg.delivery?.blocked(m.agentNotRunningRestart);
       return m.agentNotRunningRestart;
     }
     if (precond === "absent" && running) {
@@ -283,12 +285,14 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
               supervisorSession: conflict.supervisorSession,
             },
           });
-          return m.projectAutomationBusy(
+          const reason = m.projectAutomationBusy(
             conflict.taskKind,
             conflict.projectId,
             conflict.runId,
             conflict.supervisorSession,
           );
+          msg.delivery?.blocked(reason);
+          return reason;
         }
       }
       try {
@@ -299,11 +303,23 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
           err,
           data: { session, action: msg.action, channel: msg.channel },
         });
+        msg.delivery?.blocked(m.agentInputNotReady);
         return m.agentInputNotReady;
       }
       const promptText = text;
       log.debug("sending prompt to agent", { data: { session } });
-      await deps.bridge.sendKeys(promptText, session);
+      if (msg.delivery && !(await msg.delivery.claim())) return m.doneShort;
+      try {
+        if (msg.delivery?.pinnedTarget) {
+          await deps.bridge.sendKeysToPinnedPane(promptText, msg.delivery.pinnedTarget);
+        } else {
+          await deps.bridge.sendKeys(promptText, session);
+        }
+        msg.delivery?.sent();
+      } catch (error) {
+        msg.delivery?.uncertain(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
       log.debug("prompt sent; waiting for agent completion", { data: { session } });
 
       // Wait in maxWaitDoneMs rounds up to maxWaitDoneTotalMs total. The first

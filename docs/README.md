@@ -15,6 +15,7 @@ behavior.
 | --- | --- |
 | `manual.md` | Human user manual for install, setup, chat workflows, CLI usage, automation, and troubleshooting. |
 | `commands.md` | Telegram and Feishu/Lark chat command reference. |
+| `scheduled-messages.md` | One-time message scheduling, button workflows, delivery state and restart safety. |
 | `security.md` | Remote verification, enrollment, revocation, recovery and host trust boundaries. |
 | `cli-reference.md` | Maintained `tcb` command, subcommand, and option surface. |
 | `mcp.md` | Role-scoped MCP profile usage, installation descriptors, diagnostics, and boundaries. |

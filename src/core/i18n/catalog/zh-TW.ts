@@ -108,6 +108,7 @@ export const zhTW: Messages = {
   keyUsage:
     "傳送一個按鍵或組合鍵：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修飾鍵支援 Ctrl、Alt、Shift，以 + 連接；也可點選下方快捷項。實際效果由目前應用程式決定。",
   cmdKey: "傳送組合鍵，或開啟快捷鍵面板",
+  cmdSchedule: "設定、查看或取消定時訊息",
   keySent: (chord: string) => `已傳送按鍵: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 狀態",

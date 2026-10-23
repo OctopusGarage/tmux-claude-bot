@@ -5,6 +5,7 @@ control them from Telegram, Feishu/Lark, a local CLI, or the terminal UI.
 
 ## Primary Documentation
 
+- [Scheduled session messages](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/scheduled-messages.md): Button-first one-time instructions, CLI management, pinned targets, cancellation and restart safety.
 - [Documentation map](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/README.md): Maintained documentation inventory, source-of-truth categories, and cleanup rules.
 - [User manual](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/manual.md): Complete user guide for install, setup, chat usage, CLI usage, Autopilot, and managed automation.
 - [CLI reference](https://github.com/OctopusGarage/tmux-claude-bot/blob/main/docs/cli-reference.md): Maintained `tcb` command, subcommand, and option surface.

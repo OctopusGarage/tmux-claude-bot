@@ -1,5 +1,10 @@
 # Intelligent Automation
 
+One-time [scheduled session messages](scheduled-messages.md) are admitted user
+input delivered later through the ordinary session queue. They are not a Loop
+Engineering task family or a recurring autonomous WorkOrder. Their own durable
+delivery evidence governs catch-up, cancellation and uncertain submissions.
+
 ## Autonomous work rhythm
 
 Recurring autonomous work uses a durable occurrence window rather than changing

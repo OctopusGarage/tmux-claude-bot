@@ -21,6 +21,7 @@ import {
 import { isMessageAction, type MessageAction } from "../../core/command/actions.js";
 import { KEY_CHORD_PRESETS, parseKeyChord } from "../../core/command/key-chord.js";
 import { isUiLang, type Lang, messages, UI_LANGS } from "../../core/i18n/index.js";
+import { scheduleMessages } from "../../core/i18n/scheduled-messages.js";
 import type { NotificationOpportunity } from "../../core/notifications/gateway.js";
 import type { BrowseAction, BrowseView } from "../../core/projects/dir-browser.js";
 import type { ProjectPickerLikeRow } from "../../core/projects/project-session-picker.js";
@@ -500,6 +501,7 @@ export function buildControlKeyboard(sid: string, running = true): InlineKeyboar
     .text(m.btnProjects, "la")
     .text(m.btnQueue, "qs")
     .row()
+    .text(scheduleMessages("telegram").create, `sm:new:${sid}:0`)
     .text(m.btnMore, `m:${sid}`);
 }
 
@@ -536,6 +538,9 @@ export function buildExpandedControlKeyboard(sid: string): InlineKeyboard {
     .row()
     .text(voiceButtonLabel, voiceButtonData)
     .text(m.btnPromptTranslate, "ptm")
+    .row()
+    .text(scheduleMessages("telegram").create, `sm:new:${sid}:0`)
+    .text(scheduleMessages("telegram").list, "sm:list:_:0")
     .row()
     .text(m.btnUiLang, "ulm")
     .text(m.btnCollapse, `l:${sid}`);

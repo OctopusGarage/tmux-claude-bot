@@ -164,9 +164,13 @@ export class MessageQueue {
     this.persist();
   }
 
-  private hasDuplicateText(chatId: string | number, text: string): boolean {
+  private hasDuplicateText(chatId: string | number, text: string, dedupeKey?: string): boolean {
     const matches = (m: QueuedMessage | undefined): boolean =>
-      m !== undefined && m.action === "text" && m.chatId === chatId && m.text === text;
+      m !== undefined &&
+      m.action === "text" &&
+      (dedupeKey !== undefined
+        ? m.dedupeKey === dedupeKey
+        : m.dedupeKey === undefined && m.chatId === chatId && m.text === text);
     const isDup = (q: Queue<QueuedMessage>): boolean => q.toArray().some(matches);
     // Iterate the queues directly instead of spreading them into a fresh array
     // on every enqueue. (A side index keyed by chatId+text would be faster still,
@@ -191,7 +195,7 @@ export class MessageQueue {
    * firing resolve/reject — callers holding resources tied to settlement
    * (e.g. a blocked debounce scope) must release them on "duplicate". */
   enqueue(msg: QueuedMessage): "queued" | "duplicate" | false {
-    if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text)) {
+    if (msg.action === "text" && this.hasDuplicateText(msg.chatId, msg.text, msg.dedupeKey)) {
       log.info("duplicate message skipped", {
         data: { chatId: msg.chatId, session: msg.sessionName ?? "global", action: msg.action },
       });

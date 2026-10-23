@@ -14,6 +14,7 @@ import { registerHandlers } from "./handlers.js";
 import { buildOpportunityNotificationKeyboard } from "./keyboards.js";
 import { sendTelegramAttachment } from "./media.js";
 import { createReplyTargetMap } from "./reply-target.js";
+import { registerScheduledTelegramSender } from "./scheduled-messages.js";
 import { createRemoteAccessGuard } from "./security.js";
 import { createRouteHealthStore, type RouteName } from "./transport/route-health.js";
 import { createSmartFetch, type SmartFetchRoute } from "./transport/smart-fetch.js";
@@ -224,6 +225,7 @@ export async function startTelegram(
   deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
     sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
   );
+  const unregisterScheduledSender = registerScheduledTelegramSender(bot as any, deps, replyTarget);
   opts.onNotificationsReady?.();
 
   // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
@@ -244,6 +246,7 @@ export async function startTelegram(
         timeout: config.telegramLongpollTimeoutSec,
         onStart: () => log.info("Bot started successfully"),
       });
+      unregisterScheduledSender();
       return; // resolved → bot.stop() was called (clean shutdown)
     } catch (err) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown flips this flag from the onStop cleanup closure while the polling promise is active
@@ -251,6 +254,7 @@ export async function startTelegram(
         log.info(
           `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,
         );
+        unregisterScheduledSender();
         return;
       }
       if (isFatalPollingError(err)) {
@@ -262,6 +266,7 @@ export async function startTelegram(
             err,
           },
         );
+        unregisterScheduledSender();
         return;
       }
       if (Date.now() - startedAt > HEALTHY_RUN_MS) backoffMs = 1000;

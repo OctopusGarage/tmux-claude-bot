@@ -30,6 +30,17 @@ Three surfaces, all driving the same bot:
 
 ## Task recipes — "the user wants to …"
 
+**Send a message to a session later** → offer **Schedule message** in the
+Telegram/Feishu control/help panel, or `/schedule`.
+The owner chooses a pinned target, message and time, reviews the full date/timezone,
+then confirms. **Scheduled messages** offers details and cancellation buttons.
+For local scripts use `tcb schedule create --session <session> --in 30m --text <text>`
+or `--at <offset-bearing-ISO-time>`; inspect with `tcb schedule list/show --json`
+and cancel with `tcb schedule cancel <id>`. The bot must be running; the CLI does
+not edit state files. A bot restart retains unsubmitted schedules, but a replaced
+tmux target blocks delivery. Never retry an uncertain submission blindly. See
+[scheduled-messages.md](../scheduled-messages.md).
+
 **Install it** → one-line installer (macOS/Linux); it builds, registers an
 auto-restarting service, and runs a guided setup wizard. Point them at the README
 install command + `tcb doctor` to verify.

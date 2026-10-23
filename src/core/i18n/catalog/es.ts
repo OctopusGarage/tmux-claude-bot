@@ -115,6 +115,7 @@ export const es: Messages = {
   keyUsage:
     "Envía una tecla o combinación: /key Shift+Left · /key Ctrl+Left · /key Alt+B. Usa Ctrl, Alt, Shift separados por +, o pulsa un atajo. La aplicación activa determina su efecto.",
   cmdKey: "Enviar una combinación o abrir el panel de teclas",
+  cmdSchedule: "Programar, consultar o cancelar mensajes",
   keySent: (chord: string) => `Tecla enviada: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 Estado",

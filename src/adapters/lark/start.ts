@@ -13,6 +13,8 @@ import { makeMessageHandler } from "./handlers.js";
 import { startKeepalive } from "./keepalive.js";
 import { registerLarkNotifications } from "./notifications.js";
 
+import { registerLarkScheduleSender } from "./scheduled-messages.js";
+
 const log = createLogger("lark.start");
 
 export function logIncomingMessageBoundary(msg: NormalizedMessage): void {
@@ -58,6 +60,7 @@ export function larkChannelOptions(
     appSecret: cfg.appSecret,
     domain,
     source: "tmux-claude-bot",
+    includeRawEvent: true,
     loggerLevel: LoggerLevel.info,
     policy: { requireMention: false },
     safety: { dedup: { ttl: dedupTtlMs() } },
@@ -119,6 +122,7 @@ export function startLark(deps: HandlerDeps): void {
     },
   });
   registerLarkNotifications(deps, cfg, channel);
+  registerLarkScheduleSender(channel, deps);
 
   channel
     .connect()

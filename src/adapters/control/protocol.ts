@@ -48,6 +48,16 @@ export type ControlRequest = {
   | { op: "snapshot" }
   | { op: "peek"; session: string; lines?: number }
   | { op: "send"; session: string; text: string; callerSession?: string }
+  | {
+      op: "schedule";
+      command: "create";
+      session: string;
+      when: string;
+      text: string;
+      requestId: string;
+    }
+  | { op: "schedule"; command: "list"; scheduleId?: string }
+  | { op: "schedule"; command: "show" | "cancel"; scheduleId: string }
   | { op: "control"; session: string; action: string }
   | { op: "projects" }
   | { op: "open"; sid: string; agent?: AgentKind }

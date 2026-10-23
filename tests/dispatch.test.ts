@@ -1178,3 +1178,72 @@ describe("performStart / performRestart — agent kind recording", () => {
     expect(await getAgentKind("proj-claude-restart")).toBe("claude");
   });
 });
+
+describe("scheduled submission lifecycle", () => {
+  const hooks = () => ({
+    claim: vi.fn(async () => true),
+    sent: vi.fn(),
+    blocked: vi.fn(),
+    uncertain: vi.fn(),
+  });
+  it("claims after readiness and records sent before completion wait", async () => {
+    const delivery = hooks();
+    const d = deps();
+    vi.mocked(d.agent.waitUntilInputReady).mockImplementation(async () => {
+      expect(delivery.claim).not.toHaveBeenCalled();
+    });
+    vi.mocked(d.bridge.sendKeys).mockImplementation(async () => {
+      expect(delivery.claim).toHaveBeenCalledOnce();
+      expect(delivery.sent).not.toHaveBeenCalled();
+    });
+    vi.mocked(d.agent.waitUntilDone).mockImplementation(async () => {
+      expect(delivery.sent).toHaveBeenCalledOnce();
+      return { done: true, output: "done" };
+    });
+    await executeMessage(msg("text", { origin: "user", text: "scheduled", delivery }), d);
+  });
+  it("honors cancellation while awaiting readiness", async () => {
+    const delivery = hooks();
+    delivery.claim.mockResolvedValue(false);
+    const d = deps();
+    await executeMessage(msg("text", { delivery }), d);
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    expect(d.agent.waitUntilDone).not.toHaveBeenCalled();
+  });
+  it("blocks failed readiness instead of falsely reporting sent", async () => {
+    const delivery = hooks();
+    const d = deps({
+      waitUntilInputReady: vi.fn(async () => {
+        throw new Error("busy");
+      }),
+    });
+    await executeMessage(msg("text", { delivery }), d);
+    expect(delivery.blocked).toHaveBeenCalledOnce();
+    expect(delivery.claim).not.toHaveBeenCalled();
+    expect(delivery.sent).not.toHaveBeenCalled();
+  });
+  it("blocks absent agent", async () => {
+    const delivery = hooks();
+    const d = deps({ checkIfRunning: vi.fn(async () => false) });
+    await executeMessage(msg("text", { delivery }), d);
+    expect(delivery.blocked).toHaveBeenCalledOnce();
+    expect(delivery.claim).not.toHaveBeenCalled();
+  });
+  it("records a write failure as uncertain without retry", async () => {
+    const delivery = hooks();
+    const d = deps();
+    vi.mocked(d.bridge.sendKeys).mockRejectedValue(new Error("write interrupted"));
+    await expect(executeMessage(msg("text", { delivery }), d)).rejects.toThrow("write interrupted");
+    expect(delivery.uncertain).toHaveBeenCalledWith("write interrupted");
+    expect(delivery.sent).not.toHaveBeenCalled();
+    expect(d.bridge.sendKeys).toHaveBeenCalledOnce();
+  });
+  it("submits scheduled input to its pinned pane instead of a reusable session name", async () => {
+    const delivery = { ...hooks(), pinnedTarget: { paneId: "%2", serverPid: "100" } };
+    const d = deps();
+    d.bridge.sendKeysToPinnedPane = vi.fn(async () => {});
+    await executeMessage(msg("text", { delivery }), d);
+    expect(d.bridge.sendKeysToPinnedPane).toHaveBeenCalledWith("", delivery.pinnedTarget);
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+});

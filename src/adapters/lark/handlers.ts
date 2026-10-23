@@ -77,6 +77,8 @@ function isTextLikeContentType(contentType: string): boolean {
  * Build the channel `message` handler. p2p text messages are parsed for
  * slash commands; unknown senders are dropped silently.
  */
+import { openLarkSchedule } from "./scheduled-messages.js";
+
 export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
   const allowed = deps.config.lark?.allowedOpenIds ?? new Set<string>();
 
@@ -269,6 +271,16 @@ export function makeMessageHandler(channel: LarkChannel, deps: HandlerDeps) {
 
         case "view":
           switch (parsed.name) {
+            case "schedule":
+              await openLarkSchedule(
+                channel,
+                deps,
+                { channel: "lark", chatId: msg.chatId, userId: msg.senderId },
+                isP2p,
+                parsed.arg,
+                replySession,
+              );
+              break;
             case "peek":
               await sendPeek(channel, deps, msg.chatId, parsePeekLines(parsed.arg));
               break;

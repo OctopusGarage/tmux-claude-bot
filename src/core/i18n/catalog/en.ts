@@ -115,6 +115,7 @@ export const en: Messages = {
   keyUsage:
     "Send one key or chord: /key Shift+Left · /key Ctrl+Left · /key Alt+B. Use Ctrl, Alt, Shift with +. Tap a shortcut below. The active application determines its effect.",
   cmdKey: "Send a key chord, or open the key palette",
+  cmdSchedule: "Schedule, inspect or cancel a future session message",
   keySent: (chord: string) => `Key sent: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 Status",

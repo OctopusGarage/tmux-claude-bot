@@ -554,7 +554,14 @@ describe("registerHandlers — commands routed to mocked views/executor", () => 
 
   it("/help renders the help body", async () => {
     await runCmd("help", "/help", depsFor());
-    expect(replyMock).toHaveBeenCalledWith(expect.anything(), "help", expect.any(String));
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "help",
+      expect.any(String),
+      expect.objectContaining({
+        replyMarkup: expect.objectContaining({ inline_keyboard: expect.any(Array) }),
+      }),
+    );
   });
 
   it("/lang with no arg shows the current language + keyboard", async () => {

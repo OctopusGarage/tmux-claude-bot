@@ -23,6 +23,7 @@ import { startRunningSweep } from "./core/recovery/running-sweep.js";
 import { startSessionIdleReaper } from "./core/recovery/session-idle-reaper.js";
 import { startResourceGuardian } from "./core/resource-guardian/service.js";
 import { startRuntimeGuardian } from "./core/runtime-guardian/service.js";
+import { getScheduledMessageService } from "./core/scheduled-messages/service.js";
 import { startDailyTaskAudit } from "./core/tasks/daily-audit-service.js";
 import { startSystemSelfHeal } from "./core/tasks/system-self-heal-service.js";
 import { createLogger } from "./shared/utils/logger.js";
@@ -38,6 +39,7 @@ const fatalLog = createLogger("index");
 let shuttingDown = false;
 let stopResourceGuardian = (): void => {};
 let stopHostPowerManager = (): void => {};
+let stopScheduledMessages = (): void => {};
 
 // Refuse to start beside another running instance — two pollers on one
 // Telegram token 409 each other. See core/instance-lock.ts and CLAUDE.md
@@ -120,6 +122,8 @@ process.once("SIGINT", () => stopHostPowerManager());
 process.once("SIGTERM", () => stopHostPowerManager());
 process.once("SIGINT", () => stopResourceGuardian());
 process.once("SIGTERM", () => stopResourceGuardian());
+process.once("SIGINT", () => stopScheduledMessages());
+process.once("SIGTERM", () => stopScheduledMessages());
 
 process.on("uncaughtException", (err) => {
   if (shouldIgnoreUncaughtException(err, shuttingDown)) {
@@ -197,6 +201,7 @@ let notificationDrivenServicesStarted = false;
 const startNotificationDrivenServices = (): void => {
   if (notificationDrivenServicesStarted) return;
   notificationDrivenServicesStarted = true;
+  stopScheduledMessages = getScheduledMessageService(deps).start();
   void notifyCrashRecovery(deps.notifications, recoveredCrashIdentity);
   stopHostPowerManager = startHostPowerManager(deps);
   stopResourceGuardian = startResourceGuardian(deps);

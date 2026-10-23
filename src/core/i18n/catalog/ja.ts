@@ -114,6 +114,7 @@ export const ja: Messages = {
   keyUsage:
     "キーや組み合わせを送信：/key Shift+Left · /key Ctrl+Left · /key Alt+B。修飾キー Ctrl、Alt、Shift を + でつなぎます。下のボタンも使えます。動作は実行中のアプリが決定します。",
   cmdKey: "キーの組み合わせを送信、またはキーパネルを開く",
+  cmdSchedule: "予約メッセージを作成・確認・キャンセル",
   keySent: (chord: string) => `キー送信済み: ${chord}`,
   btnTab: "⇥ Tab",
   btnStatus: "📊 状態",
