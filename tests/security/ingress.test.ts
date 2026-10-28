@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runRemoteIngress } from "../../src/core/security/ingress.js";
 import type { RemoteAccessService } from "../../src/core/security/remote-access.js";
 
-function input(text?: string) {
+function input(text?: string, channel: "telegram" | "lark" = "telegram") {
   const service = {
     status: vi.fn(() => ({
       enabled: true,
@@ -13,13 +13,13 @@ function input(text?: string) {
     capture: vi.fn(() => {
       throw new Error("locked");
     }),
-    request: vi.fn(() => ({ id: "request-id", expiresAt: Date.now() + 60_000 })),
+    request: vi.fn(() => ({ id: "request-id", expiresAt: Date.now() + 5 * 60_000 })),
     approve: vi.fn(),
     lock: vi.fn(),
   };
   return {
     service: service as unknown as RemoteAccessService,
-    principal: { channel: "telegram" as const, userId: "123", chatId: "123" },
+    principal: { channel, userId: "123", chatId: "123" },
     privateChat: true,
     text,
     reply: vi.fn(async (_text: string) => {}),
@@ -80,11 +80,28 @@ describe("remote security ingress", () => {
     req.principal.chatId = "-100";
     await runRemoteIngress(req);
     expect(req.mock.request).toHaveBeenCalledWith(req.principal);
-    expect(req.sendPrivate).toHaveBeenCalledOnce();
+    expect(req.sendPrivate).toHaveBeenCalledTimes(2);
     expect(req.sendPrivate.mock.calls[0]?.[0]).toContain("24");
     expect(req.run).not.toHaveBeenCalled();
     expect(req.mock.approve).not.toHaveBeenCalled();
   });
+
+  it.each(["telegram", "lark"] as const)(
+    "sends %s unlock instructions separately from the copyable approval command",
+    async (channel) => {
+      const req = input("/unlock", channel);
+      await runRemoteIngress(req);
+      expect(req.sendPrivate).toHaveBeenCalledTimes(2);
+      const instructions = req.sendPrivate.mock.calls[0]?.[0];
+      expect(instructions).toContain(req.principal.chatId);
+      expect(instructions).toContain("5");
+      expect(instructions).not.toContain("/approve");
+      expect(instructions).not.toContain("request-id");
+      expect(req.sendPrivate.mock.calls[1]?.[0]).toBe("/approve request-id <code>");
+      expect(req.mock.approve).not.toHaveBeenCalled();
+      expect(req.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("never accepts or forwards an approval submitted in a group", async () => {
     const req = input("/approve request-id 123456");

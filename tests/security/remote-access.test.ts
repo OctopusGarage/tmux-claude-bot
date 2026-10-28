@@ -177,12 +177,22 @@ describe("remote access security", () => {
     expect(() => f.service.capture(alice)).toThrow();
     expect(() => f.service.capture(alice)).toThrow();
   });
-  it("expires requests and locks all grants and requests for a user", () => {
+  it("accepts requests just before the five-minute deadline", () => {
     const f = fixture();
     f.service.enroll(secret, f.code());
     f.advance(30_000);
     const req = f.service.request(alice);
-    f.advance(60_000);
+    expect(req.expiresAt).toBe(f.now() + 5 * 60_000);
+    f.advance(5 * 60_000 - 1);
+    expect(() => f.service.approve(privateAlice, req.id, f.code())).not.toThrow();
+  });
+
+  it("expires requests at five minutes and locks all grants and requests for a user", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    const req = f.service.request(alice);
+    f.advance(5 * 60_000);
     expect(() => f.service.approve(privateAlice, req.id, f.code())).toThrow();
     f.service.approve(privateAlice, f.service.request(alice).id, f.code());
     const pending = f.service.request(privateAlice);

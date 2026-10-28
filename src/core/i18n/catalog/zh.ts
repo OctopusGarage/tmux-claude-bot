@@ -33,8 +33,9 @@ export const zh = {
     "尚未绑定验证器，现有访问方式保持可用。请在本机运行 tcb security setup 启用验证。",
   securityEnabled: "已启用二次验证。使用 /unlock 授权聊天，或使用 /lock 阻止新消息。",
   securitySuspended: "本机已暂停远程访问。请在可信终端使用 tcb security resume 或 setup 恢复。",
-  securityRequest: (id: string, chat: string, hours: number) =>
-    `请确认要授权的聊天：${chat}。授权持续 ${hours} 小时，此请求一分钟后过期。核对后回复 /approve ${id} <code>，将 <code> 替换为验证器中的新验证码。不要转发验证码。`,
+  securityRequest: (chat: string, hours: number) =>
+    `请确认要授权的聊天：${chat}。授权持续 ${hours} 小时，此请求 5 分钟后过期。核对后复制下一条消息中的命令，将 <code> 替换为验证器中的新验证码，在私聊中发送。不要转发验证码。`,
+  securityApproveCommand: (id: string) => `/approve ${id} <code>`,
   cmdSecurityUnlock: "请求远程授权",
   cmdSecurityApprove: "在私聊中验证授权请求",
   cmdSecurityLock: "撤销你的远程授权",

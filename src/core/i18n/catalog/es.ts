@@ -30,8 +30,9 @@ export const es: Messages = {
     "La verificación adicional está activada. Usa /unlock para acceder o /lock para bloquear nuevas entradas.",
   securitySuspended:
     "El acceso remoto se suspendió localmente. Usa tcb security resume o setup en un terminal de confianza.",
-  securityRequest: (id, chat, hours) =>
-    `Chat de destino: ${chat}. Acceso de ${hours} horas; solicitud válida un minuto. Comprueba el destino y responde /approve ${id} <code> con un código nuevo del autenticador. No reenvíes el código.`,
+  securityRequest: (chat, hours) =>
+    `Chat de destino: ${chat}. Acceso de ${hours} horas; solicitud válida durante 5 minutos. Comprueba el destino, copia el comando del siguiente mensaje, sustituye <code> por un código nuevo del autenticador y envíalo por privado. No reenvíes el código.`,
+  securityApproveCommand: (id) => `/approve ${id} <code>`,
   cmdSecurityUnlock: "Solicitar acceso remoto",
   cmdSecurityApprove: "Aprobar una solicitud en privado",
   cmdSecurityLock: "Revocar tu acceso remoto",

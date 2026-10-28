@@ -29,8 +29,9 @@ export const ja: Messages = {
   securityEnabled: "二段階認証が有効です。/unlock で認可し、/lock で新しい入力を停止できます。",
   securitySuspended:
     "ローカルでリモートアクセスが停止されています。信頼できる端末で tcb security resume または setup を使用してください。",
-  securityRequest: (id, chat, hours) =>
-    `対象チャット：${chat}。認可は${hours}時間、要求は1分で失効します。確認後 /approve ${id} <code> の <code> を認証器の新しいコードに置き換えて返信してください。コードを転送しないでください。`,
+  securityRequest: (chat, hours) =>
+    `対象チャット：${chat}。認可は${hours}時間、要求は5分で失効します。対象を確認し、次のメッセージのコマンドをコピーして <code> を認証器の新しいコードに置き換え、プライベートチャットで送信してください。コードを転送しないでください。`,
+  securityApproveCommand: (id) => `/approve ${id} <code>`,
   cmdSecurityUnlock: "リモート認可を要求",
   cmdSecurityApprove: "個人チャットで認証要求を承認",
   cmdSecurityLock: "リモート認可を取り消す",

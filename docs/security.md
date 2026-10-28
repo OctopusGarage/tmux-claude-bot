@@ -28,8 +28,10 @@ commands cannot enroll an authenticator or disable protection.
 ## Chat Workflow
 
 1. Send `/unlock` in the private or project-group chat you intend to use.
-2. Read the instructions sent privately. Check the target chat, then send
-   `/approve <request-id> <code>` privately using a fresh authenticator code.
+2. Read the instructions sent privately. The next private message contains only
+   the copyable `/approve <request-id> <code>` command. Check the target chat,
+   copy that message, replace `<code>` with a fresh authenticator code, and send
+   it privately within five minutes.
 3. Use the original chat normally for the configured lifetime (24 hours by
    default). Grants bind channel, user and original chat; another chat needs its
    own grant.
@@ -54,7 +56,7 @@ Use a positive whole number of hours. The setting survives restarts, appears as
 `grantTtlSeconds` in status, and does not shorten or extend existing approvals.
 Existing security state without this setting defaults to 24 hours.
 
-Requests expire after one minute. Codes have 30-second periods, tolerate at most
+Requests expire after five minutes. Codes have 30-second periods, tolerate at most
 one period of clock drift, and cannot be reused across restarts. Five incorrect
 or replayed codes lock verification for five minutes across the installation.
 A compromised allowed account can therefore temporarily deny verification.

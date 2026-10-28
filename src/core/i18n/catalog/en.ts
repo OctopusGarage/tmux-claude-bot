@@ -30,8 +30,9 @@ export const en: Messages = {
     "Second-factor protection is enabled. Use /unlock for chat access or /lock to block new input.",
   securitySuspended:
     "Remote access is suspended locally. Recovery requires tcb security resume or setup in a trusted terminal.",
-  securityRequest: (id, chat, hours) =>
-    `Target chat: ${chat}. Access lasts ${hours} hours; this request expires in one minute. Check the target, then reply /approve ${id} <code> using a fresh authenticator code. Never forward the code.`,
+  securityRequest: (chat, hours) =>
+    `Target chat: ${chat}. Access lasts ${hours} hours; this request expires in 5 minutes. Check the target, copy the command in the next message, replace <code> with a fresh authenticator code, and send it privately. Never forward the code.`,
+  securityApproveCommand: (id) => `/approve ${id} <code>`,
   cmdSecurityUnlock: "Request remote access",
   cmdSecurityApprove: "Approve an authenticator request privately",
   cmdSecurityLock: "Revoke your remote access",

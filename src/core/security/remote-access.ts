@@ -281,7 +281,7 @@ export class RemoteAccessService {
       if (this.requests.size >= 1000)
         throw new RemoteAccessError("Too many pending approvals. Try again later.");
       const id = randomUUID();
-      const expiresAt = this.now() + 60_000;
+      const expiresAt = this.now() + 5 * 60_000;
       this.requests.set(id, {
         principal: { ...principal },
         expiresAt,

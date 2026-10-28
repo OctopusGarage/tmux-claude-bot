@@ -26,8 +26,9 @@ export const zhTW: Messages = {
     "尚未綁定驗證器，現有存取方式保持可用。請在本機執行 tcb security setup 啟用驗證。",
   securityEnabled: "已啟用二次驗證。使用 /unlock 授權聊天，或使用 /lock 阻止新訊息。",
   securitySuspended: "本機已暫停遠端存取。請在可信終端使用 tcb security resume 或 setup 恢復。",
-  securityRequest: (id, chat, hours) =>
-    `請確認要授權的聊天：${chat}。授權持續 ${hours} 小時，此請求一分鐘後過期。核對後回覆 /approve ${id} <code>，將 <code> 替換為驗證器中的新驗證碼。不要轉發驗證碼。`,
+  securityRequest: (chat, hours) =>
+    `請確認要授權的聊天：${chat}。授權持續 ${hours} 小時，此請求 5 分鐘後過期。核對後複製下一則訊息中的指令，將 <code> 替換為驗證器中的新驗證碼，在私聊中傳送。不要轉發驗證碼。`,
+  securityApproveCommand: (id) => `/approve ${id} <code>`,
   cmdSecurityUnlock: "請求遠端授權",
   cmdSecurityApprove: "在私人聊天驗證授權請求",
   cmdSecurityLock: "撤銷你的遠端授權",

@@ -110,6 +110,12 @@ and accepts only nonempty all-success results. Workflow contract tests prevent
 new CI jobs from bypassing the aggregate. New PR validation workflows must also
 be added to main's required checks. `docs/TESTING.md` owns the check inventory.
 
+Remote unlock requests expire after five minutes. Telegram and Feishu deliver
+private instructions first and a standalone copyable approval command second;
+group replies contain only the private-chat reminder. Security ingress and
+adapter tests enforce message separation and private routing; clock-controlled
+service tests cover acceptance just before expiry and rejection at the deadline.
+
 Remote-access security alignment: identity allowlists and Feishu card signatures
 precede the shared remote guard. Existing installs remain compatible until
 interactive `tcb security setup` enrolls TOTP, immediately requiring channel/user/

@@ -52,8 +52,9 @@ export async function runRemoteIngress(input: RemoteIngress): Promise<boolean> {
       } else if (command === "unlock" && parts.length === 1) {
         const request = service.request(principal);
         await input.sendPrivate(
-          m.securityRequest(request.id, principal.chatId, service.status().grantTtlSeconds / 3600),
+          m.securityRequest(principal.chatId, service.status().grantTtlSeconds / 3600),
         );
+        await input.sendPrivate(m.securityApproveCommand(request.id));
         if (!input.privateChat) await input.reply(m.securityPrivateInstructions);
       } else if (command === "approve") {
         if (!input.privateChat) {
