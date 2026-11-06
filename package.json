@@ -15,7 +15,7 @@
   },
   "pnpm": {
     "overrides": {
-      "follow-redirects": "1.16.1"
+      "follow-redirects": "1.16.2"
     },
     "onlyBuiltDependencies": [
       "esbuild",
