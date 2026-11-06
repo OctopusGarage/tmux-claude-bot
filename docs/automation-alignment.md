@@ -1299,3 +1299,9 @@ summary. This report-level guard does not replace independent acceptance gates.
 Live and restored journaled supervisor completion probes both require a valid
 current summary. A bare completion marker or pre-attempt summary cannot finish
 the queue item; restoration retains the same attempt identity and freshness fence.
+
+Managed dev service startup on macOS and Linux restores missing tsx/tsc dependencies
+with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy
+installations skip this step. Installation failures prevent startup and remain
+visible in service logs; the service manager retries. This recovery runs outside
+the bot, so it also works when the bot cannot boot.

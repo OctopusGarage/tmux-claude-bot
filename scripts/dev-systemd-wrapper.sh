@@ -30,5 +30,8 @@ export TCB_ENV_FILE="$STATE_DIR/.env"
 export TCB_LOG_DIR="$PROD_DIR/logs"
 cd "$REPO_DIR"
 
+. "$SCRIPT_DIR/ensure-dev-dependencies.sh"
+tcb_ensure_dev_dependencies "$REPO_DIR"
+
 # Run the supervisor (it spawns/reloads `tsx src/index.ts`). No bundling.
 exec "$REPO_DIR/node_modules/.bin/tsx" "$REPO_DIR/src/scripts/dev-supervisor.ts"
