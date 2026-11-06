@@ -9,7 +9,8 @@ tcb_ensure_dev_dependencies() {
   echo "[tcb] Missing development dependencies; restoring from lockfile." >&2
   (
     cd "$repo_dir"
-    export PATH="$(dirname "${NODE_BIN:-$(command -v node)}"):$PATH"
+    PATH="$(dirname "${NODE_BIN:-$(command -v node)}"):$PATH"
+    export PATH
     if command -v pnpm >/dev/null 2>&1; then
       pnpm install --frozen-lockfile
     elif command -v corepack >/dev/null 2>&1; then
