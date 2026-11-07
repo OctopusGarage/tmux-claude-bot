@@ -70,6 +70,16 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+The Take over entry, per-candidate confirmation and local `adopt` command share
+the same process-bound candidate discovery. Codex runtime helpers are excluded;
+the unique open parent rollout determines the resumable session. Child rollouts
+and cwd-based history must not override that identity. Bounded typed lifecycle
+evidence determines Codex task busy/idle; unavailable evidence stays unknown. Missing
+or ambiguous parent identity is not safely adoptable. Confirmation refreshes
+discovery; buttons for candidates no longer in that safe set return a refresh
+instruction without execution.
+Orphan discovery, lifecycle and adapter callback tests enforce this contract.
+
 Scheduled session messages are durable one-time admitted user input, separate
 from autonomous WorkOrders and task-audit repair. Telegram and Feishu expose
 button-first draft/review/confirm, target/time selection, list/details and cancel;

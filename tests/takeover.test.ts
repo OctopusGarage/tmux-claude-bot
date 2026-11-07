@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcRow } from "../src/core/agents/agent-config-resolver.js";
 import { DEFAULT_CONFIG_ROOT } from "../src/core/agents/claude/claude-history.js";
@@ -363,18 +366,27 @@ describe("createTakeoverProbe composition", () => {
   });
 
   it("openSessionFile also extracts a CODEX rollout's session id (orphan takeover parity)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-open-rollout-"));
+    const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const path = join(dir, "sessions", `rollout-fixture-${id}.jsonl`);
+    mkdirSync(join(dir, "sessions"));
+    writeFileSync(
+      path,
+      `${JSON.stringify({ type: "session_meta", payload: { id, source: "cli" } })}\n`,
+    );
     const intro = {
       snapshot: async () => [],
       readProcEnv: async () => "",
-      listOpenFiles: async () => [
-        "/dev/null",
-        "/home/u/.codex/sessions/2026/06/17/rollout-2026-06-17T10-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
-      ],
+      listOpenFiles: async () => ["/dev/null", path],
       cwdOf: async () => "/home/u/project",
       ttyOf: async () => null,
     };
     const probe = createTakeoverProbe(intro);
-    expect(await probe.openSessionFile(200)).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    try {
+      expect(await probe.openSessionFile(200)).toBe(id);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("openSessionFile returns null when no jsonl is open", async () => {

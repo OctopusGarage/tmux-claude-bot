@@ -175,7 +175,7 @@ export const zhTW: Messages = {
   recoverBusy: "已有一個復原正在進行,請稍候。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 復原完成\n\n🔁 重新啟動 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 執行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
-  adoptGone: "該程序已不在可接管清單（已結束或已被納管）",
+  adoptGone: "該程序已不在可接管清單，請重新整理後再選擇。",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管並續接工作階段：${proj}` : `✅ 已接管並新建工作階段：${proj}`,
   adoptFailed: "接管失敗：程序無法結束或未能啟動",

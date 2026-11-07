@@ -188,7 +188,7 @@ export const zh = {
   recoverBusy: "已有一个恢复正在进行,请稍候。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 恢复完成\n\n🔁 重启 ${launched}${shellOnly > 0 ? ` · 🐚 重建 ${shellOnly}` : ""} · 🟢 运行中 ${alive}${failed > 0 ? ` · ⚠️ 失败 ${failed}` : ""}`,
-  adoptGone: "该进程已不在可接管列表（已退出或已被纳管）",
+  adoptGone: "该进程已不在可接管列表，请刷新后重新选择。",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ 已接管并续接会话：${proj}` : `✅ 已接管并新建会话：${proj}`,
   adoptFailed: "接管失败：进程无法结束或未能启动",

@@ -9,7 +9,7 @@ import { TERMINAL_MODE_RESET_SEQUENCE } from "../../shared/utils/terminal-modes.
 import { type ProcessIntrospector, selectIntrospector } from "../platform/introspector.js";
 import { createExecProbe, type ProcRow, parseEnvVar } from "./agent-config-resolver.js";
 import { isClaudeProcess, matchOpenClaudeTranscript } from "./claude/claude-process.js";
-import { matchOpenCodexRollout } from "./codex/codex-rollout.js";
+import { type CodexOrphanSession, inspectCodexOrphanSession } from "./codex/codex-orphan-state.js";
 import { matchFlavorAlias } from "./flavor-alias.js";
 import type { AgentKind, AgentProfile, ReadResolver } from "./types.js";
 
@@ -104,6 +104,8 @@ export interface TakeoverProbe {
   /** The session UUID of the `.jsonl` this pid currently has open (its exact
    * session), or null when none is open right now. */
   openSessionFile(pid: number): Promise<string | null>;
+  /** Exact parent-session and task evidence for Codex. Null is not safely resumable. */
+  inspectCodexSession?(pid: number): Promise<CodexOrphanSession | null>;
   /** `ps eww` command+env line, mined for CLAUDE_CONFIG_DIR. */
   readProcEnv(pid: number): Promise<string>;
   /** Concatenated shell rc files, mined for `claude-*` launcher aliases. */
@@ -137,8 +139,8 @@ export interface OrphanAgent {
   startCommand: string;
   /** Which agent this orphan runs. */
   agent: AgentKind;
-  /** Whether this external agent appears to be executing a task. `null` means
-   * unknown; outside tmux we usually cannot observe the agent TUI reliably. */
+  /** Task evidence for the external agent. Null means unknown; Codex uses the
+   * exact parent rollout's typed lifecycle rather than transcript age. */
   busy?: boolean | null;
 }
 
@@ -182,14 +184,19 @@ export async function listOrphansFor(
   // Each orphan's probes are independent — run them (and the orphans) concurrently.
   const out = await Promise.all(
     orphanPids.map(async (pid): Promise<OrphanAgent | null> => {
-      const [cwd, psEnv, openSession] = await Promise.all([
+      const inspectCodex = profile.kind === "codex" ? probe.inspectCodexSession : undefined;
+      const [cwd, psEnv, openSession, codexSession] = await Promise.all([
         probe.cwdOf(pid),
         probe.readProcEnv(pid),
-        probe.openSessionFile(pid),
+        inspectCodex ? Promise.resolve(null) : probe.openSessionFile(pid),
+        inspectCodex ? inspectCodex.call(probe, pid) : Promise.resolve(null),
       ]);
       if (!cwd) return null; // can't resume without a project dir
+      if (inspectCodex && !codexSession) return null;
       const configRoot = parseEnvVar(psEnv, profile.configDirEnv) ?? profile.defaultConfigRoot;
-      const sessionId = await profile.discoverSessionId({ openSession, cwd, configRoot });
+      const sessionId = inspectCodex
+        ? (codexSession?.sessionId ?? null)
+        : await profile.discoverSessionId({ openSession, cwd, configRoot });
       const origCmd = byPid.get(pid)?.command ?? profile.kind;
       const bin = origCmd.trim().split(/\s+/)[0] ?? profile.kind;
       // Prefer the matched flavor alias — typing its NAME relaunches with the
@@ -208,7 +215,9 @@ export async function listOrphansFor(
         sessionId,
         origCmd,
       });
-      const busy = await orphanBusyFromActivity(profile, configRoot, cwd, sessionId);
+      const busy = inspectCodex
+        ? (codexSession?.busy ?? null)
+        : await orphanBusyFromActivity(profile, configRoot, cwd, sessionId);
       return { pid, cwd, configRoot, sessionId, startCommand, agent: profile.kind, busy };
     }),
   );
@@ -235,7 +244,8 @@ async function orphanBusyFromActivity(
   sessionId: string | null,
 ): Promise<boolean | null> {
   if (!sessionId || !profile.lastActivityAt) return null;
-  if (profile.kind === "codex" && configRoot === `${homedir()}/.codex`) return null;
+  // Codex task state requires exact live-session evidence, not cwd activity.
+  if (profile.kind === "codex") return null;
   const resolver: ReadResolver = {
     resolveConfigRoot: async () => configRoot,
     resolveCodexHome: async () => configRoot,
@@ -393,8 +403,13 @@ export function createTakeoverProbe(
       // session even under same-cwd contention (was claude-only → codex always fell
       // back to the newest-on-disk rollout, which can be a different session).
       const files = await intro.listOpenFiles(pid);
-      return (matchOpenClaudeTranscript(files) ?? matchOpenCodexRollout(files))?.sessionId ?? null;
+      return (
+        matchOpenClaudeTranscript(files)?.sessionId ??
+        (await inspectCodexOrphanSession(files))?.sessionId ??
+        null
+      );
     },
+    inspectCodexSession: async (pid) => inspectCodexOrphanSession(await intro.listOpenFiles(pid)),
     cwdOf: (pid) => intro.cwdOf(pid),
     ttyOf: (pid) => intro.ttyOf(pid),
     async resetTerminal(tty: string): Promise<void> {

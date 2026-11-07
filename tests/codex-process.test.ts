@@ -11,6 +11,10 @@ describe("isCodexProcess", () => {
   it("matches a codex-* wrapper script as argv0", () => {
     expect(isCodexProcess("codex-stella")).toBe(true);
   });
+  it("does not match the Codex code-mode runtime helper", () => {
+    expect(isCodexProcess("codex-code-mode-host")).toBe(false);
+    expect(isCodexProcess("/opt/codex/bin/codex-code-mode-host --parent 42")).toBe(false);
+  });
   it("does not match codex mentioned only in an argument", () => {
     expect(isCodexProcess("vim codex.ts")).toBe(false);
     expect(isCodexProcess("node build-codex.js")).toBe(false);

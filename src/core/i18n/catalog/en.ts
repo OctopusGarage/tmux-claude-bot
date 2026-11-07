@@ -182,7 +182,7 @@ export const en: Messages = {
   recoverBusy: "A recovery is already in progress.",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 Recovery complete\n\n🔁 ${launched} relaunched${shellOnly > 0 ? ` · 🐚 ${shellOnly} recreated` : ""} · 🟢 ${alive} running${failed > 0 ? ` · ⚠️ ${failed} failed` : ""}`,
-  adoptGone: "That process is no longer adoptable (exited or already managed)",
+  adoptGone: "That process is no longer safely adoptable. Refresh the list and select again.",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed ? `✅ Adopted and resumed session: ${proj}` : `✅ Adopted and started fresh: ${proj}`,
   adoptFailed: "Takeover failed: process would not end, or the agent did not start",

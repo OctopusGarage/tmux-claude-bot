@@ -1044,6 +1044,14 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   `tcb logs --summary --since 1h`; it reports record volume, malformed complete
   lines, top components, and repeated WARN/ERROR signatures without dumping the
   whole day.
+- **Take over shows an unknown task state** → the candidate list and confirmation
+  screen show process-bound task evidence. Codex helpers are omitted, and the
+  exact open parent rollout identifies the session; child rollouts are not
+  separate parent candidates. For Codex, `busy` means an unfinished typed root task, and
+  `idle` means a completed or aborted root task. `unknown` means the bounded log
+  read cannot establish that state, rather than a task failure. Processes with
+  missing or ambiguous parent identity are omitted. Refresh the list if an old
+  candidate button can no longer be confirmed safely.
 - **After `tcb adopt`, typing prints raw escape sequences** (e.g. `d0;1:3u`, `s5;1:3u`)
   → the orphaned claude/codex process was killed by signal before it could reset the
   terminal's enhanced keyboard mode. Run one of these in the affected terminal:

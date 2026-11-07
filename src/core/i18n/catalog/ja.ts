@@ -182,7 +182,7 @@ export const ja: Messages = {
   recoverBusy: "別の復元が進行中です。しばらくお待ちください。",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 復元完了\n\n🔁 再起動 ${launched}${shellOnly > 0 ? ` · 🐚 再作成 ${shellOnly}` : ""} · 🟢 実行中 ${alive}${failed > 0 ? ` · ⚠️ 失敗 ${failed}` : ""}`,
-  adoptGone: "このプロセスは引き継ぎ対象ではありません（終了済み、または管理済み）",
+  adoptGone: "このプロセスを現在安全に引き継ぐことはできません。一覧を更新して選び直してください。",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed
       ? `✅ 引き継ぎ、セッションを再開しました: ${proj}`

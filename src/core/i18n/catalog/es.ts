@@ -183,7 +183,8 @@ export const es: Messages = {
   recoverBusy: "Ya hay una recuperación en curso.",
   recoverDone: (launched: number, shellOnly: number, alive: number, failed: number) =>
     `🔄 Recuperación completada\n\n🔁 ${launched} reiniciado(s)${shellOnly > 0 ? ` · 🐚 ${shellOnly} recreado(s)` : ""} · 🟢 ${alive} en ejecución${failed > 0 ? ` · ⚠️ ${failed} con error` : ""}`,
-  adoptGone: "Ese proceso ya no es adoptable (terminó o ya está gestionado)",
+  adoptGone:
+    "Ese proceso ya no se puede adoptar de forma segura. Actualiza la lista y vuelve a elegir.",
   adoptDone: (proj: string, resumed: boolean) =>
     resumed
       ? `✅ Adoptado y sesión reanudada: ${proj}`

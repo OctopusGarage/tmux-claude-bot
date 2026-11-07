@@ -13,5 +13,7 @@ import { basename } from "node:path";
 export function isCodexProcess(command: string): boolean {
   const argv0 = command.trim().split(/\s+/)[0] ?? "";
   const name = basename(argv0);
+  // This child runs tools for the CLI; it is not another resumable agent.
+  if (name === "codex-code-mode-host") return false;
   return name === "codex" || name.startsWith("codex-");
 }

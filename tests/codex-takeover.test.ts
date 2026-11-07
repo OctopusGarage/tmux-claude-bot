@@ -180,6 +180,47 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 describe("listCodexOrphans", () => {
+  it("uses exact parent-session evidence for default-home candidates", async () => {
+    const parent = "019d3003-2649-7c40-a990-dc49ebb6ec3e";
+    const probe = Object.assign(
+      fakeProbe({
+        snapshot: async () => [{ pid: 55, ppid: 1, command: "codex resume" }],
+        openSessionFile: async () => "child-session",
+      }),
+      { inspectCodexSession: async () => ({ sessionId: parent, busy: false }) },
+    );
+    const rows = await listCodexOrphans(probe);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: parent, busy: false });
+    expect(rows[0]?.startCommand).toContain(`resume ${parent}`);
+  });
+
+  it("omits ambiguous sessions instead of borrowing cwd history", async () => {
+    const probe = Object.assign(
+      fakeProbe({
+        snapshot: async () => [{ pid: 55, ppid: 1, command: "codex resume" }],
+        openSessionFile: async () => "some-other-session",
+      }),
+      { inspectCodexSession: async () => null },
+    );
+    expect(await listCodexOrphans(probe)).toEqual([]);
+  });
+
+  it("does not offer a code-mode helper as another takeover candidate", async () => {
+    const probe = Object.assign(
+      fakeProbe({
+        snapshot: async () => [
+          { pid: 55, ppid: 1, command: "codex resume" },
+          { pid: 56, ppid: 55, command: "codex-code-mode-host" },
+        ],
+      }),
+      { inspectCodexSession: async () => ({ sessionId: "parent-session", busy: true }) },
+    );
+    const rows = await listCodexOrphans(probe);
+    expect(rows.map((row) => row.pid)).toEqual([55]);
+    expect(rows[0]?.pids).toEqual([55]);
+  });
+
   it("bails (empty) when tmux can't be queried (panePids null)", async () => {
     const probe = fakeProbe({
       snapshot: async () => [{ pid: 9, ppid: 1, command: "codex" }] as ProcRow[],

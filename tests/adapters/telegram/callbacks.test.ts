@@ -553,6 +553,28 @@ describe("handleCallbackQuery", () => {
   });
 
   describe("adopt orphan (as / ae / ac / aa)", () => {
+    it.each([true, false])(
+      "shows the observed Codex task state in confirmation (%s)",
+      async (busy) => {
+        findAdoptableOrphansMock.mockResolvedValueOnce([
+          {
+            pid: 4242,
+            agent: "codex",
+            cwd: "/fixture/project",
+            configRoot: "/fixture/codex",
+            sessionId: "019d3003-2649-7c40-a990-dc49ebb6ec3e",
+            startCommand: "codex resume 019d3003-2649-7c40-a990-dc49ebb6ec3e",
+            busy,
+          },
+        ]);
+        const ctx = fakeCtx({ callbackData: "as:4242" });
+        await handleCallbackQuery(ctx, fakeDeps(), replyTarget);
+        expect(ctx.texts().join()).toContain(`task ${busy ? "busy" : "idle"}`);
+        expect(ctx.texts().join()).toContain("019d3003");
+        expect(ctx.texts().join()).not.toContain("task unknown");
+      },
+    );
+
     it("adoptshow (as) errors when the orphan is gone", async () => {
       findAdoptableOrphansMock.mockResolvedValueOnce([]);
       const ctx = fakeCtx({ callbackData: "as:4242" });
