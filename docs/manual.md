@@ -1052,6 +1052,10 @@ re-run `install.sh`), which rebuilds `dist/` before restarting.
   read cannot establish that state, rather than a task failure. Processes with
   missing or ambiguous parent identity are omitted. Refresh the list if an old
   candidate button can no longer be confirmed safely.
+- **Take over candidate order**: Telegram, Feishu/Lark and `tcb adopt` list
+  candidates by their own session transcript's most recent update, newest first,
+  across Claude and Codex. Unknown activity times appear last; equal times keep
+  discovery order. This ordering does not infer whether a task is busy or idle.
 - **After `tcb adopt`, typing prints raw escape sequences** (e.g. `d0;1:3u`, `s5;1:3u`)
   → the orphaned claude/codex process was killed by signal before it could reset the
   terminal's enhanced keyboard mode. Run one of these in the affected terminal:

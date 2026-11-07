@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { promisify } from "node:util";
@@ -106,6 +106,8 @@ export interface TakeoverProbe {
   openSessionFile(pid: number): Promise<string | null>;
   /** Exact parent-session and task evidence for Codex. Null is not safely resumable. */
   inspectCodexSession?(pid: number): Promise<CodexOrphanSession | null>;
+  /** Modification time of this exact open Claude session, never a cwd-wide guess. */
+  sessionActivityAt?(pid: number, sessionId: string): Promise<number | null>;
   /** `ps eww` command+env line, mined for CLAUDE_CONFIG_DIR. */
   readProcEnv(pid: number): Promise<string>;
   /** Concatenated shell rc files, mined for `claude-*` launcher aliases. */
@@ -142,6 +144,8 @@ export interface OrphanAgent {
   /** Task evidence for the external agent. Null means unknown; Codex uses the
    * exact parent rollout's typed lifecycle rather than transcript age. */
   busy?: boolean | null;
+  /** Exact session transcript modification time in epoch milliseconds, or unknown. */
+  lastActivityAt?: number | null;
 }
 
 export type OrphanBusyState = "busy" | "idle" | "unknown";
@@ -218,7 +222,21 @@ export async function listOrphansFor(
       const busy = inspectCodex
         ? (codexSession?.busy ?? null)
         : await orphanBusyFromActivity(profile, configRoot, cwd, sessionId);
-      return { pid, cwd, configRoot, sessionId, startCommand, agent: profile.kind, busy };
+      const lastActivityAt = inspectCodex
+        ? (codexSession?.lastActivityAt ?? null)
+        : sessionId
+          ? ((await probe.sessionActivityAt?.(pid, sessionId).catch(() => null)) ?? null)
+          : null;
+      return {
+        pid,
+        cwd,
+        configRoot,
+        sessionId,
+        startCommand,
+        agent: profile.kind,
+        busy,
+        lastActivityAt,
+      };
     }),
   );
 
@@ -231,8 +249,12 @@ export async function listOrphansFor(
   for (const o of out.filter((o): o is OrphanAgent => o !== null)) {
     const key = `${o.agent} ${o.cwd} ${o.sessionId ?? ""}`;
     const existing = byKey.get(key);
-    if (existing) existing.pids?.push(o.pid);
-    else byKey.set(key, { ...o, pids: [o.pid] });
+    if (existing) {
+      existing.pids?.push(o.pid);
+      if ((o.lastActivityAt ?? -1) > (existing.lastActivityAt ?? -1)) {
+        existing.lastActivityAt = o.lastActivityAt ?? null;
+      }
+    } else byKey.set(key, { ...o, pids: [o.pid] });
   }
   return [...byKey.values()];
 }
@@ -408,6 +430,16 @@ export function createTakeoverProbe(
         (await inspectCodexOrphanSession(files))?.sessionId ??
         null
       );
+    },
+    async sessionActivityAt(pid, sessionId) {
+      const files = await intro.listOpenFiles(pid);
+      const transcript = files
+        .map((path) => matchOpenClaudeTranscript([path]))
+        .find((match) => match?.sessionId === sessionId);
+      if (!transcript) return null;
+      return stat(transcript.path)
+        .then((info) => info.mtimeMs)
+        .catch(() => null);
     },
     inspectCodexSession: async (pid) => inspectCodexOrphanSession(await intro.listOpenFiles(pid)),
     cwdOf: (pid) => intro.cwdOf(pid),

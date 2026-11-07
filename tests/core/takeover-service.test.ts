@@ -200,6 +200,18 @@ describe("composeAdoptOutcome", () => {
 });
 
 describe("findAdoptableOrphans", () => {
+  it("orders both agent kinds by recent activity, keeping unknown times last and ties stable", async () => {
+    const older = { ...ORPHAN, pid: 1, lastActivityAt: 100 };
+    const tiedClaude = { ...ORPHAN, pid: 2, lastActivityAt: 200 };
+    const unknown = { ...ORPHAN, pid: 3 };
+    const newest = { ...ORPHAN, agent: "codex" as const, pid: 4, lastActivityAt: 300 };
+    const tiedCodex = { ...newest, pid: 5, lastActivityAt: 200 };
+    const missing = { ...newest, pid: 6, lastActivityAt: null };
+    listClaudeOrphans.mockResolvedValue([unknown, older, tiedClaude]);
+    listCodexOrphans.mockResolvedValue([missing, newest, tiedCodex]);
+    expect((await findAdoptableOrphans()).map((o) => o.pid)).toEqual([4, 2, 5, 1, 3, 6]);
+  });
+
   it("merges claude and codex orphan lists", async () => {
     const codexOrphan: OrphanAgent = { ...ORPHAN, pid: 99, agent: "codex" };
     listClaudeOrphans.mockResolvedValue([ORPHAN]);

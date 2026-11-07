@@ -1,7 +1,11 @@
 import { open } from "node:fs/promises";
 import { matchOpenCodexRollout, readFirstLine } from "./codex-rollout.js";
 
-export type CodexOrphanSession = { sessionId: string; busy: boolean | null };
+export type CodexOrphanSession = {
+  sessionId: string;
+  busy: boolean | null;
+  lastActivityAt?: number | null;
+};
 const HEADER_LIMIT = 64 * 1024;
 const TAIL_LIMIT = 1024 * 1024;
 
@@ -112,10 +116,11 @@ export async function inspectCodexOrphanSession(
     let text = buffer.toString("utf8", 0, tail.bytesRead);
     if (start > 0) {
       const newline = text.indexOf("\n");
-      if (newline < 0) return { sessionId: parent.sessionId, busy: null };
+      if (newline < 0)
+        return { sessionId: parent.sessionId, busy: null, lastActivityAt: stat.mtimeMs };
       text = text.slice(newline + 1);
     }
-    return { sessionId: parent.sessionId, busy: busyFromTail(text) };
+    return { sessionId: parent.sessionId, busy: busyFromTail(text), lastActivityAt: stat.mtimeMs };
   } catch {
     return null;
   } finally {

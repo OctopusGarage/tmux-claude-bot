@@ -52,11 +52,13 @@ export interface AdoptContext {
   warmupMs: number;
 }
 
-/** Non-tmux claude and codex processes the bot could adopt, newest session each. */
+/** Adoptable non-tmux agents, most recently active session first; unknown times last. */
 export async function findAdoptableOrphans(): Promise<OrphanAgent[]> {
   const probe = createTakeoverProbe();
   const [claudes, codexes] = await Promise.all([listClaudeOrphans(probe), listCodexOrphans(probe)]);
-  return [...claudes, ...codexes];
+  return [...claudes, ...codexes].sort(
+    (a, b) => (b.lastActivityAt ?? -1) - (a.lastActivityAt ?? -1),
+  );
 }
 
 /** Single-quote a value for safe pasting into a shell (session names can contain

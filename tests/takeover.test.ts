@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +130,7 @@ describe("listClaudeOrphans dedup", () => {
 
     expect(orphans.find((o) => o.pid === 21)?.busy).toBe(true);
     expect(orphans.find((o) => o.pid === 22)?.busy).toBe(false);
+    expect(orphans.every((o) => o.lastActivityAt === null)).toBe(true);
   });
 });
 
@@ -515,6 +516,21 @@ describe("listClaudeOrphans", () => {
     };
   }
 
+  it("preserves the newest exact activity when duplicate processes collapse", async () => {
+    const orphans = await listClaudeOrphans(
+      probeFor({
+        snapshot: async () => [
+          { pid: 21, ppid: 1, command: "claude" },
+          { pid: 22, ppid: 1, command: "claude" },
+        ],
+        openSessionFile: async () => "fixture-session",
+        sessionActivityAt: async (pid) => (pid === 21 ? 1000 : 2000),
+      }),
+    );
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0]).toMatchObject({ pids: [21, 22], lastActivityAt: 2000 });
+  });
+
   it("bails (empty) when tmux can't be queried (panePids null)", async () => {
     const snapshot = vi.fn(async () => [{ pid: 9, ppid: 1, command: "claude" }] as ProcRow[]);
     const out = await listClaudeOrphans(probeFor({ snapshot, tmuxPanePids: async () => null }));
@@ -590,5 +606,34 @@ describe("listClaudeOrphans", () => {
     );
     expect(out[0]?.startCommand).toBe("claude-stella --resume sess-7");
     expect(out[0]?.configRoot).toBe(`${home}/.claude-stella`);
+  });
+});
+
+describe("orphan activity evidence", () => {
+  it("carries exact Claude transcript activity and keeps it unknown when the file disappears", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-orphan-recency-"));
+    const id = "019d3003-2649-7c40-a990-dc49ebb6ec3e";
+    const project = join(dir, "projects", "fixture");
+    mkdirSync(project, { recursive: true });
+    const path = join(project, `${id}.jsonl`);
+    const unrelated = join(project, "019d3003-2649-7c40-a990-dc49ebb6ec3f.jsonl");
+    writeFileSync(unrelated, "{}\n");
+    writeFileSync(path, "{}\n");
+    utimesSync(path, new Date(1000), new Date(1000));
+    const native = createTakeoverProbe({
+      snapshot: async () => [{ pid: 55, ppid: 1, command: "claude" }],
+      readProcEnv: async () => "CLAUDE_CONFIG_DIR=/fixture/claude",
+      listOpenFiles: async () => [path, unrelated],
+      cwdOf: async () => "/fixture/project",
+      ttyOf: async () => null,
+    });
+    const probe = { ...native, tmuxPanePids: async () => [], readShellRc: async () => "" };
+    try {
+      expect((await listClaudeOrphans(probe))[0]?.lastActivityAt).toBe(statSync(path).mtimeMs);
+      rmSync(path);
+      expect((await listClaudeOrphans(probe))[0]?.lastActivityAt).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,6 +29,16 @@ function rollout(events: unknown[], id = rootId, source: unknown = "cli"): strin
 }
 
 describe("Codex orphan session evidence", () => {
+  it("reports the exact parent modification time, ignoring a newer child", async () => {
+    const parent = rollout([task("task_complete")]);
+    const child = rollout([], childId, { subagent: {} });
+    utimesSync(parent, new Date(1000), new Date(1000));
+    utimesSync(child, new Date(2000), new Date(2000));
+    expect((await inspectCodexOrphanSession([child, parent]))?.lastActivityAt).toBe(
+      statSync(parent).mtimeMs,
+    );
+  });
+
   it("wires native process inspection to one correctly labelled parent candidate", async () => {
     const child = rollout([], childId, {
       subagent: { thread_spawn: { parent_thread_id: rootId } },
@@ -62,7 +72,10 @@ describe("Codex orphan session evidence", () => {
 
   it.each(["task_complete", "turn_aborted"])("recognizes a root %s as idle", async (type) => {
     const path = rollout([task(type)]);
-    expect(await inspectCodexOrphanSession([path])).toEqual({ sessionId: rootId, busy: false });
+    expect(await inspectCodexOrphanSession([path])).toMatchObject({
+      sessionId: rootId,
+      busy: false,
+    });
   });
 
   it("keeps an unfinished root busy despite final-looking assistant output", async () => {
@@ -78,7 +91,10 @@ describe("Codex orphan session evidence", () => {
         },
       },
     ]);
-    expect(await inspectCodexOrphanSession([path])).toEqual({ sessionId: rootId, busy: true });
+    expect(await inspectCodexOrphanSession([path])).toMatchObject({
+      sessionId: rootId,
+      busy: true,
+    });
   });
 
   it("selects the parent even when a child rollout is listed first", async () => {
@@ -86,7 +102,7 @@ describe("Codex orphan session evidence", () => {
       subagent: { thread_spawn: { parent_thread_id: rootId } },
     });
     const parent = rollout([task("task_started")]);
-    expect(await inspectCodexOrphanSession([child, parent])).toEqual({
+    expect(await inspectCodexOrphanSession([child, parent])).toMatchObject({
       sessionId: rootId,
       busy: true,
     });
@@ -113,7 +129,10 @@ describe("Codex orphan session evidence", () => {
 
   it("invalidates a terminal followed by new input, including duplicate old terminals", async () => {
     const path = rollout([task("task_complete"), message("user"), task("task_complete")]);
-    expect(await inspectCodexOrphanSession([path])).toEqual({ sessionId: rootId, busy: null });
+    expect(await inspectCodexOrphanSession([path])).toMatchObject({
+      sessionId: rootId,
+      busy: null,
+    });
   });
 
   it("omits an ambiguous set of parent rollouts", async () => {
@@ -138,7 +157,10 @@ describe("Codex orphan session evidence", () => {
 
   it("preserves unknown when no typed task evidence is available", async () => {
     const path = rollout([message("assistant")]);
-    expect(await inspectCodexOrphanSession([path])).toEqual({ sessionId: rootId, busy: null });
+    expect(await inspectCodexOrphanSession([path])).toMatchObject({
+      sessionId: rootId,
+      busy: null,
+    });
   });
 
   it("preserves unknown for malformed or incomplete task records", async () => {

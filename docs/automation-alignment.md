@@ -78,6 +78,10 @@ evidence determines Codex task busy/idle; unavailable evidence stays unknown. Mi
 or ambiguous parent identity is not safely adoptable. Confirmation refreshes
 discovery; buttons for candidates no longer in that safe set return a refresh
 instruction without execution.
+The shared candidate list sorts Claude and Codex together by exact session
+transcript modification time, newest first. Unknown activity sorts last; ties
+retain discovery order. Child activity and unrelated cwd history cannot promote
+a parent candidate. Task busy/idle remains independent of sorting timestamps.
 Orphan discovery, lifecycle and adapter callback tests enforce this contract.
 
 Scheduled session messages are durable one-time admitted user input, separate
