@@ -22,7 +22,8 @@ Successful enrollment immediately enables verification for Telegram and Feishu;
 no restart is needed. Enrollment material is never sent through chat.
 
 Policy and enrollment use owner-only files under the state directory. Status
-reveals no secret, owner identity, request ID or grant. Generic configuration
+reveals no secret, owner identity, request ID or grant record. The redacted
+`activeGrants` count reports unexpired approvals in the current generation. Generic configuration
 commands cannot enroll an authenticator or disable protection.
 
 ## Chat Workflow
@@ -60,7 +61,24 @@ Requests expire after five minutes. Codes have 30-second periods, tolerate at mo
 one period of clock drift, and cannot be reused across restarts. Five incorrect
 or replayed codes lock verification for five minutes across the installation.
 A compromised allowed account can therefore temporarily deny verification.
-Requests and grants are bounded in memory and never survive a backend restart.
+Pending requests and approved grants are atomically persisted in the owner-only
+security state under the same process lock as policy and OTP replay protection.
+Service restarts and hot reloads preserve their original deadlines: a restart
+neither locks a valid chat nor renews its remaining lifetime. Requests remain
+valid only for their original five minutes. Approval, request consumption and
+the replay counter commit together before success is reported.
+
+Each record binds the channel, user, original chat, expiry and policy generation.
+Expired or obsolete-generation records cannot authorize input. `/lock` durably
+removes the user's requests and grants in that channel; revoke, resume, reset,
+re-enrollment and lock repair invalidate previous records. Other instances read
+the same state at their next admission check. Stores are limited to 1,000 requests
+and 1,000 grants; full stores reject new records rather than evict valid approvals.
+
+Legacy state without records starts with no restored approvals and preserves
+its enrollment and configured lifetime. Authorizations already lost by an older
+backend cannot be recovered; verify once after upgrading. Do not downgrade to an
+older backend that cannot read the extended state schema.
 
 ## Queue And Automation Boundary
 

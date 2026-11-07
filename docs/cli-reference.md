@@ -72,7 +72,8 @@ fresh verification. Reset and stale-lock repair are interactive and leave access
 suspended. `grant-hours` accepts positive whole hours (default 24), affects future
 approvals, and is reflected by `grantTtlSeconds` in status. Locking and suspension
 block new input; admitted queued and running work continues. Status never prints
-secrets or grants. See [security.md](security.md).
+secrets or grant records. Status includes the redacted `activeGrants` count;
+approvals survive restarts with their original expiry. See [security.md](security.md).
 
 - `tcb service install`
 - `tcb service uninstall`

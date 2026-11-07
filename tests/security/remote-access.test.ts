@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +42,171 @@ afterEach(() => {
 });
 
 describe("remote access security", () => {
+  it.each(["telegram", "lark"] as const)(
+    "preserves %s approval across restart without renewing its 16-hour deadline",
+    (channel) => {
+      const f = fixture();
+      const principal = { ...alice, channel };
+      f.service.enroll(secret, f.code());
+      f.service.setGrantHours(16);
+      f.advance(30_000);
+      const approved = f.service.approve(principal, f.service.request(principal).id, f.code());
+      const original = f.service.capture(principal);
+      f.advance(300_000);
+      const restarted = new RemoteAccessService({ directory: f.directory, now: f.now });
+      expect(restarted.capture(principal)).toEqual(original);
+      f.advance(16 * 3_600_000 - 300_001);
+      expect(() => restarted.capture(principal)).not.toThrow();
+      f.advance(1);
+      expect(f.now()).toBe(approved.expiresAt);
+      expect(() =>
+        new RemoteAccessService({ directory: f.directory, now: f.now }).capture(principal),
+      ).toThrow();
+    },
+  );
+  it("restores pending requests within their original five-minute window", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    const request = f.service.request(alice);
+    const restarted = new RemoteAccessService({ directory: f.directory, now: f.now });
+    f.advance(299_999);
+    expect(() => restarted.approve(privateAlice, request.id, f.code())).not.toThrow();
+    expect(() => f.service.capture(alice)).not.toThrow();
+    f.advance(30_000);
+    const expired = f.service.request(privateAlice);
+    f.advance(300_000);
+    expect(() =>
+      new RemoteAccessService({ directory: f.directory, now: f.now }).approve(
+        privateAlice,
+        expired.id,
+        f.code(),
+      ),
+    ).toThrow();
+  });
+  it("persists channel-scoped locks across instances without reviving pending approvals", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    f.service.approve(privateAlice, f.service.request(alice).id, f.code());
+    const lark = { ...alice, channel: "lark" as const };
+    f.advance(30_000);
+    f.service.approve(lark, f.service.request(lark).id, f.code());
+    const pending = f.service.request(privateAlice);
+    const restarted = new RemoteAccessService({ directory: f.directory, now: f.now });
+    restarted.lock(alice);
+    expect(() => f.service.capture(alice)).toThrow();
+    expect(() => f.service.capture(lark)).not.toThrow();
+    f.advance(30_000);
+    expect(() => f.service.approve(privateAlice, pending.id, f.code())).toThrow();
+    expect(() =>
+      new RemoteAccessService({ directory: f.directory, now: f.now }).capture(alice),
+    ).toThrow();
+  });
+  it("does not evict valid grants at capacity or consume the verification code", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    const request = f.service.request(alice);
+    const path = join(f.directory, "remote-access.json");
+    const state = JSON.parse(readFileSync(path, "utf8"));
+    state.grants = Array.from({ length: 1000 }, (_, i) => ({
+      id: randomUUID(),
+      generation: state.generation,
+      expiresAt: f.now() + 3_600_000,
+      principal: { ...alice, chatId: `fixture-${i}` },
+    }));
+    writeFileSync(path, JSON.stringify(state));
+    expect(() => f.service.approve(privateAlice, request.id, f.code())).toThrow(
+      "Too many active approvals",
+    );
+    expect(JSON.parse(readFileSync(path, "utf8")).lastCounter).toBe(state.lastCounter);
+    state.grants[0].expiresAt = f.now();
+    writeFileSync(path, JSON.stringify(state));
+    expect(() => f.service.approve(privateAlice, request.id, f.code())).not.toThrow();
+  });
+  it("stores approvals privately, exposes only redacted counts and fails closed on unsafe permissions", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.advance(30_000);
+    f.service.approve(privateAlice, f.service.request(alice).id, f.code());
+    const path = join(f.directory, "remote-access.json");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(f.directory).mode & 0o777).toBe(0o700);
+    const restarted = new RemoteAccessService({ directory: f.directory, now: f.now });
+    expect(restarted.status()).toMatchObject({ activeGrants: 1 });
+    expect(JSON.stringify(restarted.status())).not.toContain(alice.userId);
+    chmodSync(path, 0o644);
+    expect(() => restarted.capture(alice)).toThrow("Remote security state is unavailable");
+  });
+  it.each(["telegram", "lark"] as const)(
+    "recovers %s approval in a real new process and durably locks it",
+    async (channel) => {
+      const f = fixture();
+      const principal = { ...alice, channel };
+      f.service.enroll(secret, f.code());
+      f.advance(30_000);
+      f.service.approve(principal, f.service.request(principal).id, f.code());
+      const modulePath = fileURLToPath(
+        new URL("../../src/core/security/remote-access.ts", import.meta.url),
+      );
+      const script = `import { RemoteAccessService } from ${JSON.stringify(modulePath)};
+      const service = new RemoteAccessService({directory:process.argv[1],now:()=>Number(process.argv[2])});
+      const principal = JSON.parse(process.argv[3]);
+      if (!service.capture(principal)) process.exit(2);
+      service.lock(principal);`;
+      const exitCode = await new Promise<number | null>((done, reject) => {
+        const child = spawn(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "--input-type=module",
+            "-e",
+            script,
+            f.directory,
+            String(f.now()),
+            JSON.stringify(principal),
+          ],
+          { stdio: "ignore" },
+        );
+        child.on("error", reject);
+        child.on("exit", done);
+      });
+      expect(exitCode).toBe(0);
+      expect(() => f.service.capture(principal)).toThrow();
+    },
+  );
+  it("migrates legacy policy without inventing approvals", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    f.service.setGrantHours(16);
+    const path = join(f.directory, "remote-access.json");
+    const state = JSON.parse(readFileSync(path, "utf8"));
+    delete state.requests;
+    delete state.grants;
+    writeFileSync(path, JSON.stringify(state));
+    const restarted = new RemoteAccessService({ directory: f.directory, now: f.now });
+    expect(restarted.status()).toMatchObject({
+      enrolled: true,
+      grantTtlSeconds: 57600,
+      activeGrants: 0,
+    });
+    expect(() => restarted.capture(alice)).toThrow();
+  });
+  it("rejects malformed persisted approvals without exposing their contents", () => {
+    const f = fixture();
+    f.service.enroll(secret, f.code());
+    const path = join(f.directory, "remote-access.json");
+    const state = JSON.parse(readFileSync(path, "utf8"));
+    state.grants = [
+      { id: randomUUID(), principal: alice, expiresAt: "invalid", generation: state.generation },
+    ];
+    writeFileSync(path, JSON.stringify(state));
+    expect(() =>
+      new RemoteAccessService({ directory: f.directory, now: f.now }).capture(alice),
+    ).toThrow("Remote security state is unavailable");
+  });
   it("defaults to a full day and expires new admissions exactly at the boundary", () => {
     const f = fixture();
     expect(f.service.status().grantTtlSeconds).toBe(86400);

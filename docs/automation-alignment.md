@@ -135,7 +135,11 @@ precede the shared remote guard. Existing installs remain compatible until
 interactive `tcb security setup` enrolls TOTP, immediately requiring channel/user/
 chat-scoped grants for remote reads, writes, media and callbacks. Grants default
 to 24 hours; `tcb security grant-hours <hours>` configures future grants and
-status exposes the persisted lifetime. `/unlock` sends instructions privately,
+status exposes the persisted lifetime and redacted active-grant count. Requests
+and grants persist atomically with policy and OTP replay protection, retaining
+original five-minute/request and configured grant deadlines across restarts.
+Channel-scoped locking and global revocation durably invalidate records across
+instances; missing legacy records never synthesize approval. `/unlock` sends instructions privately,
 `/approve` is private-only, `/lock` blocks future input, and `/security` reports
 enrollment/suspension. Authorization is checked only at remote ingress. Already
 admitted input continues through queues, delegation and readiness waits after

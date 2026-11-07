@@ -23,6 +23,22 @@ export type RemoteAuthorization = {
   grantId: string;
   generation: string;
 };
+const MAX_RECORDS = 1000;
+const MAX_STATE_BYTES = 4 * 1024 * 1024;
+const authorizationRecordSchema = z
+  .object({
+    id: z.string().uuid(),
+    principal: z
+      .object({
+        channel: z.enum(["telegram", "lark"]),
+        userId: z.string().min(1).max(128),
+        chatId: z.string().min(1).max(128),
+      })
+      .strict(),
+    expiresAt: z.number().int().nonnegative().safe(),
+    generation: z.string().uuid(),
+  })
+  .strict();
 const stateSchema = z
   .object({
     version: z.literal(1),
@@ -37,11 +53,11 @@ const stateSchema = z
     failures: z.number().int().min(0).max(4),
     lockedUntil: z.number().nonnegative(),
     grantTtlSeconds: z.number().int().positive().safe().default(86_400),
+    requests: z.array(authorizationRecordSchema).max(MAX_RECORDS).default([]),
+    grants: z.array(authorizationRecordSchema).max(MAX_RECORDS).default([]),
   })
   .strict();
 type State = z.infer<typeof stateSchema>;
-type Request = { principal: RemotePrincipal; expiresAt: number; generation: string };
-type Grant = Request & { id: string };
 export class RemoteAccessError extends Error {
   constructor(message = "Remote access is locked. Request approval in a private chat.") {
     super(message);
@@ -56,12 +72,10 @@ const samePrincipal = (a: RemotePrincipal, b: RemotePrincipal) =>
   sameUser(a, b) && a.chatId === b.chatId;
 const totp = (secret: string) => new TOTP({ secret, algorithm: "SHA1", digits: 6, period: 30 });
 
-/** Local durable policy and OTP replay protection; remote grants remain process-local. */
+/** Durable remote approvals, policy and OTP replay protection under one process lock. */
 export class RemoteAccessService {
   private readonly directory: string;
   private readonly now: () => number;
-  private readonly requests = new Map<string, Request>();
-  private readonly grants = new Map<string, Grant>();
   constructor(options: { directory: string; now?: () => number }) {
     this.directory = resolve(options.directory);
     this.now = options.now ?? Date.now;
@@ -121,6 +135,8 @@ export class RemoteAccessService {
               failures: 0,
               lockedUntil: 0,
               grantTtlSeconds: 86_400,
+              requests: [],
+              grants: [],
             };
         }
       }
@@ -133,7 +149,7 @@ export class RemoteAccessService {
         info.nlink !== 1 ||
         info.uid !== process.getuid?.() ||
         (info.mode & 0o077) !== 0 ||
-        info.size > 4096
+        info.size > MAX_STATE_BYTES
       )
         throw unavailable();
       const state = stateSchema.parse(JSON.parse(readFileSync(fd, "utf8")));
@@ -158,7 +174,9 @@ export class RemoteAccessService {
         constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
         0o600,
       );
-      writeFileSync(fd, JSON.stringify(state));
+      const serialized = JSON.stringify(stateSchema.parse(state));
+      if (Buffer.byteLength(serialized, "utf8") > MAX_STATE_BYTES) throw unavailable();
+      writeFileSync(fd, serialized);
       fsyncSync(fd);
       closeSync(fd);
       fd = undefined;
@@ -200,7 +218,9 @@ export class RemoteAccessService {
       }
     }
     try {
-      return action(this.read());
+      const state = this.read();
+      this.prune(state);
+      return action(state);
     } finally {
       rmSync(lock, { recursive: true, force: true });
     }
@@ -211,6 +231,7 @@ export class RemoteAccessService {
       enrolled: state.secret !== null,
       suspended: state.suspended,
       grantTtlSeconds: state.grantTtlSeconds,
+      activeGrants: state.grants.length,
       verificationLocked: state.lockedUntil > this.now(),
       verificationLockedUntil: state.lockedUntil > this.now() ? state.lockedUntil : null,
     }));
@@ -266,27 +287,27 @@ export class RemoteAccessService {
       state.enabled = true;
       state.suspended = false;
       state.generation = randomUUID();
+      state.requests = [];
+      state.grants = [];
       this.save(state);
-      this.requests.clear();
-      this.grants.clear();
     });
   }
   request(principal: RemotePrincipal): { id: string; expiresAt: number } {
     return this.transaction((state) => {
       this.ensureActive(state);
-      this.prune();
-      // One outstanding request per remote identity/chat limits untrusted memory growth.
-      for (const [id, req] of this.requests)
-        if (samePrincipal(principal, req.principal)) this.requests.delete(id);
-      if (this.requests.size >= 1000)
+      // One outstanding request per identity/chat, with a bounded durable store.
+      state.requests = state.requests.filter((req) => !samePrincipal(principal, req.principal));
+      if (state.requests.length >= MAX_RECORDS)
         throw new RemoteAccessError("Too many pending approvals. Try again later.");
       const id = randomUUID();
       const expiresAt = this.now() + 5 * 60_000;
-      this.requests.set(id, {
+      state.requests.push({
+        id,
         principal: { ...principal },
         expiresAt,
         generation: state.generation,
       });
+      this.save(state);
       return { id, expiresAt };
     });
   }
@@ -297,25 +318,32 @@ export class RemoteAccessService {
   ): { principal: RemotePrincipal; expiresAt: number } {
     return this.transaction((state) => {
       this.ensureActive(state);
-      this.prune();
-      const req = this.requests.get(requestId);
+      const req = state.requests.find((request) => request.id === requestId);
       if (!req || req.generation !== state.generation || !sameUser(req.principal, principal))
         throw new RemoteAccessError("Approval request is invalid or expired.");
+      const retained = state.grants.filter(
+        (grant) => !samePrincipal(grant.principal, req.principal),
+      );
+      if (retained.length >= MAX_RECORDS)
+        throw new RemoteAccessError(
+          "Too many active approvals. Lock unused chats or wait for expiry.",
+        );
       if (!this.verify(state, state.secret as string, code))
         throw new RemoteAccessError("Verification failed.");
-      this.save(state);
-      this.requests.delete(requestId);
       const id = randomUUID();
       const expiresAt = this.now() + state.grantTtlSeconds * 1000;
-      for (const [grantId, grant] of this.grants) {
-        if (samePrincipal(grant.principal, req.principal)) this.grants.delete(grantId);
-      }
-      this.grants.set(id, {
-        id,
-        principal: { ...req.principal },
-        expiresAt,
-        generation: state.generation,
-      });
+      state.requests = state.requests.filter((request) => request.id !== requestId);
+      state.grants = [
+        ...retained,
+        {
+          id,
+          principal: { ...req.principal },
+          expiresAt,
+          generation: state.generation,
+        },
+      ];
+      // Approval, consumed request and replay counter commit together before success is returned.
+      this.save(state);
       return { principal: { ...req.principal }, expiresAt };
     });
   }
@@ -323,8 +351,7 @@ export class RemoteAccessService {
     return this.transaction((state) => {
       if (!state.enabled && !state.suspended) return undefined;
       this.ensureActive(state);
-      this.prune();
-      const grant = [...this.grants.values()].find(
+      const grant = state.grants.find(
         (g) => g.generation === state.generation && samePrincipal(g.principal, principal),
       );
       if (!grant) throw new RemoteAccessError();
@@ -332,18 +359,17 @@ export class RemoteAccessService {
     });
   }
   lock(principal: RemotePrincipal): void {
-    this.transaction(() => {
-      for (const [id, request] of this.requests)
-        if (sameUser(request.principal, principal)) this.requests.delete(id);
-      for (const [id, grant] of this.grants)
-        if (sameUser(grant.principal, principal)) this.grants.delete(id);
+    this.transaction((state) => {
+      state.requests = state.requests.filter((request) => !sameUser(request.principal, principal));
+      state.grants = state.grants.filter((grant) => !sameUser(grant.principal, principal));
+      this.save(state);
     });
   }
-  private prune(): void {
-    for (const [id, request] of this.requests)
-      if (request.expiresAt <= this.now()) this.requests.delete(id);
-    for (const [id, grant] of this.grants)
-      if (grant.expiresAt <= this.now()) this.grants.delete(id);
+  private prune(state: State): void {
+    const valid = (record: z.infer<typeof authorizationRecordSchema>) =>
+      record.expiresAt > this.now() && record.generation === state.generation;
+    state.requests = state.requests.filter(valid);
+    state.grants = state.grants.filter(valid);
   }
   private change(action: "revoke" | "resume" | "reset"): void {
     this.transaction((state) => {
@@ -356,9 +382,9 @@ export class RemoteAccessService {
         state.secret = null;
         state.lastCounter = -1;
       }
+      state.requests = [];
+      state.grants = [];
       this.save(state);
-      this.requests.clear();
-      this.grants.clear();
     });
   }
   /** Interactive local recovery only. The operator must stop the service first. */
@@ -436,9 +462,9 @@ export class RemoteAccessService {
         state.enabled = true;
         state.suspended = true;
         state.generation = randomUUID();
+        state.requests = [];
+        state.grants = [];
         this.save(state);
-        this.requests.clear();
-        this.grants.clear();
         rmSync(lock, { recursive: true });
         return;
       } catch {
