@@ -143,3 +143,13 @@ export function clearProvenLoopExecutionQuarantine(
     throw new Error("External lifecycle proof is required");
   unlinkSync(file(workOrderId));
 }
+
+/** Executor-only release before CLI launch, after a preflight command's verified stop. */
+export function clearProvenPrelaunchLoopExecutionQuarantine(
+  workOrderId: string,
+  proof: { implementationStarted: false; knownProcessesStopped: true },
+): void {
+  if (proof.implementationStarted !== false || proof.knownProcessesStopped !== true)
+    throw new Error("Verified prelaunch process stop is required");
+  unlinkSync(file(workOrderId));
+}

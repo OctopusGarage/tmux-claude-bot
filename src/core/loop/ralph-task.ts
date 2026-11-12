@@ -11,9 +11,11 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+import { redactSecrets } from "../../shared/utils/logger.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath } from "./artifacts.js";
 import {
   clearProvenLoopExecutionQuarantine,
+  clearProvenPrelaunchLoopExecutionQuarantine,
   loopExecutionPathQuarantined,
   quarantineLoopExecution,
 } from "./execution-quarantine.js";
@@ -575,9 +577,45 @@ export async function executeRalphTask(
   );
   quarantineActive = true;
   input.onStarted?.();
-  for (const command of workOrder.preflight.commands) {
+  for (const [index, command] of workOrder.preflight.commands.entries()) {
     const preflight = await run("sh", ["-lc", command]);
-    if (preflight.status !== 0) throw new Error("RalphWorks preflight failed");
+    if (preflight.status === 0 && preflight.stopped === undefined) continue;
+    // A resolved process result proves close and descendant stop. Rejected
+    // ownership/probe/persistence failures never enter this release path.
+    const stdout = redactSecrets(preflight.stdout);
+    const stderr = redactSecrets(preflight.stderr);
+    writeFileSync(
+      join(attemptDir, "preflight-failure.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        commandIndex: index + 1,
+        commandCount: workOrder.preflight.commands.length,
+        commandSha256: digest(command),
+        exitStatus: preflight.status,
+        ...(preflight.stopped === undefined ? {} : { stopReason: preflight.stopped.reason }),
+        implementationStarted: false,
+        knownProcessesStopped: true,
+        stdout: stdout.slice(-4096),
+        stderr: stderr.slice(-4096),
+        stdoutTruncated: stdout.length > 4096,
+        stderrTruncated: stderr.length > 4096,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+    clearProvenPrelaunchLoopExecutionQuarantine(workOrder.id, {
+      implementationStarted: false,
+      knownProcessesStopped: true,
+    });
+    quarantineActive = false;
+    if (preflight.stopped !== undefined)
+      throw new RalphTaskStoppedError(
+        preflight.stopped.reason,
+        false,
+        `RalphWorks preflight command ${index + 1} ${preflight.stopped.reason}; see preflight-failure.json`,
+      );
+    throw new Error(
+      `RalphWorks preflight command ${index + 1} failed (exit ${preflight.status}); see preflight-failure.json`,
+    );
   }
   const preparedStatus = await run("git", ["status", "--porcelain"]);
   if (

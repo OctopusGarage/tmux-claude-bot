@@ -1227,9 +1227,21 @@ outside this contract. Unverified process termination is a failure requiring
 a durable quarantine and operator reconciliation, not permission to reuse a worktree.
 Quarantine is recorded before child launch and has no TTL: source paths, execution
 worktrees, admission and cleanup stay blocked across restarts and ordinary lease
-expiry. Missing/invalid receipts also retain quarantine because a process snapshot
+expiry. After the external CLI has been invoked, missing/invalid receipts retain
+quarantine because a process snapshot
 cannot prove that an incompatible CLI did not detach an unobserved child. This is
 a cooperative compatible-CLI contract, not a hostile-process containment sandbox.
+If a configured preflight command fails before CLI invocation, the error names
+its 1-based command index and exit status. The attempt directory retains
+`preflight-failure.json` with the command hash and bounded, redacted output;
+the exception never includes the shell command or captured output. When the
+process runner has positively verified closure and stopped descendants, that
+prelaunch failure releases only its own quarantine without fabricating a
+receipt. Proven preflight cancellation or timeout follows the same rule.
+The reservation and diagnostic remain, and normal failure retention applies.
+Rejected ownership/probe/persistence checks, rejected lifecycle claims and
+post-launch receipt failures retain quarantine.
+
 Inspect and explicitly reconcile through:
 
 ```bash

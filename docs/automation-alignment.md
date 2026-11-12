@@ -1633,6 +1633,17 @@ reservation and does not waive quarantine/no-replay checks. Native review is a
 continuation under the remaining original deadline. A late external result
 cannot enqueue native work or overwrite an already terminal WorkOrder.
 
+A configured preflight failure before external CLI invocation records a private
+`preflight-failure.json`: command index/count/hash, exit status or stop reason,
+verified-stop facts, and at most 4096 redacted characters per output stream.
+The thrown error includes only index, status/reason and artifact filename.
+Only a resolved process result, after the existing closure/descendant proof,
+authorizes the separate prelaunch quarantine release. Cancellation/timeout
+keeps its typed outcome and never claims receipt validation. Rejected lifecycle
+claims, ownership uncertainty and all post-launch receipt requirements remain
+unchanged. Reservation/diagnostic evidence and other WorkOrder quarantines are
+preserved; ordinary failure retention remains responsible for cleanup.
+
 The original external execution deadline is persisted once as optional `deadlineAt` on the existing WorkOrder state and retained across native queue and revision transitions. Live external ownership requires matching durable run, project, scheduled time, supervisor session, active worker lease, and the current process reservation. Reconciliation retains that owner across legacy age partitions only until its original deadline; unconsumed dispatches still expire after five minutes. Native enqueue checks that authority after asynchronous readiness and context reset, at queue consumption, and before state writes. A terminal external failure is not revived by a late summary or restored queue entry. After a bot restart, an external continuation with lost process-local ownership is discarded while execution quarantine remains available for reconciliation; ordinary native queue restoration is unchanged.
 
 Fresh managed Codex startup registers its first-submission grant only after a proven absent process becomes an exact native PID under a trusted direct start command. Process discovery uses the existing startup readiness deadline, including identity probes; UI readiness alone is not process identity. An unused grant survives an idempotent start only while the same exact PID still has no rollout open. Prompt attempts and lifecycle replacement invalidate pending registration as well as issued grants, so delayed discovery cannot recreate first-submission authority. Registration diagnostics report only a stable reason, native PID, and elapsed time; unavailable or ambiguous identity never permits adoption or a cwd-based transcript fallback.
