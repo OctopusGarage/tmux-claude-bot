@@ -10,6 +10,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MessageQueue } from "../../src/core/command/queue.js";
+import { createLoopSupervisorTaskRunner } from "../../src/core/loop/agent-queue.js";
 import { parseLoopConfigYaml } from "../../src/core/loop/config.js";
 import { quarantineLoopExecution } from "../../src/core/loop/execution-quarantine.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
@@ -159,6 +161,67 @@ function complete(f: ReturnType<typeof fixture>, request: SupervisorDispatchRequ
 }
 
 describe("RalphWorks service review readiness recovery", () => {
+  it.each(["missing-session", "reset-failure", "authority-veto"] as const)(
+    "preserves bounded review-only recovery through the queue adapter after %s",
+    async (failure) => {
+      const f = fixture();
+      const requests: SupervisorDispatchRequest[] = [];
+      const recover = vi.fn(async () => true);
+      const queue = new MessageQueue(10, join(f.dir, "pending.json"));
+      const adapter = createLoopSupervisorTaskRunner({
+        queue,
+        config: { projectSessionPrefix: "tmux_proj_" },
+        bridge: { hasSession: async () => failure !== "missing-session" || requests.length > 1 },
+      });
+      const actions: string[] = [];
+      queue.setHandler(async (message) => {
+        actions.push(message.action);
+        if (message.action === "clear") {
+          message.reject(new Error("Codex did not become ready in time"));
+          return;
+        }
+        const request = requests.at(-1);
+        if (!request) throw new Error("missing queued request");
+        message.resolve(complete(f, request).stdout);
+      });
+      const result = await tick(
+        f,
+        async (request) => {
+          requests.push(request);
+          return adapter({
+            ...request,
+            contextReset: failure === "reset-failure" && requests.length === 1 ? "clear" : "none",
+            ...(failure === "authority-veto"
+              ? {
+                  authorityFence: () => {
+                    throw new Error("original authority lost");
+                  },
+                }
+              : {}),
+          });
+        },
+        recover,
+      );
+      expect(readFileSync(f.attempts, "utf8").trim().split("\n")).toHaveLength(1);
+      if (failure === "authority-veto") {
+        expect(result.failed).toBe(1);
+        expect(requests).toHaveLength(1);
+        expect(recover).toHaveBeenCalledTimes(1);
+        expect(actions).toEqual([]);
+      } else {
+        expect(result.failed).toBe(0);
+        expect(requests).toHaveLength(2);
+        expect(recover).toHaveBeenCalledTimes(2);
+        expect(actions).toEqual(failure === "reset-failure" ? ["clear", "text"] : ["text"]);
+        const deadline = (request: SupervisorDispatchRequest | undefined) =>
+          request?.prompt.match(/Review hard deadline \(UTC\): ([^\n]+)/)?.[1];
+        expect(deadline(requests[0])).toBeDefined();
+        expect(deadline(requests[1])).toBe(deadline(requests[0]));
+        expect(requests[1]?.timeoutMs).toBeLessThanOrEqual(requests[0]?.timeoutMs ?? 0);
+      }
+    },
+  );
+
   it("retries only review after readiness recovery, with one external attempt and the same deadline", async () => {
     const f = fixture();
     const requests: SupervisorDispatchRequest[] = [];

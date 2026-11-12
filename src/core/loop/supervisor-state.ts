@@ -60,6 +60,27 @@ export function hasLiveExternalExecution(
   );
 }
 
+/** Input authority uses live lifecycle state, independently of crash-recovery evidence. */
+export function hasLiveSupervisorWorkOrderState(
+  { workOrder, state }: UnfinishedLoopSupervisorWorkOrder,
+  now: number,
+): boolean {
+  if (
+    TERMINAL_STATES.has(state.status) ||
+    state.runId !== workOrder.id ||
+    state.projectId !== workOrder.projectId ||
+    state.scheduledAt !== workOrder.scheduledAt ||
+    state.supervisorSession.length === 0 ||
+    !Number.isFinite(state.updatedAt)
+  )
+    return false;
+  if (state.status === "dispatching" && now - state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS)
+    return false;
+  return state.deadlineAt === undefined
+    ? !isStaleUnfinishedState(state, now)
+    : Number.isFinite(state.deadlineAt) && state.deadlineAt > now;
+}
+
 /** Classified WorkOrder views from one durable artifact scan. */
 export type LoopSupervisorWorkOrderRegistry = {
   records: UnfinishedLoopSupervisorWorkOrder[];

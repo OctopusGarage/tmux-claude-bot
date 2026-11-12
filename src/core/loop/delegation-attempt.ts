@@ -25,6 +25,14 @@ const ownerSchema = z
   .object({ attemptId: idSchema, supervisorSession: z.string().min(1) })
   .strict();
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const freshnessSchema = z
+  .object({ excludedFileVersion: hashSchema.optional() })
+  .strict()
+  .transform((value): { excludedFileVersion?: string } =>
+    value.excludedFileVersion === undefined
+      ? {}
+      : { excludedFileVersion: value.excludedFileVersion },
+  );
 const preparedSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -34,14 +42,7 @@ const preparedSchema = z
     supervisorSession: z.string().min(1),
     promptHash: hashSchema,
     queuedAt: z.number().finite(),
-    freshness: z
-      .object({ excludedFileVersion: hashSchema.optional() })
-      .strict()
-      .transform((value): { excludedFileVersion?: string } =>
-        value.excludedFileVersion === undefined
-          ? {}
-          : { excludedFileVersion: value.excludedFileVersion },
-      ),
+    freshness: freshnessSchema,
     checkpoint: z.string().max(1_048_576),
   })
   .strict();
@@ -50,6 +51,7 @@ const startedSchema = z
     attemptId: idSchema,
     startedAt: z.number().finite(),
     cancelledBeforeStart: z.boolean().optional(),
+    freshness: freshnessSchema.optional(),
   })
   .strict();
 const settledSchema = z
@@ -214,7 +216,10 @@ export function readDelegationAttempt(
       const started = startedSchema.parse(readRecord(join(dir, "started.json")));
       if (started.attemptId !== attemptId) return { phase: "invalid" };
       cancelledBeforeStart = started.cancelledBeforeStart === true;
-      if (!cancelledBeforeStart) phase = "started";
+      if (!cancelledBeforeStart) {
+        phase = "started";
+        if (started.freshness !== undefined) prepared.freshness = started.freshness;
+      }
     } catch (error) {
       if (!missing(error)) throw error;
     }
@@ -272,10 +277,14 @@ export function claimDelegationAttempt(
 ): boolean {
   const current = readDelegationAttempt(workOrder, prepared.supervisorSession, prepared.attemptId);
   if (current.phase !== "prepared" || !ownsCurrentAttempt(workOrder, prepared)) return false;
-  return writeOnce(join(attemptDirectory(workOrder, prepared.attemptId), "started.json"), {
+  const freshness = captureFinalSummaryFreshness(workOrder);
+  const claimed = writeOnce(join(attemptDirectory(workOrder, prepared.attemptId), "started.json"), {
     attemptId: prepared.attemptId,
     startedAt: now,
+    freshness,
   });
+  if (claimed) prepared.freshness = freshness;
+  return claimed;
 }
 
 export function settleDelegationAttempt(
@@ -319,7 +328,7 @@ export function settleDelegationAttempt(
       finalSummary: JSON.stringify(
         resultStatus === "dispatch-timeout"
           ? { ok: false, reason: "delegation deadline exhausted after restart" }
-          : settlementSummary(workOrder, prepared, result),
+          : settlementSummary(workOrder, current.prepared, result),
       ),
     }),
   );

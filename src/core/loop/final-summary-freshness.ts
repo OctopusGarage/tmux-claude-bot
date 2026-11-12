@@ -4,7 +4,6 @@ import {
   parseSupervisorFinalSummaryFile,
   parseSupervisorFinalSummaryJson,
 } from "./final-summary-contract.js";
-import { iterationCheckpointPath } from "./iteration-checkpoint.js";
 import type { LoopWorkOrder, ParseSupervisorFinalSummaryResult } from "./work-order-contract.js";
 
 export type FinalSummaryFreshness = { excludedFileVersion?: string };
@@ -34,10 +33,7 @@ function summarySnapshot(workOrder: LoopWorkOrder): { text: string; version: str
   }
 }
 
-export function captureFinalSummaryFreshness(
-  workOrder: LoopWorkOrder,
-): FinalSummaryFreshness | undefined {
-  if (iterationCheckpointPath(workOrder) === null) return undefined;
+export function captureFinalSummaryFreshness(workOrder: LoopWorkOrder): FinalSummaryFreshness {
   const snapshot = summarySnapshot(workOrder);
   return snapshot === undefined ? {} : { excludedFileVersion: snapshot.version };
 }

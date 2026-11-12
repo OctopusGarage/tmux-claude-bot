@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,9 @@ import {
   restoreLoopControlQueue,
 } from "../../src/core/loop/agent-queue.js";
 import { LoopBacklogStore } from "../../src/core/loop/backlog.js";
+import { recoverInvalidOutputFromFinalSummary } from "../../src/core/loop/final-summary-recovery.js";
 import { listLoopReports } from "../../src/core/loop/report.js";
+import { runLoopSupervisorRevisionAsync } from "../../src/core/loop/supervised-runner.js";
 import {
   readLoopSupervisorWorkerLeaseState,
   writeLoopSupervisorWorkerLeaseState,
@@ -354,6 +356,178 @@ describe("createLoopSupervisorTaskRunner", () => {
     },
   );
 
+  it.each(["failure", "timeout", "fresh"] as const)(
+    "binds revision freshness at queue consumption for %s settlement",
+    async (outcome) => {
+      vi.useFakeTimers();
+      let releaseReady!: (value: boolean) => void;
+      let readyEntered!: () => void;
+      let handlerEntered!: () => void;
+      let releaseHandler!: () => void;
+      const ready = new Promise<boolean>((resolve) => {
+        releaseReady = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        readyEntered = resolve;
+      });
+      const handling = new Promise<void>((resolve) => {
+        handlerEntered = resolve;
+      });
+      const stopped = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      const { queue, deps } = queueDeps("/repo/hub", true);
+      deps.bridge.hasSession = async () => true;
+      queue.setReadinessProbe(async () => {
+        readyEntered();
+        return ready;
+      });
+      const order = {
+        ...workOrder,
+        finalSummaryPath: join(process.env.TCB_STATE_DIR ?? "", "summary.json"),
+      };
+      const writeSummary = () =>
+        writeFileSync(
+          order.finalSummaryPath,
+          JSON.stringify({
+            status: "completed",
+            projectId: order.projectId,
+            actionsTaken: ["reviewed"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          }),
+        );
+      const probes: boolean[] = [];
+      queue.setHandler(async (message) => {
+        probes.push(message.doneProbe?.("no new response") ?? false);
+        if (outcome === "fresh") {
+          writeSummary();
+          probes.push(message.doneProbe?.("new response") ?? false);
+        }
+        handlerEntered();
+        if (outcome === "timeout") await stopped;
+        message.reject(new Error("transport unavailable"));
+      });
+      try {
+        const pending = runLoopSupervisorRevisionAsync({
+          workOrder: order,
+          supervisorSession: "tmux_proj_loop-supervisor",
+          timeoutMs: 100,
+          failures: ["revise"],
+          attempt: 1,
+          maxAttempts: 3,
+          previousOutput: "previous review",
+          dispatch: createLoopSupervisorTaskRunner(deps),
+        });
+        await waiting;
+        writeSummary(); // The preceding turn finishes while this revision still waits.
+        releaseReady(true);
+        await handling;
+        if (outcome === "timeout") await vi.advanceTimersByTimeAsync(100);
+        const result = await pending;
+        expect(probes).toEqual(outcome === "fresh" ? [false, true] : [false]);
+        expect(result.status).toBe(outcome === "timeout" ? "dispatch-timeout" : "dispatch-failed");
+        const recovered = recoverInvalidOutputFromFinalSummary(order, result);
+        if (outcome === "fresh") expect(recovered.status).toBe("completed");
+        else expect(recovered).toBe(result);
+      } finally {
+        releaseReady(true);
+        releaseHandler();
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["session", "queue", "reset", "session-failure"] as const)(
+    "cannot recover or start after unconsumed failure during %s readiness",
+    async (boundary) => {
+      vi.useFakeTimers();
+      let releaseReady!: (value: boolean) => void;
+      let entered!: () => void;
+      const ready = new Promise<boolean>((resolve) => {
+        releaseReady = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const { queue, deps } = queueDeps("/repo/hub", true);
+      deps.bridge.hasSession = async () => {
+        if (boundary === "session" || boundary === "session-failure") {
+          entered();
+          return ready;
+        }
+        return true;
+      };
+      if (boundary === "queue")
+        queue.setReadinessProbe(async () => {
+          entered();
+          return ready;
+        });
+      const handler = vi.fn(
+        async (message: Parameters<Parameters<typeof queue.setHandler>[0]>[0]) => {
+          if (boundary === "reset" && message.action === "clear") {
+            entered();
+            await ready;
+          }
+          message.resolve("unexpected");
+        },
+      );
+      queue.setHandler(handler);
+      const order = {
+        ...workOrder,
+        finalSummaryPath: join(process.env.TCB_STATE_DIR ?? "", "summary.json"),
+      };
+      try {
+        const pending = runLoopSupervisorRevisionAsync({
+          workOrder: order,
+          supervisorSession: "tmux_proj_loop-supervisor",
+          timeoutMs: 100,
+          failures: ["revise"],
+          attempt: 1,
+          maxAttempts: 3,
+          previousOutput: "previous review",
+          resetBeforeWorkOrder: boundary === "reset" ? "clear" : "none",
+          dispatch: createLoopSupervisorTaskRunner(deps),
+        });
+        await waiting;
+        writeFileSync(
+          order.finalSummaryPath,
+          JSON.stringify({
+            status: "completed",
+            projectId: order.projectId,
+            actionsTaken: ["previous turn"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          }),
+        );
+        if (boundary === "session-failure") releaseReady(false);
+        else await vi.advanceTimersByTimeAsync(100);
+        const result = await pending;
+        expect(result.status).toBe(
+          boundary === "session-failure" ? "dispatch-failed" : "dispatch-timeout",
+        );
+        expect(recoverInvalidOutputFromFinalSummary(order, result)).toBe(result);
+        const returned = JSON.stringify(result);
+        const statePath = join(process.env.TCB_STATE_DIR ?? "", "work-order-state.json");
+        const stateBefore = boundary === "queue" ? readFileSync(statePath, "utf8") : undefined;
+        releaseReady(true);
+        await vi.runAllTimersAsync();
+        expect(handler.mock.calls.filter(([message]) => message.action === "text")).toEqual([]);
+        if (stateBefore !== undefined) expect(readFileSync(statePath, "utf8")).toBe(stateBefore);
+        expect(JSON.stringify(result)).toBe(returned);
+      } finally {
+        releaseReady(true);
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   function persistedSupervisorMessage(id: string, text: string): PersistedMessage {
     return {
       id,
@@ -450,6 +624,7 @@ describe("createLoopSupervisorTaskRunner", () => {
     );
     const probes: boolean[] = [];
     queue.setHandler(async (message) => {
+      probes.push(message.doneProbe?.("old summary must not finish this revision") ?? false);
       rmSync(workOrderWithSummaryPath.finalSummaryPath, { force: true });
       probes.push(message.doneProbe?.("still shows active turn") ?? false);
       probes.push(message.doneProbe?.(workOrder.requiredFinalMarker) ?? false);
@@ -490,7 +665,7 @@ describe("createLoopSupervisorTaskRunner", () => {
     });
 
     expect(result).toEqual({ status: 0, stdout: "supervisor done", stderr: "" });
-    expect(probes).toEqual([false, false, true, true]);
+    expect(probes).toEqual([false, false, false, true, true]);
   });
 
   it("blocks supervisor work when the worker is already leased", async () => {

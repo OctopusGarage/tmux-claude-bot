@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { recoverInvalidOutputFromFinalSummary } from "../../src/core/loop/final-summary-recovery.js";
 import {
   runLoopSupervisedProjectAsync,
   runLoopSupervisorRevisionAsync,
@@ -82,6 +83,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "queue full",
       output: "partial output\nqueue full",
@@ -168,6 +170,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: output,
       output,
@@ -192,6 +195,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "agent startup reported authentication, MCP, or hook initialization failure",
       output,
@@ -218,6 +222,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "agent startup reported authentication, MCP, or hook initialization failure",
       output,
@@ -242,6 +247,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "agent startup reported authentication, MCP, or hook initialization failure",
       output,
@@ -263,6 +269,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-timeout",
       reason: "loop supervisor work order timed out",
       output: "loop supervisor work order timed out",
@@ -310,6 +317,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "send failed",
       output: "send failed",
@@ -330,6 +338,7 @@ describe("runLoopSupervisedProjectAsync", () => {
 
     expect(attempts).toBe(2);
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "Selected model is at capacity. Please try a different model.",
       output: "Selected model is at capacity. Please try a different model.",
@@ -349,6 +358,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "invalid-output",
       reason: "missing-final-marker",
       output: "done without marker\ndone without marker",
@@ -377,6 +387,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "no live loop supervisor session",
       output,
@@ -419,28 +430,30 @@ describe("runLoopSupervisedProjectAsync", () => {
   it("accepts the final summary file when terminal output after the marker is truncated", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tcb-loop-supervised-runner-"));
     const finalSummaryPath = join(dir, "supervisor-final-summary.json");
-    writeFileSync(
-      finalSummaryPath,
-      JSON.stringify({
-        status: "blocked",
-        projectId: "datavibe",
-        actionsTaken: ["pushed branch but PR permission failed"],
-        delegatedTasks: ["Round 1: refactored a helper"],
-        finalVerification: "passed",
-        commits: ["abc123"],
-        followUps: ["Grant PR permission"],
-      }),
-    );
 
     const result = await runLoopSupervisedProjectAsync({
       workOrder: workOrderWithFinalSummaryPath(finalSummaryPath),
       supervisorSession: "tmux_proj_loop-supervisor",
       timeoutMs: 1000,
-      dispatch: async () => ({
-        status: 0,
-        stdout: '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"blocked"',
-        stderr: "",
-      }),
+      dispatch: async () => {
+        writeFileSync(
+          finalSummaryPath,
+          JSON.stringify({
+            status: "blocked",
+            projectId: "datavibe",
+            actionsTaken: ["pushed branch but PR permission failed"],
+            delegatedTasks: ["Round 1: refactored a helper"],
+            finalVerification: "passed",
+            commits: ["abc123"],
+            followUps: ["Grant PR permission"],
+          }),
+        );
+        return {
+          status: 0,
+          stdout: '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"blocked"',
+          stderr: "",
+        };
+      },
     });
 
     expect(result).toMatchObject({
@@ -471,6 +484,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "invalid-output",
       reason: "invalid-summary",
       output: "[LOOP_SUPERVISOR_DONE:wo-1]\n{}\n[LOOP_SUPERVISOR_DONE:wo-1]\n{}",
@@ -504,6 +518,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "invalid-output",
       reason: "invalid-summary",
       output: `${output}\n${output}`,
@@ -593,6 +608,7 @@ describe("runLoopSupervisedProjectAsync", () => {
     });
 
     expect(result).toEqual({
+      finalSummaryFreshness: {},
       status: "dispatch-failed",
       reason: "command timed out",
       output: "command timed out",
@@ -859,4 +875,125 @@ describe.each([
     await result;
     expect(stopped).toBe(true);
   });
+});
+
+describe("native supervisor dispatch summary freshness", () => {
+  function fixture() {
+    const finalSummaryPath = join(
+      mkdtempSync(join(tmpdir(), "tcb-native-freshness-")),
+      "supervisor-final-summary.json",
+    );
+    const order = {
+      ...workOrderWithFinalSummaryPath(finalSummaryPath),
+      task: { kind: "architecture" as const },
+    };
+    const writeSummary = () =>
+      writeFileSync(
+        finalSummaryPath,
+        JSON.stringify({
+          status: "completed",
+          projectId: order.projectId,
+          actionsTaken: ["review complete"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        }),
+      );
+    return { order, writeSummary };
+  }
+
+  it.each(["result", "throw", "timeout"] as const)(
+    "rejects an unchanged earlier summary after native revision %s failure",
+    async (failure) => {
+      const f = fixture();
+      f.writeSummary();
+      const result = await runLoopSupervisorRevisionAsync({
+        workOrder: f.order,
+        supervisorSession: "native-supervisor",
+        timeoutMs: 20,
+        failures: ["system gate needs revision"],
+        attempt: 1,
+        maxAttempts: 3,
+        previousOutput: "earlier review",
+        dispatch: async () => {
+          if (failure === "throw") throw new Error("transcript unavailable");
+          if (failure === "timeout") return new Promise(() => {});
+          return { status: 1, stdout: "", stderr: "transcript unavailable" };
+        },
+      });
+      expect(result.status).toBe(failure === "timeout" ? "dispatch-timeout" : "dispatch-failed");
+      expect(recoverInvalidOutputFromFinalSummary(f.order, result)).toBe(result);
+    },
+  );
+
+  it("rejects an unchanged native summary even when the revision transport succeeds", async () => {
+    const f = fixture();
+    f.writeSummary();
+    const dispatch = vi.fn(async () => ({ status: 0, stdout: "no current summary", stderr: "" }));
+    const result = await runLoopSupervisorRevisionAsync({
+      workOrder: f.order,
+      supervisorSession: "native-supervisor",
+      timeoutMs: 1000,
+      failures: ["system gate needs revision"],
+      attempt: 1,
+      maxAttempts: 3,
+      previousOutput: "earlier review",
+      dispatch,
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("invalid-output");
+    expect(recoverInvalidOutputFromFinalSummary(f.order, result)).toBe(result);
+  });
+
+  it.each([false, true])(
+    "recovers a freshly written native summary (earlier summary: %s)",
+    async (earlier) => {
+      const f = fixture();
+      if (earlier) f.writeSummary();
+      const result = await runLoopSupervisorRevisionAsync({
+        workOrder: f.order,
+        supervisorSession: "native-supervisor",
+        timeoutMs: 1000,
+        failures: ["system gate needs revision"],
+        attempt: 1,
+        maxAttempts: 3,
+        previousOutput: "earlier review",
+        dispatch: async () => {
+          f.writeSummary();
+          return { status: 1, stdout: "", stderr: "transport failed after summary" };
+        },
+      });
+      expect(recoverInvalidOutputFromFinalSummary(f.order, result).status).toBe("completed");
+    },
+  );
+
+  it.each(["throw", "timeout"] as const)(
+    "excludes a preceding provider attempt's summary after retry %s",
+    async (failure) => {
+      const f = fixture();
+      let calls = 0;
+      const result = await runLoopSupervisedProjectAsync({
+        workOrder: f.order,
+        supervisorSession: "native-supervisor",
+        timeoutMs: 20,
+        dispatch: async () => {
+          calls++;
+          if (calls === 1) {
+            f.writeSummary();
+            return {
+              status: 1,
+              stdout: "",
+              stderr: "Selected model is at capacity. Please try a different model.",
+            };
+          }
+          if (failure === "timeout") return new Promise(() => {});
+          throw new Error("transcript unavailable");
+        },
+      });
+      expect(calls).toBe(2);
+      expect(result.status).toBe(failure === "timeout" ? "dispatch-timeout" : "dispatch-failed");
+      expect(recoverInvalidOutputFromFinalSummary(f.order, result)).toBe(result);
+    },
+  );
 });

@@ -13,6 +13,7 @@ import {
   readDelegationAttempt,
   settleDelegationAttempt,
 } from "../../src/core/loop/delegation-attempt.js";
+import { readDelegationRecovery } from "../../src/core/loop/delegation-recovery.js";
 import {
   buildIterationCheckpointTemplate,
   iterationCheckpointPath,
@@ -93,6 +94,59 @@ describe("durable delegation attempts", () => {
       controlRestore: loopSupervisorControlRestore(f.workOrder, "isolated-worker", 1, attemptId),
     };
   }
+
+  it.each([false, true])(
+    "settles against the persisted consumption snapshot (fresh summary: %s)",
+    (fresh) => {
+      const f = fixture();
+      const prepared = prepare(f);
+      const beforeConsumption = structuredClone(prepared);
+      const writeSummary = () =>
+        writeFileSync(
+          f.workOrder.finalSummaryPath ?? "",
+          JSON.stringify({
+            status: "completed",
+            projectId: f.workOrder.projectId,
+            actionsTaken: ["reviewed"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+          }),
+        );
+      writeSummary(); // An earlier turn finishes after prepare, before consumption.
+      expect(claimDelegationAttempt(f.workOrder, prepared, 2)).toBe(true);
+      if (fresh) writeSummary();
+      // A restart or older caller must use the persisted start boundary, not its preparation object.
+      expect(
+        settleDelegationAttempt(
+          f.workOrder,
+          beforeConsumption,
+          { status: 0, stdout: "no current summary", stderr: "" },
+          false,
+          3,
+          true,
+        ),
+      ).toBe(true);
+      const recovered = readDelegationRecovery(f.workOrder);
+      expect(recovered).toMatchObject({
+        kind: "settled",
+        result: { status: fresh ? "completed" : "invalid-output" },
+      });
+    },
+  );
+
+  it("reads legacy started events using their preparation snapshot", () => {
+    const f = fixture();
+    const prepared = prepare(f);
+    writeFileSync(
+      join(f.dir, "iteration-attempts", prepared.attemptId, "started.json"),
+      JSON.stringify({ attemptId: prepared.attemptId, startedAt: 2 }),
+    );
+    expect(
+      readDelegationAttempt(f.workOrder, prepared.supervisorSession, prepared.attemptId),
+    ).toEqual({ phase: "started", prepared });
+  });
 
   async function childAttempt(action: "prepare" | "claim" | "cancel", payload: unknown) {
     const source = `

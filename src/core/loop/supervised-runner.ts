@@ -43,6 +43,10 @@ export type SupervisorDispatchRequest = {
   contextReset?: "none" | "compact" | "clear";
   deferLeaseUntilConsumption?: boolean;
   authorityFence?: () => void;
+  /** Queue adapters report waiting synchronously, then the actual consumption snapshot. */
+  onDispatchState?: (
+    state: { status: "queued" } | { status: "started"; freshness: FinalSummaryFreshness },
+  ) => void;
 };
 
 export type SupervisorDispatchResult = {
@@ -105,9 +109,11 @@ export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
   previousOutput: string;
 };
 
+type SummaryFreshnessScope = { current: FinalSummaryFreshness; pendingConsumption: boolean };
+
 type SupervisorPromptSequenceInput = LoopSupervisedRunnerInput & {
   prompt: string;
-  finalSummaryFreshness?: FinalSummaryFreshness;
+  summaryFreshness: SummaryFreshnessScope;
 };
 
 class ExternalReviewDeadlineError extends Error {}
@@ -194,8 +200,10 @@ export async function runLoopSupervisedProjectAsync(
       };
     }
   }
-  const freshness = captureFinalSummaryFreshness(input.workOrder);
-  const freshnessResult = freshness === undefined ? {} : { finalSummaryFreshness: freshness };
+  const freshness = {
+    current: captureFinalSummaryFreshness(input.workOrder),
+    pendingConsumption: false,
+  };
   const controller = new AbortController();
   const dispatch = runSupervisorDispatchSequence(input, controller.signal, freshness)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -231,14 +239,20 @@ export async function runLoopSupervisedProjectAsync(
       status: "dispatch-timeout",
       reason: result.reason,
       output: result.reason,
-      ...freshnessResult,
-      ...(hasRalphTask(input.workOrder) || hasRalphPrReviewer(input.workOrder)
+      finalSummaryFreshness: { ...freshness.current },
+      ...(freshness.pendingConsumption ||
+      hasRalphTask(input.workOrder) ||
+      hasRalphPrReviewer(input.workOrder)
         ? { finalSummaryRecovery: "disabled" as const }
         : {}),
     };
   }
 
-  return { ...result, ...freshnessResult };
+  return {
+    ...result,
+    finalSummaryFreshness: { ...freshness.current },
+    ...(freshness.pendingConsumption ? { finalSummaryRecovery: "disabled" as const } : {}),
+  };
 }
 
 export async function runLoopSupervisorRevisionAsync(
@@ -274,8 +288,10 @@ export async function runLoopSupervisorRevisionAsync(
   const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs, input.maxAttempts);
   if (!reservation.ok) return reservation;
   input = { ...input, ...reservation };
-  const freshness = captureFinalSummaryFreshness(input.workOrder);
-  const freshnessResult = freshness === undefined ? {} : { finalSummaryFreshness: freshness };
+  const freshness = {
+    current: captureFinalSummaryFreshness(input.workOrder),
+    pendingConsumption: false,
+  };
   const controller = new AbortController();
   const dispatch = runSupervisorRevisionSequence(input, controller.signal, freshness)
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
@@ -311,25 +327,31 @@ export async function runLoopSupervisorRevisionAsync(
       status: "dispatch-timeout",
       reason: result.reason,
       output: result.reason,
-      ...freshnessResult,
-      ...(hasRalphTask(input.workOrder) || hasRalphPrReviewer(input.workOrder)
+      finalSummaryFreshness: { ...freshness.current },
+      ...(freshness.pendingConsumption ||
+      hasRalphTask(input.workOrder) ||
+      hasRalphPrReviewer(input.workOrder)
         ? { finalSummaryRecovery: "disabled" as const }
         : {}),
     };
   }
 
-  return { ...result, ...freshnessResult };
+  return {
+    ...result,
+    finalSummaryFreshness: { ...freshness.current },
+    ...(freshness.pendingConsumption ? { finalSummaryRecovery: "disabled" as const } : {}),
+  };
 }
 
 async function runSupervisorDispatchSequence(
   input: LoopSupervisedRunnerInput,
   signal: AbortSignal,
-  freshness: FinalSummaryFreshness | undefined,
+  freshness: SummaryFreshnessScope,
 ): Promise<LoopSupervisedRunResult> {
   return runSupervisorPromptSequence(
     {
       ...input,
-      ...(freshness === undefined ? {} : { finalSummaryFreshness: freshness }),
+      summaryFreshness: freshness,
       prompt: buildLoopSupervisorPrompt(input.workOrder),
     },
     signal,
@@ -339,12 +361,12 @@ async function runSupervisorDispatchSequence(
 async function runSupervisorRevisionSequence(
   input: LoopSupervisorRevisionInput,
   signal: AbortSignal,
-  freshness: FinalSummaryFreshness | undefined,
+  freshness: SummaryFreshnessScope,
 ): Promise<LoopSupervisedRunResult> {
   return runSupervisorPromptSequence(
     {
       ...input,
-      ...(freshness === undefined ? {} : { finalSummaryFreshness: freshness }),
+      summaryFreshness: freshness,
       prompt: buildLoopSupervisorRevisionPrompt({
         workOrder: input.workOrder,
         failures: input.failures,
@@ -370,7 +392,7 @@ async function runSupervisorPromptSequence(
       ? { contextReset: input.resetBeforeWorkOrder }
       : {}),
   });
-  let firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
+  let firstParsed = parseDispatchOutput(first, input.workOrder, input.summaryFreshness.current);
   if (
     hasRalphTask(input.workOrder) &&
     input.recoverDispatchReadiness !== undefined &&
@@ -390,7 +412,7 @@ async function runSupervisorPromptSequence(
       if (await input.recoverDispatchReadiness(firstParsed)) {
         assertSafeReviewRetry();
         first = await dispatchWithProviderTransientRetry(input, signal, { prompt: input.prompt });
-        firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
+        firstParsed = parseDispatchOutput(first, input.workOrder, input.summaryFreshness.current);
       }
     } catch (error) {
       if (signal.aborted) throw error;
@@ -432,7 +454,7 @@ async function runSupervisorPromptSequence(
     input = { ...input, timeoutMs: reservation.timeoutMs };
     before = readIterationCheckpoint(input.workOrder);
     first = await dispatchWithProviderTransientRetry(input, signal, { prompt: input.prompt });
-    firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
+    firstParsed = parseDispatchOutput(first, input.workOrder, input.summaryFreshness.current);
   }
   if (firstParsed.status !== "invalid-output") return firstParsed;
 
@@ -442,7 +464,7 @@ async function runSupervisorPromptSequence(
   const secondParsed = parseDispatchOutput(
     finalization,
     input.workOrder,
-    input.finalSummaryFreshness,
+    input.summaryFreshness.current,
   );
   if (secondParsed.status !== "invalid-output") return secondParsed;
   return {
@@ -473,6 +495,9 @@ async function dispatchWithProviderTransientRetry(
     if (input.deadline !== undefined && remaining <= 0)
       throw new ExternalReviewDeadlineError("External review exhausted the WorkOrder deadline");
     if (remaining <= 0) throw new Error("External review exhausted the WorkOrder deadline");
+    // Each retry, continuation and finalization excludes evidence predating that dispatch.
+    input.summaryFreshness.current = captureFinalSummaryFreshness(input.workOrder);
+    input.summaryFreshness.pendingConsumption = false;
     try {
       const result = await input.dispatch({
         session: input.supervisorSession,
@@ -489,9 +514,17 @@ async function dispatchWithProviderTransientRetry(
         signal,
         workOrder: input.workOrder,
         timeoutMs: remaining,
+        onDispatchState: (state) => {
+          if (signal.aborted) return;
+          input.summaryFreshness.pendingConsumption = state.status === "queued";
+          if (state.status === "started") input.summaryFreshness.current = state.freshness;
+        },
         ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
       });
       signal.throwIfAborted();
+      // Unconsumed work cannot parse file evidence. Keep genuine adapter vetoes,
+      // while allowing the existing bounded readiness retry before final settlement.
+      if (input.summaryFreshness.pendingConsumption) return { ...result, status: 1 };
       last = result;
       if (result.finalSummaryRecovery === "disabled") return result;
       const output = joinOutput(result);

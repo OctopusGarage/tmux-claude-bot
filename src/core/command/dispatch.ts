@@ -22,7 +22,7 @@ import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
 import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
 import {
-  listUnfinishedLoopSupervisorWorkOrders,
+  hasLiveSupervisorWorkOrderState,
   readLoopSupervisorWorkOrderRegistry,
 } from "../loop/supervisor-state.js";
 import { isLoopWorkerSessionName } from "../projects/operator.js";
@@ -636,7 +636,9 @@ function managedWorkerReferenced(session: string): boolean {
 
 function activeSupervisorOwnership(session: string): string | null {
   const leases = readLoopSupervisorWorkerLeaseState().leases;
-  for (const { workOrder, state } of listUnfinishedLoopSupervisorWorkOrders())
+  for (const { workOrder, state } of readLoopSupervisorWorkOrderRegistry().records.filter(
+    (record) => hasLiveSupervisorWorkOrderState(record, Date.now()),
+  ))
     if (
       state.supervisorSession === session &&
       leases.some(
@@ -656,7 +658,9 @@ function activeWorkerOwnership(session: string): string | null {
   const mapped = getPathBySession(session);
   if (!mapped) return null;
   const leases = readLoopSupervisorWorkerLeaseState().leases;
-  for (const { workOrder, state } of listUnfinishedLoopSupervisorWorkOrders()) {
+  for (const { workOrder, state } of readLoopSupervisorWorkOrderRegistry().records.filter(
+    (record) => hasLiveSupervisorWorkOrderState(record, Date.now()),
+  )) {
     const paths = workOrder.workspace
       ? workOrder.workspace.repositories
           .filter((repository) => repository.workerSession === session)

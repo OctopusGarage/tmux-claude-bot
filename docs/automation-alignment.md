@@ -1564,10 +1564,31 @@ The real elapsed deadline cannot be extended by instant pane polls. Expiry never
 accepts a late reply; a scoped interrupt requires fresh proof of the owned turn,
 then a bounded terminal stop proof using the existing readiness budget. Foreign
 or unavailable identity is not signalled. An unresolved live root blocks another
-managed submission. Active worker ownership joins the unfinished WorkOrder and explicit worker/path
+managed submission. Active worker and supervisor input ownership joins matching live
+WorkOrder state (run, project, schedule and session) and explicit worker/path
 to its active supervisor lease, and is revalidated before writes, terminal
 acceptance and interruption. A reserved prefix alone grants no ownership;
 retained, missing or foreign leases cannot authorize input or a scoped stop.
+Terminal state, stale reservations and expired deadlines cannot authorize input.
+An earlier valid summary does not revoke an admitted revision's live authority;
+recovery registry partitions remain unchanged and do not grant input ownership.
+Every supervised dispatch, including native revisions, provider retries,
+continuations and finalization, excludes the final-summary file version present
+before that dispatch. Queue adapters report pending consumption before readiness
+or reset waits; pending failures and timeouts cannot recover summary evidence.
+That file-evidence restriction does not veto the existing single review-only
+readiness retry after accepted external execution. Explicit authority/receipt
+vetoes, cancellation, quarantine and the original deadline still block retry.
+Successful consumption captures one snapshot after ownership and claim checks,
+shared by the queue completion probe and runner settlement. Late readiness after
+cancellation cannot consume work, rewrite state or change returned evidence.
+An unchanged earlier file cannot turn a dispatch failure into completion; a
+newly written current summary can still recover truncated or failed transport.
+Delegated attempts persist the consumption snapshot on their existing started
+event; settlement and restart reads use that snapshot even when the caller holds
+an older preparation object. Older started events without the optional field
+retain their preparation snapshot. Ownership and historical recovery partitions
+retain their existing contracts.
 Existing queued cancellation semantics remain unchanged.
 Automation reset checks the composer before any confirmation Enter and rejects
 transcript browsing, queued inputs, unreadable capture, or unrelated pending text.

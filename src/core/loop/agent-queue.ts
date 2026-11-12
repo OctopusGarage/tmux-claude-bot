@@ -19,7 +19,10 @@ import {
   prepareDelegationAttempt,
   settleDelegationAttempt,
 } from "./delegation-attempt.js";
-import { readFreshSupervisorFinalSummary } from "./final-summary-freshness.js";
+import {
+  captureFinalSummaryFreshness,
+  readFreshSupervisorFinalSummary,
+} from "./final-summary-freshness.js";
 import type {
   LoopAgentEvalInvocation,
   LoopAgentTaskInvocation,
@@ -243,7 +246,9 @@ async function enqueueLoopAgentPromptToSession(
   timeoutMs?: number,
   deferLeaseUntilConsumption = false,
   authorityFence?: () => void,
+  onDispatchState?: SupervisorDispatchRequest["onDispatchState"],
 ): Promise<SupervisorDispatchResult> {
+  onDispatchState?.({ status: "queued" });
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
@@ -291,6 +296,7 @@ async function enqueueLoopAgentPromptToSession(
       finalSummaryRecovery: "disabled",
     };
   }
+  let freshness = attempt?.freshness ?? captureFinalSummaryFreshness(workOrder);
   const settlePreparationFailure = (result: SupervisorDispatchResult): SupervisorDispatchResult => {
     if (attempt !== undefined) {
       try {
@@ -446,8 +452,9 @@ async function enqueueLoopAgentPromptToSession(
       promptSource: "control",
       ...(timeoutMs !== undefined ? { maxWaitDoneTotalMs: timeoutMs } : {}),
       doneProbe: (output) =>
-        readFreshSupervisorFinalSummary(workOrder, attempt?.freshness).ok ||
-        parseSupervisorFinalSummary(output, workOrder.id).ok,
+        consumed &&
+        (readFreshSupervisorFinalSummary(workOrder, freshness).ok ||
+          parseSupervisorFinalSummary(output, workOrder.id).ok),
       controlRestore: loopSupervisorControlRestore(
         workOrder,
         sessionName,
@@ -455,6 +462,7 @@ async function enqueueLoopAgentPromptToSession(
         attempt?.attemptId,
       ),
       started: () => {
+        if (settled || signal?.aborted) return false;
         const failure = authorityFailure();
         if (failure) {
           ownsAttempt = false;
@@ -483,14 +491,16 @@ async function enqueueLoopAgentPromptToSession(
             return false;
           }
         }
-        consumed = true;
-        clearConsumptionTimer();
         writeLoopSupervisorWorkOrderState({
           workOrder,
           supervisorSession: sessionName,
           status: "in-flight",
           now: Date.now(),
         });
+        freshness = attempt?.freshness ?? captureFinalSummaryFreshness(workOrder);
+        consumed = true;
+        clearConsumptionTimer();
+        onDispatchState?.({ status: "started", freshness });
         return true;
       },
       resolve: (output) => settle({ status: 0, stdout: output, stderr: "" }),
@@ -609,6 +619,7 @@ export function createLoopSupervisorTaskRunner(
       request.timeoutMs,
       options.deferLeaseUntilConsumption ?? request.deferLeaseUntilConsumption ?? false,
       request.authorityFence,
+      request.onDispatchState,
     );
 }
 

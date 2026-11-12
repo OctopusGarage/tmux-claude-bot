@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,8 +7,12 @@ import { setAgentKind } from "../../src/core/agents/agentKindMap.js";
 import { AgentRunnerDispatcher } from "../../src/core/agents/runner-dispatcher.js";
 import { executeMessage } from "../../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../../src/core/command/queue.js";
+import { loopRunArtifactPath } from "../../src/core/loop/artifacts.js";
 import { writeLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
-import { writeLoopSupervisorWorkOrderState } from "../../src/core/loop/supervisor-state.js";
+import {
+  readLoopSupervisorWorkOrderRegistry,
+  writeLoopSupervisorWorkOrderState,
+} from "../../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { type ExecFileOptions, TmuxBridge } from "../../src/core/session/tmux.js";
@@ -29,8 +33,10 @@ function fixture(target: "supervisor" | "worker" | "ordinary" = "supervisor") {
     sessionId: "old",
     agentPid: 123,
   };
+  const finalSummaryPath = loopRunArtifactPath("api", "reset-run", "supervisorFinalSummary");
   const workOrder = {
     id: "reset-run",
+    finalSummaryPath,
     scheduledAt: 1,
     projectId: "api",
     projectName: "api",
@@ -50,6 +56,8 @@ function fixture(target: "supervisor" | "worker" | "ordinary" = "supervisor") {
     pullRequest: { enabled: false },
     requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:reset-run]",
   } as unknown as LoopWorkOrder;
+  rmSync(finalSummaryPath, { force: true });
+  rmSync(loopRunArtifactPath("api", "reset-run", "workOrderState"), { force: true });
   if (target !== "ordinary") {
     setPathForSession(worker, dir);
     writeLoopSupervisorWorkOrderState({
@@ -198,7 +206,19 @@ function fixture(target: "supervisor" | "worker" | "ordinary" = "supervisor") {
       resolve: () => {},
       reject: () => {},
     }) as QueuedMessage;
-  return { d, codex, session, identity, message, native, nativeWrites, bridgeExec };
+  return {
+    d,
+    codex,
+    session,
+    identity,
+    message,
+    native,
+    nativeWrites,
+    bridgeExec,
+    workOrder,
+    supervisor,
+    finalSummaryPath,
+  };
 }
 
 async function settle<T>(operation: Promise<T>) {
@@ -209,6 +229,92 @@ async function settle<T>(operation: Promise<T>) {
 }
 
 describe("owned Codex context reset", () => {
+  it.each([
+    ["supervisor", "needs-revision"],
+    ["supervisor", "in-flight"],
+    ["worker", "needs-revision"],
+    ["worker", "in-flight"],
+  ] as const)(
+    "keeps native %s ownership in %s despite an earlier final summary",
+    async (target, status) => {
+      const f = fixture(target);
+      writeLoopSupervisorWorkOrderState({
+        workOrder: f.workOrder,
+        supervisorSession: f.supervisor,
+        status,
+        now: Date.now(),
+      });
+      writeFileSync(
+        f.finalSummaryPath,
+        JSON.stringify({
+          status: "completed",
+          projectId: "api",
+          actionsTaken: ["previous review"],
+          delegatedTasks: [],
+          finalVerification: "passed",
+          commits: [],
+          followUps: [],
+        }),
+      );
+      const registry = readLoopSupervisorWorkOrderRegistry();
+      expect(registry.unfinished.some(({ workOrder }) => workOrder.id === f.workOrder.id)).toBe(
+        false,
+      );
+      expect(
+        registry.recoverableFinalSummary.some(({ workOrder }) => workOrder.id === f.workOrder.id),
+      ).toBe(true);
+      await executeMessage(f.message("clear"), f.d);
+      expect(f.nativeWrites).toEqual(["C-c", "/exit"]);
+      expect(f.codex.start).toHaveBeenCalledOnce();
+      expect(await executeMessage(f.message("text"), f.d)).toBe("REVIEW COMPLETE");
+    },
+  );
+
+  it.each(["completed", "failed", "cancelled", "stale", "expired", "lost-lease"] as const)(
+    "does not grant managed worker authority for %s state",
+    async (condition) => {
+      const f = fixture("worker");
+      const status = ["completed", "failed", "cancelled"].includes(condition)
+        ? (condition as "completed" | "failed" | "cancelled")
+        : "needs-revision";
+      writeLoopSupervisorWorkOrderState({
+        workOrder: f.workOrder,
+        supervisorSession: f.supervisor,
+        status,
+        now: Date.now() - (condition === "stale" ? 13 * 60 * 60 * 1000 : 0),
+      });
+      if (condition === "expired") {
+        const path = loopRunArtifactPath("api", "reset-run", "workOrderState");
+        writeFileSync(
+          path,
+          JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), deadlineAt: Date.now() - 1 }),
+        );
+      }
+      if (condition === "lost-lease") writeLoopSupervisorWorkerLeaseState({ leases: [] });
+      await expect(executeMessage(f.message("clear"), f.d)).rejects.toThrow(
+        /ownership|lease|managed/i,
+      );
+      expect(f.nativeWrites).toEqual([]);
+      expect(f.codex.start).not.toHaveBeenCalled();
+      expect(f.d.bridge.sendKeys).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { runId: "different-run" },
+    { projectId: "different-project" },
+    { scheduledAt: 2 },
+    { supervisorSession: "different-supervisor" },
+    { status: "dispatching", updatedAt: Date.now() - 6 * 60 * 1000 },
+  ])("rejects live ownership with mismatched or stale state %j", async (change) => {
+    const f = fixture("worker");
+    const path = loopRunArtifactPath("api", "reset-run", "workOrderState");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), ...change }));
+    await expect(executeMessage(f.message("clear"), f.d)).rejects.toThrow(/ownership/);
+    expect(f.nativeWrites).toEqual([]);
+    expect(f.codex.start).not.toHaveBeenCalled();
+  });
+
   it.each(["supervisor", "worker"] as const)(
     "binds a lazy rollout after clearing a reused %s through a fresh native start",
     async (target) => {

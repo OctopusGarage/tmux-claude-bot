@@ -540,6 +540,18 @@ start can grant the first managed submission. Changed or unavailable process ide
 or lost ownership blocks the handoff. Ordinary user `/clear`, Claude resets and
 `/compact` retain their slash-command behavior.
 
+A system-gate revision retains its active lease and live WorkOrder ownership even
+when the preceding review already wrote a final summary. Terminal or expired
+work cannot authorize a new managed handoff. Each dispatch requires a newly
+written final-summary file or a valid summary from its current response; an
+unchanged earlier file cannot mark a failed revision complete. For queued work,
+this boundary begins when the prompt is consumed, after readiness and reset
+waits. Work that fails or times out before consumption cannot recover from a
+summary written by an earlier turn. After accepted external execution, the
+existing single readiness retry may still restart review within the original
+deadline; it never reruns implementation or bypasses an authority failure. Fresh summary
+files can still recover a truncated response or transport failure.
+
 Each scheduled project chooses a runner:
 
 - `runner.kind: system` (default) runs deterministic local commands, optional queued
