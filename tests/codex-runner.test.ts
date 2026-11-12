@@ -15,6 +15,10 @@ const FIXTURES = join(import.meta.dirname, "fixtures");
 const ready = fs.readFileSync(join(FIXTURES, "codex-ready-pane.txt"), "utf8");
 const busy = fs.readFileSync(join(FIXTURES, "codex-busy-pane.txt"), "utf8");
 const updateMenu = `${fs.readFileSync(join(FIXTURES, "codex-update-pane.txt"), "utf8")}\n\n`;
+const updateWithReleaseNotes = fs.readFileSync(
+  join(FIXTURES, "codex-update-release-notes-pane.txt"),
+  "utf8",
+);
 const legacyUpdateMenu = updateMenu
   .replace("Update available ·", "Update available!")
   .replace("enter continue · esc skip", "Press enter to continue");
@@ -136,6 +140,36 @@ describe("codex pane heuristics", () => {
     expect(paneLooksReady(pane)).toBe(false);
   });
 
+  it.each([1, 2, 3])("uses Escape for release-notes update selection %i", (option) => {
+    const pane = selectUpdateOption(updateWithReleaseNotes, option);
+    expect(paneNeedsConfirm(pane)).toBe(true);
+    expect(paneConfirmAction(pane)).toEqual({ sendRawKey: "Escape" });
+    expect(paneLooksReady(pane)).toBe(false);
+  });
+
+  it.each([
+    updateWithReleaseNotes.replace("https://github.com/openai/codex/releases/latest", "unknown"),
+    updateWithReleaseNotes.replace("  Release notes:", "  Unknown metadata:"),
+    updateWithReleaseNotes
+      .replace("  Release notes:", "  Unknown metadata:")
+      .replace("enter continue · esc skip", "Choose an option"),
+    updateWithReleaseNotes.replace(
+      "› 1.",
+      "  Release notes: https://github.com/openai/codex/releases/latest\n› 1.",
+    ),
+  ])("blocks an expanded update menu with unrecognized metadata", (pane) => {
+    expect(paneNeedsConfirm(pane)).toBe(true);
+    expect(paneConfirmAction(pane)).toBe("wait");
+  });
+
+  it.each(["user@host:~/repo $", "› ", "› Update available · investigate this text"])(
+    "ignores historical release-notes update text above current input: %s",
+    (input) => {
+      expect(paneConfirmAction(`${updateWithReleaseNotes}\n${input}`)).toBe("wait");
+      expect(paneNeedsConfirm(`${updateWithReleaseNotes}\n${input}`)).toBe(false);
+    },
+  );
+
   it.each([
     [1, { sendRawKeys: ["Down", "Enter"] }],
     [2, { sendRawKey: "Enter" }],
@@ -166,7 +200,7 @@ describe("codex pane heuristics", () => {
     },
   );
 
-  it.each([updateMenu, legacyUpdateMenu])(
+  it.each([updateMenu, legacyUpdateMenu, updateWithReleaseNotes])(
     "does not act on update text typed into the composer",
     (menu) => expect(paneConfirmAction(menu.replace("  Update", "› Update"))).toBe("wait"),
   );
@@ -234,8 +268,22 @@ describe("CodexRunner update readiness", () => {
     expect(sendRawKey.mock.calls.map(([key]) => key)).toEqual(["Escape"]);
   });
 
+  it("does not accept a stable release-notes update menu as startup readiness", async () => {
+    const frames = [...Array<string>(4).fill(updateWithReleaseNotes), postUpdateBoot, ready];
+    const { runner, capturePane, sendRawKey } = makeRunner(frames);
+    const wait = runner.waitUntilReady("sess");
+    await Promise.all([wait, vi.runAllTimersAsync()]);
+    expect(capturePane).toHaveBeenCalledTimes(frames.length);
+    expect(sendRawKey.mock.calls.map(([key]) => key)).toEqual(Array<string>(4).fill("Escape"));
+  });
+
   it.each([
     ["persistent menu", [updateMenu]],
+    ["persistent release-notes menu", [updateWithReleaseNotes]],
+    [
+      "unknown release-notes metadata",
+      [updateWithReleaseNotes.replace("  Release notes:", "  Unknown metadata:")],
+    ],
     ["post-skip boot", [updateMenu, postUpdateBoot]],
     ["post-skip boot without a chevron", [updateMenu, "Starting Codex\nLoading\nPlease wait"]],
     ["unknown legacy selection", [selectUpdateOption(legacyUpdateMenu, null)]],
@@ -250,14 +298,17 @@ describe("CodexRunner update readiness", () => {
     expect(sendRawKey.mock.calls.every(([key]) => key === "Escape")).toBe(true);
   });
 
-  it("does not skip an update menu while waiting for normal input", async () => {
-    const { runner, sendRawKey } = makeRunner([updateMenu]);
-    const wait = expect(runner.waitUntilInputReady("sess")).rejects.toThrow(
-      "Codex did not become ready in time",
-    );
-    await Promise.all([wait, vi.runAllTimersAsync()]);
-    expect(sendRawKey).not.toHaveBeenCalled();
-  });
+  it.each([updateMenu, updateWithReleaseNotes])(
+    "does not skip an update menu while waiting for normal input",
+    async (menu) => {
+      const { runner, sendRawKey } = makeRunner([menu]);
+      const wait = expect(runner.waitUntilInputReady("sess")).rejects.toThrow(
+        "Codex did not become ready in time",
+      );
+      await Promise.all([wait, vi.runAllTimersAsync()]);
+      expect(sendRawKey).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("CodexRunner.start", () => {

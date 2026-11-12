@@ -113,16 +113,24 @@ function activeCodexUpdateMenu(pane: string): CodexUpdateMenu | null {
     .map((line) => line.trim())
     .filter(Boolean);
   const heading = findLastLine(lines, (line) => /^(?:›\s*)?Update available(?:!|\s*·)/i.test(line));
+  if (heading < 0) return null;
+  // Codex can insert this informational row between the heading and choices.
+  // Ignore only the known row in that position; it cannot authorize any key.
+  if (lines[heading + 1] === "Release notes: https://github.com/openai/codex/releases/latest")
+    lines.splice(heading + 1, 1);
   // Only the current bottom block may authorize keys. A later composer makes
   // this scrollback; incomplete or unfamiliar controls block without guessing.
-  if (
-    heading < 0 ||
-    lines.length - heading > 5 ||
-    (lines[heading]?.startsWith("›") && lines.length - heading !== 5)
-  )
-    return null;
+  if (lines[heading]?.startsWith("›") && lines.length - heading !== 5) return null;
   if (lines.slice(heading + 1).some((line) => line.startsWith("›") && !/^›\s*\d+\./.test(line)))
     return null;
+  if (lines.length - heading > 5) {
+    // An expanded menu still blocks readiness, but unknown rows never grant a
+    // confirmation. A footer followed by shell output remains historical text.
+    const endsInMenu =
+      /^(?:enter continue\s*·\s*esc skip|Press enter to continue)$/i.test(lines.at(-1) ?? "") ||
+      /^(?:›\s*)?3\.\s*Skip until next version$/i.test(lines.at(-2) ?? "");
+    return endsInMenu ? { footer: "", selection: null } : null;
+  }
   if (lines.length - heading !== 5 || lines[heading]?.startsWith("›"))
     return { footer: "", selection: null };
   const choices = [

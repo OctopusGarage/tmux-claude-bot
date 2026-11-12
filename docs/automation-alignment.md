@@ -1531,8 +1531,13 @@ External task acceptance commands carry the remaining WorkOrder deadline. The sy
 
 Startup update-menu handling uses only the current complete known menu: Escape
 when the footer offers skip, or a proven legacy selection of temporary Skip.
-Unknown selection/footer evidence cannot authorize Enter. After observing that
-gate, readiness requires a fresh current composer; stable boot text and historical
+Unknown selection/footer evidence cannot authorize Enter.
+The known `Release notes: https://github.com/openai/codex/releases/latest`
+row is allowed only directly after the update heading; it does not alter the
+skip-only control policy. Unknown expanded-menu metadata blocks readiness and
+cannot authorize keys. Historical menus below which current input appears remain
+inactive. After observing an update gate, readiness requires a fresh current
+composer; stable boot text and historical
 chevrons cannot satisfy the fallback. Normal input waits do not auto-confirm
 update or trust gates. The existing pending-input and live-identity checks still
 authorize managed submission separately.

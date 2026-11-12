@@ -494,7 +494,10 @@ GitHub account, branch, prompt, and repair policy for later re-enable.
 Codex startup skips a recognized active update menu without updating the CLI or
 changing its update preferences. A footer advertising `esc skip` uses Escape;
 the legacy menu selects temporary Skip only when its current selection is known.
-Unknown selectors or footers receive no confirmation. After an update menu,
+Unknown selectors or footers receive no confirmation.
+The optional official release-notes row below its heading is recognized without
+opening the link or changing the skip policy; unknown extra menu metadata blocks
+readiness. After an update menu,
 startup waits for a newly captured composer within the existing readiness
 deadline; a menu selector, historical prompt or stable boot screen is insufficient.
 Normal input waits do not confirm update or trust menus, and the pending-input
