@@ -111,11 +111,19 @@ export interface ResolverProbe {
  * id), for BOTH claude and codex. The exact live session under same-cwd (Free
  * Projects) contention, where the newest-on-disk guess can pick the wrong one. */
 export interface LiveTranscript {
+  agentPid?: number;
   path: string;
   sessionId: string | null;
 }
 
+export type LiveAgentIdentity = {
+  kind: AgentKind | null;
+  agentPid: number | null;
+  transcript: LiveTranscript | null;
+};
+
 export interface ConfigResolver {
+  resolveLiveAgentIdentity?(session: string): Promise<LiveAgentIdentity | null>;
   /** Resolve the Claude config root (history lives under <root>/projects/…). */
   resolveConfigRoot(session: string): Promise<string>;
   /** Whether a claude process is running in the session's pane (process-based). */
@@ -133,7 +141,10 @@ export interface ConfigResolver {
    * open — exact under same-cwd contention where the newest-on-disk guess can pick
    * the wrong session. Null when neither runs / nothing is open. Optional so
    * existing fakes need not implement it. */
-  resolveLiveTranscript?(session: string): Promise<LiveTranscript | null>;
+  resolveLiveTranscript?(
+    session: string,
+    options?: { fresh?: boolean },
+  ): Promise<LiveTranscript | null>;
   /** Which agent is LIVE in the session's pane, by inspecting the running
    * process — "codex"/"claude", or null when neither is running yet.
    * Optional so existing fakes need not implement it. */
@@ -255,7 +266,29 @@ export function createConfigResolver(
     return { entry, paneQueryable: true };
   };
 
+  const freshIdentity = async (session: string): Promise<LiveAgentIdentity | null> => {
+    cache.delete(session);
+    panePidCache.delete(session);
+    snap = null;
+    const { entry, paneQueryable } = await resolveAgent(session);
+    if (!entry) return paneQueryable ? { kind: null, agentPid: null, transcript: null } : null;
+    const files = await probe.listOpenFiles(entry.agentPid);
+    const candidates = files.filter((path) =>
+      /(?:\/projects\/.*\.jsonl$|\/rollout-.*\.jsonl$)/.test(path),
+    );
+    if (candidates.length > 1) return null;
+    const transcript =
+      matchOpenClaudeTranscript(files) ?? (await matchNewestOpenCodexRollout(files));
+    entry.transcript = transcript;
+    return {
+      kind: entry.kind,
+      agentPid: entry.agentPid,
+      transcript: transcript ? { ...transcript, agentPid: entry.agentPid } : null,
+    };
+  };
+
   return {
+    resolveLiveAgentIdentity: freshIdentity,
     async resolveConfigRoot(session: string): Promise<string> {
       const { entry, paneQueryable } = await resolveAgent(session);
       if (entry?.kind === "claude") return entry.home ?? opts.defaultRoot;
@@ -294,7 +327,11 @@ export function createConfigResolver(
       return entry?.kind === "codex" ? entry.home : null;
     },
 
-    async resolveLiveTranscript(session: string): Promise<LiveTranscript | null> {
+    async resolveLiveTranscript(
+      session: string,
+      options?: { fresh?: boolean },
+    ): Promise<LiveTranscript | null> {
+      if (options?.fresh === true) return (await freshIdentity(session))?.transcript ?? null;
       const { entry } = await resolveAgent(session);
       if (!entry) return null;
       if (entry.transcript === undefined) {
@@ -308,7 +345,7 @@ export function createConfigResolver(
       // disambiguate co-located Free-Project sessions when the live id later
       // can't be read. No-op when unchanged.
       if (entry.transcript?.sessionId) recordLiveSessionId(session, entry.transcript.sessionId);
-      return entry.transcript;
+      return entry.transcript ?? null;
     },
 
     invalidate(session: string): void {

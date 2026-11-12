@@ -12,6 +12,15 @@ import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
+// Archive integrity is covered by the real-Git recovery suite; this suite owns
+// lifecycle eligibility and retention/lease ordering.
+vi.mock("../../src/core/loop/worktree-recovery.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/loop/worktree-recovery.js")>()),
+  archiveLoopWorktree: () => ({ path: "/verified-recovery", verify: () => true }),
+  archiveLoopCommit: () => true,
+  archiveMissingLoopWorktree: () => true,
+}));
+
 afterEach(() => {
   if (originalStateDir === undefined) delete process.env.TCB_STATE_DIR;
   else process.env.TCB_STATE_DIR = originalStateDir;
@@ -34,6 +43,96 @@ function workOrder(stateDir: string, overrides: Partial<LoopWorkOrder> = {}): Lo
 }
 
 describe("supervisor resource reconciliation", () => {
+  function terminalFixture(status: "completed" | "failed" | "cancelled") {
+    const stateDir = mkdtempSync(join(tmpdir(), "tcb-terminal-cleanup-"));
+    process.env.TCB_STATE_DIR = stateDir;
+    const path = join(stateDir, "loop-worktrees", "app", "run-1");
+    const source = join(stateDir, "source");
+    mkdirSync(path, { recursive: true });
+    mkdirSync(source);
+    const order = workOrder(stateDir, {
+      workerSession: "tmux_proj_loop-worker-app-run-1",
+      executionIsolation: {
+        mode: "supervised-worker",
+        expectedWorktree: path,
+        sourceWorktree: source,
+        worktreeIsolation: "isolated",
+        preparedBy: "system-git-worktree",
+        contextReset: "compact",
+        cleanup: { success: "release-worker", failure: "retain-for-ttl", retainFailureForHours: 0 },
+      },
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: order,
+      supervisorSession: "supervisor",
+      status,
+      now: 1_000,
+    });
+    const runGit = vi.fn((invocation: { cwd: string; args: string[] }) => {
+      if (invocation.args[0] === "worktree" && invocation.args[1] === "remove")
+        rmSync(path, { recursive: true });
+      return {
+        status: 0,
+        stdout: invocation.args[0] === "rev-parse" ? `${invocation.cwd}\n` : "",
+        stderr: "",
+      };
+    });
+    const lease = {
+      workerSession: order.workerSession as string,
+      workOrderId: order.id,
+      projectId: order.projectId,
+      projectPath: path,
+      status: "active" as const,
+      leasedAt: 1,
+      updatedAt: 1_000,
+    };
+    return { order, path, runGit, lease };
+  }
+
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "cleans a released %s worktree without a default retention delay",
+    async (status) => {
+      const f = terminalFixture(status);
+      await expect(
+        reconcileTerminalSupervisorResources({ now: 1_001, runGit: f.runGit }),
+      ).resolves.toMatchObject({ removedTerminalWorktrees: 1 });
+      expect(existsSync(f.path)).toBe(false);
+    },
+  );
+
+  it("preserves a terminal workspace excluded by its live owner", async () => {
+    const f = terminalFixture("failed");
+    writeLoopSupervisorWorkerLeaseState({ leases: [f.lease] });
+    await reconcileTerminalSupervisorResources({
+      now: 1_001,
+      runGit: f.runGit,
+      excludedWorkOrderIds: new Set([f.order.id]),
+    });
+    expect(existsSync(f.path)).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
+  it("preserves terminal resources while their worker still owns an active turn", async () => {
+    const f = terminalFixture("failed");
+    writeLoopSupervisorWorkerLeaseState({ leases: [f.lease] });
+    await reconcileTerminalSupervisorResources({
+      now: 1_001,
+      runGit: f.runGit,
+      workerSessionOwnsActiveTurn: async () => true,
+    });
+    expect(existsSync(f.path)).toBe(true);
+    expect(readLoopSupervisorWorkerLeaseState().leases[0]?.status).toBe("active");
+  });
+
+  it("preserves an explicitly retained workspace even when the WorkOrder delay is zero", async () => {
+    const f = terminalFixture("failed");
+    writeLoopSupervisorWorkerLeaseState({
+      leases: [{ ...f.lease, status: "retained", retainUntil: 9_000 }],
+    });
+    await reconcileTerminalSupervisorResources({ now: 1_001, runGit: f.runGit });
+    expect(existsSync(f.path)).toBe(true);
+  });
+
   it("returns an empty reconciliation summary when no supervisor resources are terminal", async () => {
     await expect(reconcileTerminalSupervisorResources({ now: 2_000 })).resolves.toEqual({
       settledTerminalLeases: 0,

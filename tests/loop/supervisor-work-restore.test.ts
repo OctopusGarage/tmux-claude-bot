@@ -8,6 +8,7 @@ import { listLoopReports } from "../../src/core/loop/report.js";
 import {
   loopSupervisorControlRestore,
   restoredLoopSupervisorMessage,
+  shouldDiscardRestoredLoopSupervisorMessage,
 } from "../../src/core/loop/supervisor-work-restore.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
@@ -62,6 +63,18 @@ describe("supervisor work restore", () => {
       supervisorSession: "tmux_proj_loop-supervisor",
       queuedAt: 1_234,
     });
+  });
+
+  it("discards external continuation after restart instead of recreating lost owner authority", () => {
+    const external: LoopWorkOrder = {
+      ...workOrder,
+      task: { kind: "architecture", implementation: { kind: "ralphworks" } },
+    };
+    const message = persisted(
+      loopSupervisorControlRestore(external, "tmux_proj_loop-supervisor", 1000),
+    );
+    expect(restoredLoopSupervisorMessage(message)).toBeNull();
+    expect(shouldDiscardRestoredLoopSupervisorMessage(message)).toBe(true);
   });
 
   it("returns null for control messages without valid supervisor restore metadata", () => {

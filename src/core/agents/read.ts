@@ -4,7 +4,7 @@ import type { ConversationRound, SessionEntry } from "../read/transcript.js";
 import type { ConfigResolver } from "./agent-config-resolver.js";
 import { resolveAgentKind } from "./agentKindMap.js";
 import { profileFor } from "./registry.js";
-import type { ReadResolver } from "./types.js";
+import type { AgentTurnCompletion, AgentTurnCursor, ReadResolver } from "./types.js";
 
 export type AgentReadResolver = ReadResolver & Pick<ConfigResolver, "detectAgentKind">;
 
@@ -29,6 +29,20 @@ export async function readAgentLatestReply(
 ): Promise<string | null> {
   const profile = await readProfile(resolver, session);
   return profile.getLatestReply(resolver, session, projectPath, sentText);
+}
+
+export async function readAgentTurnCompletion(
+  resolver: AgentReadResolver,
+  session: string,
+  sentText: string,
+  sentAfter: number,
+  cursor?: AgentTurnCursor,
+  options?: { fresh?: boolean },
+): Promise<AgentTurnCompletion | null> {
+  const profile = await readProfile(resolver, session);
+  return (
+    profile.getTurnCompletion?.(resolver, session, sentText, sentAfter, cursor, options) ?? null
+  );
 }
 
 export async function readAgentSessions(

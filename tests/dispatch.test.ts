@@ -16,6 +16,7 @@ import {
   performStart,
 } from "../src/core/command/dispatch.js";
 import type { QueuedMessage } from "../src/core/command/queue.js";
+import { writeLoopSupervisorWorkerLeaseState } from "../src/core/loop/supervisor-pool.js";
 import { writeLoopSupervisorWorkOrderState } from "../src/core/loop/supervisor-state.js";
 import type { LoopWorkOrder } from "../src/core/loop/work-order.js";
 import { setPathForSession } from "../src/core/projects/sessionPathMap.js";
@@ -85,6 +86,7 @@ function writeTestWorkOrder(input: {
   worktreeIsolation?: "isolated" | "source";
   taskKind?: NonNullable<LoopWorkOrder["task"]>["kind"];
   supervisorSession?: string;
+  workerSession?: string;
 }): void {
   const workOrder = {
     id: input.id,
@@ -92,6 +94,7 @@ function writeTestWorkOrder(input: {
     projectId: "api",
     projectName: "api",
     projectPath: input.projectPath,
+    ...(input.workerSession ? { workerSession: input.workerSession } : {}),
     ...(input.sourceWorktree !== undefined
       ? {
           executionIsolation: {
@@ -471,6 +474,11 @@ describe("executeMessage — control actions", () => {
 
   it("confirms system-owned context reset submission before the next queued prompt", async () => {
     const d = deps();
+    d.bridge.capturePane = vi
+      .fn()
+      .mockResolvedValueOnce("› \nContext 100% left")
+      .mockResolvedValueOnce("› /clear\nContext 100% left")
+      .mockResolvedValueOnce("› \nContext 100% left");
     expect(await executeMessage(msg("clear", { origin: "system" }), d)).toBe(
       "✅ 已清空上下文 · /clear",
     );
@@ -1245,5 +1253,486 @@ describe("scheduled submission lifecycle", () => {
     await executeMessage(msg("text", { delivery }), d);
     expect(d.bridge.sendKeysToPinnedPane).toHaveBeenCalledWith("", delivery.pinnedTarget);
     expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+});
+
+describe("managed Codex turn completion", () => {
+  function managed(options: {
+    finishOn: number;
+    withholdPrompt?: boolean;
+    terminalText?: string;
+    oldMarker?: boolean;
+  }) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-codex-bound-turn-"));
+    const rollout = path.join(dir, "rollout.jsonl");
+    let header = JSON.stringify({ type: "session_meta", payload: { id: "live", cwd: dir } });
+    fs.writeFileSync(rollout, `${header}\n`);
+    const prompt = "Current unique managed WorkOrder";
+    let sentAt = 0;
+    const item = (type: string, payload: object) =>
+      JSON.stringify({ timestamp: new Date(sentAt + 1).toISOString(), type, payload });
+    const start = () => [
+      header,
+      item("event_msg", {
+        type: "task_started",
+        turn_id: "current-turn",
+        root_turn_id: "current-turn",
+      }),
+      item("response_item", {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: prompt }],
+      }),
+    ];
+    // Rollouts append records; rewriting would race asynchronous header reads.
+    const finish = () =>
+      fs.appendFileSync(
+        rollout,
+        `${[
+          ...(options.withholdPrompt ? start().slice(1) : []),
+          item("response_item", {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: options.terminalText ?? "BOUND FINAL" }],
+          }),
+          item("event_msg", {
+            type: "task_complete",
+            turn_id: "current-turn",
+            root_turn_id: "current-turn",
+          }),
+        ].join("\n")}\n`,
+      );
+    const waitUntilDone = vi.fn(async () => ({
+      done: true,
+      output: options.oldMarker
+        ? "[OLD_MARKER] old output"
+        : "/ T R A N S C R I P T /\n› prior WorkOrder\nBrowsing · ↵ rewind · esc back\n• Queued follow-up inputs",
+    }));
+    const d = deps({ waitUntilDone });
+    d.config.maxWaitDoneMs = 10;
+    d.config.maxWaitDoneTotalMs = 4000;
+    d.config.maxWaitReadyMs = 80;
+    d.bridge.capturePane = vi.fn(async () => "› \nContext 100% left");
+    d.bridge.sendKeys = vi.fn(async () => {
+      sentAt = Date.now();
+      if (!options.withholdPrompt) fs.writeFileSync(rollout, `${start().join("\n")}\n`);
+      if (options.finishOn < 100) setTimeout(finish, options.finishOn === 1 ? 0 : 2000);
+    });
+    d.configResolver.detectAgentKind = vi.fn(async () => "codex" as const);
+    d.configResolver.resolveLiveTranscript = vi.fn(async () => ({
+      path: rollout,
+      sessionId: "live",
+      agentPid: 123,
+    }));
+    return {
+      d,
+      waitUntilDone,
+      prompt,
+      rollout,
+      setHeaderTimestamp: (timestamp: string) => {
+        header = JSON.stringify({
+          type: "session_meta",
+          timestamp,
+          payload: { id: "live", cwd: dir },
+        });
+      },
+    };
+  }
+
+  it("ignores stable transcript UI while the bound turn is still active", async () => {
+    const { d, waitUntilDone, prompt } = managed({ finishOn: 2 });
+    const result = await executeMessage(
+      msg("text", { text: prompt, origin: "system", doneProbe: () => false }),
+      d,
+    );
+    expect(result).toBe("BOUND FINAL");
+    expect(waitUntilDone).not.toHaveBeenCalled();
+  });
+
+  it("does not accept an old pane marker before this prompt was consumed", async () => {
+    const { d, waitUntilDone, prompt } = managed({
+      finishOn: 2,
+      withholdPrompt: true,
+      oldMarker: true,
+    });
+    const result = await executeMessage(
+      msg("text", {
+        text: prompt,
+        origin: "system",
+        doneProbe: (output) => output.includes("[OLD_MARKER]"),
+      }),
+      d,
+    );
+    expect(result).toBe("BOUND FINAL");
+    expect(waitUntilDone).not.toHaveBeenCalled();
+  });
+
+  it("returns an authoritative terminal response without a final marker for bounded contract repair", async () => {
+    const { d, prompt } = managed({
+      finishOn: 1,
+      terminalText: "Terminal response without marker",
+    });
+    expect(
+      await executeMessage(
+        msg("text", { text: prompt, origin: "system", doneProbe: () => false }),
+        d,
+      ),
+    ).toBe("Terminal response without marker");
+  });
+
+  it("rejects unavailable live transcript evidence before submitting managed work", async () => {
+    const { d, prompt } = managed({ finishOn: 1 });
+    d.configResolver.resolveLiveTranscript = vi.fn(async () => null);
+    await expect(
+      executeMessage(msg("text", { text: prompt, origin: "system", doneProbe: () => false }), d),
+    ).rejects.toThrow(/live.*transcript|completion evidence/i);
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("uses the actual elapsed deadline when stable panes falsely report done", async () => {
+    const { d, prompt } = managed({ finishOn: 100 });
+    const startedAt = Date.now();
+    await expect(
+      executeMessage(
+        msg("text", {
+          text: prompt,
+          origin: "system",
+          maxWaitDoneTotalMs: 80,
+          doneProbe: () => false,
+        }),
+        d,
+      ),
+    ).rejects.toThrow(/deadline|timed out/i);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(70);
+  });
+  it("stops only the exact bound turn at deadline and requires a terminal stop proof", async () => {
+    const { d, prompt, rollout } = managed({ finishOn: 100 });
+    d.config.maxWaitReadyMs = 80;
+    d.bridge.sendRawKey = vi.fn(async () => {
+      fs.appendFileSync(
+        rollout,
+        `${JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "turn_aborted", turn_id: "current-turn", root_turn_id: "current-turn" } })}\n`,
+      );
+    });
+    await expect(
+      executeMessage(
+        msg("text", {
+          text: prompt,
+          origin: "system",
+          maxWaitDoneTotalMs: 80,
+          doneProbe: () => true,
+        }),
+        d,
+      ),
+    ).rejects.toThrow(/deadline/);
+    expect(d.bridge.sendRawKey).toHaveBeenCalledWith("C-c", "proj-1");
+  });
+
+  it("does not submit over an existing active root turn", async () => {
+    const { d, prompt, rollout } = managed({ finishOn: 100 });
+    fs.appendFileSync(
+      rollout,
+      `${JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "task_started", turn_id: "prior", root_turn_id: "prior" } })}\n`,
+    );
+    await expect(
+      executeMessage(msg("text", { text: prompt, origin: "system", doneProbe: () => false }), d),
+    ).rejects.toThrow(/active|unresolved/);
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("fails stop-unverified without interrupting a foreign or unavailable live rollout", async () => {
+    const { d, prompt } = managed({ finishOn: 100 });
+    let reads = 0;
+    const original = d.configResolver.resolveLiveTranscript;
+    if (original === undefined) throw new Error("missing fixture resolver");
+    d.configResolver.resolveLiveTranscript = vi.fn(async (session: string) => {
+      reads += 1;
+      return reads === 1
+        ? original(session)
+        : { path: "/missing-foreign-rollout", sessionId: "foreign" };
+    });
+    await expect(
+      executeMessage(
+        msg("text", {
+          text: prompt,
+          origin: "system",
+          maxWaitDoneTotalMs: 80,
+          doneProbe: () => true,
+        }),
+        d,
+      ),
+    ).rejects.toThrow(/stop unverified/);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+
+  it("treats a typed current-turn abort as immediate failure", async () => {
+    const { d, prompt, rollout } = managed({ finishOn: 100 });
+    const send = d.bridge.sendKeys;
+    d.bridge.sendKeys = vi.fn(async (text, session) => {
+      await send(text, session);
+      fs.appendFileSync(
+        rollout,
+        `${JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "turn_aborted", turn_id: "current-turn", root_turn_id: "current-turn" } })}\n`,
+      );
+    });
+    await expect(
+      executeMessage(msg("text", { text: prompt, origin: "system", doneProbe: () => true }), d),
+    ).rejects.toThrow(/interrupted/);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+  it("waits boundedly for the exact live startup rollout before submitting", async () => {
+    const { d, prompt } = managed({ finishOn: 1 });
+    const resolve = d.configResolver.resolveLiveTranscript;
+    if (resolve === undefined) throw new Error("missing fixture resolver");
+    let reads = 0;
+    d.configResolver.resolveLiveTranscript = vi.fn(async (session: string) =>
+      ++reads === 1 ? null : resolve(session),
+    );
+    await expect(
+      executeMessage(msg("text", { text: prompt, origin: "system", doneProbe: () => false }), d),
+    ).resolves.toBe("BOUND FINAL");
+    expect(reads).toBeGreaterThan(1);
+    expect(d.bridge.sendKeys).toHaveBeenCalledOnce();
+  });
+
+  it("does not accept a completion observed after the actual deadline", async () => {
+    const { d, prompt, rollout } = managed({ finishOn: 100 });
+    const resolve = d.configResolver.resolveLiveTranscript;
+    if (resolve === undefined) throw new Error("missing fixture resolver");
+    let reads = 0;
+    d.configResolver.resolveLiveTranscript = vi.fn(async (session: string) => {
+      reads += 1;
+      if (reads === 2) {
+        await new Promise((r) => setTimeout(r, 100));
+        fs.appendFileSync(
+          rollout,
+          `${JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "task_complete", turn_id: "current-turn", root_turn_id: "current-turn" } })}\n`,
+        );
+      }
+      return resolve(session);
+    });
+    await expect(
+      executeMessage(
+        msg("text", {
+          text: prompt,
+          origin: "system",
+          maxWaitDoneTotalMs: 80,
+          doneProbe: () => true,
+        }),
+        d,
+      ),
+    ).rejects.toThrow(/deadline/);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+  it("rejects a terminal event when the native process identity changed", async () => {
+    const { d, prompt } = managed({ finishOn: 1 });
+    const resolve = d.configResolver.resolveLiveTranscript;
+    if (resolve === undefined) throw new Error("missing fixture resolver");
+    let reads = 0;
+    d.configResolver.resolveLiveTranscript = vi.fn(async (session: string) => {
+      const live = await resolve(session);
+      return live ? { ...live, agentPid: ++reads === 1 ? 123 : 999 } : null;
+    });
+    await expect(
+      executeMessage(msg("text", { text: prompt, origin: "system", doneProbe: () => true }), d),
+    ).rejects.toThrow(/transcript unavailable/);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+
+  it("does not interrupt when unread rollout records may hide a newer root", async () => {
+    const { d, prompt, rollout } = managed({ finishOn: 100 });
+    const send = d.bridge.sendKeys;
+    d.bridge.sendKeys = vi.fn(async (text, session) => {
+      await send(text, session);
+      setTimeout(
+        () =>
+          fs.appendFileSync(
+            rollout,
+            `${JSON.stringify({ timestamp: new Date().toISOString(), type: "noop", payload: {} })}\n`.repeat(
+              20000,
+            ) +
+              `${JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "task_started", turn_id: "foreign", root_turn_id: "foreign" } })}\n`,
+          ),
+        20,
+      );
+    });
+    await expect(
+      executeMessage(
+        msg("text", {
+          text: prompt,
+          origin: "system",
+          maxWaitDoneTotalMs: 80,
+          doneProbe: () => true,
+        }),
+        d,
+      ),
+    ).rejects.toThrow(/stop unverified/);
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+  async function workerFixture(
+    status: "active" | "retained",
+    run: (fixture: ReturnType<typeof managed>, worker: string) => Promise<void>,
+  ) {
+    const old = process.env.TCB_STATE_DIR;
+    const state = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-worker-bound-"));
+    process.env.TCB_STATE_DIR = state;
+    try {
+      const fixture = managed({ finishOn: 1 });
+      const worker = "tmux_proj_loop-worker-owned-run";
+      const project = path.dirname(fixture.rollout);
+      setPathForSession(worker, project);
+      writeTestWorkOrder({ id: "worker-run", projectPath: project, workerSession: worker });
+      writeLoopSupervisorWorkerLeaseState({
+        leases: [
+          {
+            workerSession: "tmux_proj_loop-supervisor-1",
+            workOrderId: "worker-run",
+            projectId: "api",
+            projectPath: project,
+            status,
+            leasedAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        ],
+      });
+      await run(fixture, worker);
+    } finally {
+      if (old === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = old;
+      fs.rmSync(state, { recursive: true, force: true });
+    }
+  }
+
+  it("binds active owned worker control sends with user origin and no doneProbe", async () => {
+    await workerFixture("active", async ({ d, prompt, waitUntilDone }, worker) => {
+      await expect(
+        executeMessage(msg("text", { sessionName: worker, text: prompt, origin: "user" }), d),
+      ).resolves.toBe("BOUND FINAL");
+      expect(waitUntilDone).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps an ordinary Codex user session on its legacy completion path", async () => {
+    const { d, prompt, waitUntilDone } = managed({ finishOn: 100 });
+    await executeMessage(msg("text", { text: prompt, origin: "user" }), d);
+    expect(waitUntilDone).toHaveBeenCalledOnce();
+  });
+
+  it("does not send or gain stop authority from a retained worker lease", async () => {
+    await workerFixture("retained", async ({ d, prompt }, worker) => {
+      await expect(
+        executeMessage(msg("text", { sessionName: worker, text: prompt, origin: "user" }), d),
+      ).rejects.toThrow(/worker.*ownership|active.*lease/);
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+      expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+    });
+  });
+
+  it("verifies the input surface for an active owned worker user compact", async () => {
+    await workerFixture("active", async ({ d }, worker) => {
+      d.bridge.capturePane = vi.fn(async () => "/ T R A N S C R I P T /\n› old task");
+      await expect(
+        executeMessage(msg("compact", { sessionName: worker, origin: "user" }), d),
+      ).rejects.toThrow(/input surface/);
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    });
+  });
+  async function coldWorker(
+    run: (
+      fixture: ReturnType<typeof managed>,
+      worker: string,
+      grant: ReturnType<typeof vi.fn>,
+    ) => Promise<void>,
+    mode = "normal",
+  ) {
+    await workerFixture("active", async (fixture, worker) => {
+      const { d, rollout } = fixture;
+      let submitted = false;
+      const live = { path: rollout, sessionId: "live", agentPid: 123 };
+      d.configResolver.resolveLiveTranscript = vi.fn(async () => (submitted ? live : null));
+      d.configResolver.resolveLiveAgentIdentity = vi.fn(async () => ({
+        kind: "codex" as const,
+        agentPid: submitted && mode === "replaced" ? 999 : 123,
+        transcript: submitted ? live : null,
+      }));
+      let available = true;
+      const grant = vi.fn((_session: string, pid: number) => {
+        const present = available;
+        available = false;
+        return present && pid === 123
+          ? { agentPid: 123, generation: 1, issuedAt: Date.now() - 1000 }
+          : null;
+      });
+      d.agent.consumeFreshLaunch = grant;
+      const send = d.bridge.sendKeys;
+      d.bridge.sendKeys = vi.fn(async (text, session) => {
+        submitted = true;
+        fixture.setHeaderTimestamp(
+          mode === "old-meta" ? new Date(0).toISOString() : new Date().toISOString(),
+        );
+        await send(text, session);
+      });
+      await run(fixture, worker, grant);
+    });
+  }
+
+  it("binds the first lazy rollout only after consuming a fresh owned process grant", async () => {
+    await coldWorker(async ({ d, prompt }, worker, grant) => {
+      await expect(
+        executeMessage(msg("text", { sessionName: worker, text: prompt, origin: "user" }), d),
+      ).resolves.toBe("BOUND FINAL");
+      expect(grant).toHaveBeenCalledExactlyOnceWith(worker, 123);
+    });
+  });
+
+  it.each(["replaced", "old-meta"])(
+    "rejects bootstrap evidence for %s without signalling an unknown turn",
+    async (mode) => {
+      await coldWorker(async ({ d, prompt }, worker) => {
+        await expect(
+          executeMessage(msg("text", { sessionName: worker, text: prompt, origin: "user" }), d),
+        ).rejects.toThrow(/unavailable/);
+        expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+      }, mode);
+    },
+  );
+
+  it("does not consume a startup grant when delivery claim is cancelled", async () => {
+    await coldWorker(async ({ d, prompt }, worker, grant) => {
+      const delivery = {
+        claim: vi.fn(async () => false),
+        sent: vi.fn(),
+        blocked: vi.fn(),
+        uncertain: vi.fn(),
+      };
+      await executeMessage(
+        msg("text", { sessionName: worker, text: prompt, origin: "user", delivery }),
+        d,
+      );
+      expect(grant).not.toHaveBeenCalled();
+      expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps a never-managed manual loop worker on the ordinary completion path", async () => {
+    const { d, prompt, waitUntilDone } = managed({ finishOn: 100 });
+    await executeMessage(
+      msg("text", { sessionName: "tmux_proj_loop-worker-manual", text: prompt, origin: "user" }),
+      d,
+    );
+    expect(waitUntilDone).toHaveBeenCalledOnce();
+    expect(d.bridge.sendRawKey).not.toHaveBeenCalled();
+  });
+  it("does not restore a consumed launch grant after an uncertain write", async () => {
+    await coldWorker(async ({ d, prompt }, worker, grant) => {
+      d.bridge.sendKeys = vi.fn(async () => {
+        throw new Error("uncertain write");
+      });
+      const message = () => msg("text", { sessionName: worker, text: prompt, origin: "user" });
+      await expect(executeMessage(message(), d)).rejects.toThrow("uncertain write");
+      await expect(executeMessage(message(), d)).rejects.toThrow(/no fresh launch grant/);
+      expect(d.bridge.sendKeys).toHaveBeenCalledOnce();
+      expect(grant).toHaveBeenCalledTimes(2);
+    });
   });
 });

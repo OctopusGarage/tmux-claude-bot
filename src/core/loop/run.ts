@@ -16,6 +16,7 @@ export type LoopRunCommandInvocation = {
   command: string;
   cwd: string;
   env: Record<string, string>;
+  timeoutMs?: number;
 };
 
 export type LoopGitInvocation = {

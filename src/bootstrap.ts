@@ -121,6 +121,7 @@ export function bootstrap(): HandlerDeps {
   });
 
   const agentRunner = new AgentRunnerDispatcher({
+    maxWaitReadyMs: config.maxWaitReadyMs,
     bridge,
     claude: claudeRunner,
     codex: codexRunner,

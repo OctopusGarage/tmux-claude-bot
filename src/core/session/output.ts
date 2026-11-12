@@ -159,6 +159,23 @@ function nextMuted(prev: boolean, sgr: string | undefined): boolean {
  * on a pane captured WITH colour (`capture-pane -e`) and BEFORE the colourless
  * OutputProcessor, which would otherwise discard the escapes (and the meaning).
  */
+/** Preserve real composer input while removing ANSI-muted hint runs. */
+export function unmutedComposerText(ansi: string): string {
+  let muted = false;
+  let last = 0;
+  let result = "";
+  const emit = (text: string) => {
+    result += muted ? text.replace(/[^\n›❯]/g, "") : text;
+  };
+  for (const match of ansi.matchAll(SGR_RE)) {
+    emit(ansi.slice(last, match.index));
+    muted = nextMuted(muted, match[1]);
+    last = match.index + match[0].length;
+  }
+  emit(ansi.slice(last));
+  return result.replace(ANSI_REGEX, "");
+}
+
 export function markColorSemantics(ansi: string): string {
   let muted = false;
   let markedThisLine = false;

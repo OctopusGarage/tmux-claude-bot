@@ -24,6 +24,7 @@ export default defineConfig({
     // causes scheduler starvation and false 30-second timeouts on busy hosts.
     maxWorkers: 1,
     setupFiles: ["tests/setup.ts"],
+    globalSetup: ["tests/global-setup.ts"],
     testTimeout: 30_000,
     // Nested worktrees are independent branches, not additional test suites.
     exclude: excludedTests,

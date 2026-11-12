@@ -3,9 +3,13 @@
  * implement. The AgentRunnerDispatcher routes each call to the right backend
  * based on the session's persisted AgentKind.
  */
+export type FreshLaunchGrant = { agentPid: number; generation: number; issuedAt: number };
+
 export interface AgentRunner {
+  isFreshStartCommand?(command?: string): boolean;
+  consumeFreshLaunch?(session: string, expectedPid: number): FreshLaunchGrant | null;
   checkIfRunning(sessionName?: string): Promise<boolean>;
-  start(sessionName?: string, command?: string): Promise<void>;
+  start(sessionName?: string, command?: string, deadlineAt?: number): Promise<void>;
   startWithResume(
     sessionName: string | undefined,
     sessionId: string,

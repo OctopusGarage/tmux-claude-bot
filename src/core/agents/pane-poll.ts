@@ -29,6 +29,7 @@ export interface StableReady {
   ticks: number;
   minLines: number;
   isAlive(): Promise<boolean>;
+  isEligible?(pane: string): boolean;
 }
 
 function nonBlankLineCount(pane: string): number {
@@ -51,6 +52,7 @@ export async function pollUntilReady(opts: {
   bridge: TmuxBridge;
   pollIntervalMs: number;
   maxWaitReadyMs: number;
+  deadlineAt?: number;
   sessionName?: string | undefined;
   logTag: string;
   notReadyError: string;
@@ -61,6 +63,16 @@ export async function pollUntilReady(opts: {
   const { bridge, pollIntervalMs, maxWaitReadyMs, sessionName, logTag, notReadyError, classify } =
     opts;
   const maxIterations = Math.ceil(maxWaitReadyMs / pollIntervalMs);
+  const assertDeadline = (): void => {
+    if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt)
+      throw new Error(notReadyError);
+  };
+  const waitInterval = () =>
+    sleep(
+      opts.deadlineAt === undefined
+        ? pollIntervalMs
+        : Math.min(pollIntervalMs, Math.max(0, opts.deadlineAt - Date.now())),
+    );
   const sess = sessionName ?? "default";
   log.debug("agent readiness wait started", {
     session: sess,
@@ -71,10 +83,12 @@ export async function pollUntilReady(opts: {
   let captureFailures = 0;
   let lastCaptureError: unknown;
   for (let i = 0; i < maxIterations; i++) {
+    assertDeadline();
     let pane: string;
     try {
       pane = await bridge.capturePane(sessionName);
     } catch (err) {
+      assertDeadline();
       captureFailures += 1;
       lastCaptureError = err;
       const context = {
@@ -85,7 +99,7 @@ export async function pollUntilReady(opts: {
       if (captureFailures === 1)
         log.warn("agent pane capture failed during readiness wait", context);
       else log.debug("agent pane capture still failing during readiness wait", context);
-      await sleep(pollIntervalMs);
+      await waitInterval();
       continue;
     }
     if (captureFailures > 0) {
@@ -96,6 +110,7 @@ export async function pollUntilReady(opts: {
       captureFailures = 0;
       lastCaptureError = undefined;
     }
+    assertDeadline();
     const verdict = classify(pane);
     if (verdict === "ready") {
       log.info("agent ready", {
@@ -110,23 +125,27 @@ export async function pollUntilReady(opts: {
         session: sess,
         data: { agent: logTag, keys, iteration: i },
       });
-      for (const key of keys) await bridge.sendRawKey(key, sessionName);
+      for (const key of keys) {
+        assertDeadline();
+        await bridge.sendRawKey(key, sessionName);
+      }
       stable = 0; // a gate that auto-clears must never count toward "stable = ready"
       lastPane = pane;
-      await sleep(pollIntervalMs);
+      await waitInterval();
       continue;
     }
     // verdict === "wait": fall back to stability when the marker can't decide.
     const sr = opts.stableReady;
-    if (opts.isActiveTurn?.(pane)) {
+    if (opts.isActiveTurn?.(pane) || sr?.isEligible?.(pane) === false) {
       stable = 0;
       lastPane = pane;
-      await sleep(pollIntervalMs);
+      await waitInterval();
       continue;
     }
     if (sr && lastPane !== null && pane === lastPane) {
       stable++;
       if (stable >= sr.ticks && nonBlankLineCount(pane) >= sr.minLines && (await sr.isAlive())) {
+        assertDeadline();
         log.info("agent ready", {
           session: sess,
           data: { agent: logTag, evidence: "stable-pane", stable, iteration: i },
@@ -137,7 +156,7 @@ export async function pollUntilReady(opts: {
       stable = 0;
     }
     lastPane = pane;
-    await sleep(pollIntervalMs);
+    await waitInterval();
   }
   log.error("agent readiness wait timed out", {
     session: sess,

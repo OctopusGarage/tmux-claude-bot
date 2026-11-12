@@ -368,3 +368,26 @@ describe("createExecProbe (real ps / tmux / kill smoke tests)", () => {
     expect(await probe.panePid("tcb-test-no-such-session-xyz")).toBeNull();
   });
 });
+
+describe("managed fresh transcript identity", () => {
+  it("bypasses cached null, process TTL and pane/snapshot coalescing only when requested", async () => {
+    let pid = 200;
+    let files: string[] = [];
+    const panePid = vi.fn(async () => 100);
+    const snapshot = vi.fn(async () => [{ pid, ppid: 100, command: "/bin/claude" }]);
+    const listOpenFiles = vi.fn(async () => files);
+    const r = createConfigResolver(fakeProbe({ panePid, snapshot, listOpenFiles }), OPTS);
+    expect(await r.resolveLiveTranscript?.("s")).toBeNull();
+    pid = 300;
+    files = ["/tmp/.claude/projects/-tmp/12345678-1234-1234-1234-123456789abc.jsonl"];
+    expect(await r.resolveLiveTranscript?.("s")).toBeNull();
+    const read = r.resolveLiveTranscript as (
+      session: string,
+      options: { fresh: true },
+    ) => Promise<unknown>;
+    expect(await read("s", { fresh: true })).toMatchObject({ agentPid: 300, path: files[0] });
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(panePid).toHaveBeenCalledTimes(2);
+    expect(listOpenFiles).toHaveBeenLastCalledWith(300);
+  });
+});

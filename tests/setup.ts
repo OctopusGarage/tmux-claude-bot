@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach } from "vitest";
+import { afterAll, beforeEach } from "vitest";
 import { envSchema } from "../src/shared/config.js";
 
 // Hermetic config env. Production code reads the bot's configuration straight
@@ -65,7 +65,23 @@ for (const k of CLEAR) if (!PRESERVE.has(k)) delete process.env[k];
 // never writes into the real ~/.tmux-claude-bot. Without this, tests that
 // exercise the real appendRecentProject / setPathForSession pollute the live
 // state files, and a dev bot then shows that test garbage. See shared/state-dir.ts.
-const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tcb-test-state-"));
+// Setup runs before each test file is imported. Route all of that file's ordinary
+// temp fixtures into one owned sandbox, including fixtures created by helpers or
+// child processes. Teardown runs after the file's hooks even when a test fails.
+const originalTemp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+const TEMP_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f-")));
+process.env.TMPDIR = TEMP_ROOT;
+process.env.TMP = TEMP_ROOT;
+process.env.TEMP = TEMP_ROOT;
+const removeTemporaryRoot = fs.rmSync;
+afterAll(() => {
+  for (const [key, value] of Object.entries(originalTemp)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  removeTemporaryRoot(TEMP_ROOT, { recursive: true, force: true });
+});
+const STATE_DIR = fs.mkdtempSync(path.join(TEMP_ROOT, "tcb-test-state-"));
 process.env.TCB_STATE_DIR = STATE_DIR;
 // Logs are isolated through TCB_STATE_DIR because the logger resolves
 // `appStateFile("logs")`. Individual logger tests may still set TCB_LOG_DIR.

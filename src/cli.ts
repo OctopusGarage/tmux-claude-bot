@@ -13,9 +13,11 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { registerArchitectureCommands } from "./cli/architecture-commands.js";
 import { registerCapabilityCommands } from "./cli/capability-commands.js";
 import { registerConfigurationCommands } from "./cli/configuration-commands.js";
 import { registerPowerCommands } from "./cli/power-commands.js";
+import { registerPrReviewCommands } from "./cli/pr-review-commands.js";
 import { registerResourceCommands } from "./cli/resource-commands.js";
 import { registerRuntimeGuardianCommands } from "./cli/runtime-guardian-commands.js";
 import { registerScheduleCommands } from "./cli/schedule-commands.js";
@@ -773,6 +775,8 @@ task
   });
 
 const loop = program.command("loop").description("validate Loop Engineering configs");
+registerArchitectureCommands(loop);
+registerPrReviewCommands(loop);
 
 const prompts = program
   .command("prompts")

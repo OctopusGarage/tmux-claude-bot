@@ -427,3 +427,30 @@ above.
 > Kept current: a contract test ties the command surfaces to the docs (see CLAUDE.md
 > "User documentation"). If a recipe here ever conflicts with the live commands, trust
 > commands.md / `tcb --help` and fix this file.
+
+
+**Select task implementation** → inspect with
+`tcb loop <architecture|bugfix|test-coverage|security-maintenance> get <file> <projectId>`, then explicitly
+choose `tcb loop <architecture|bugfix|test-coverage|security-maintenance> set <file> <projectId> native|ralphworks`.
+The four independent selectors apply only to standalone single-project tasks;
+workspace tasks, harness-auto, active delegation and other families remain native.
+RalphWorks is optional, requires the separately installed CLI and existing
+supervised execution, and accepts opaque `--profile`/`--runtime` references plus
+repeatable non-secret `--param key=value` values. Reads redact params. Follow
+[the manual](../manual.md#optional-ralphworks-task-execution) for the
+execution contract. Do not hand-edit runtime files, add bot model credentials,
+rerun an existing external attempt, or substitute a native implementation after
+external failure. The native supervisor owns evidence review and policy-bound
+Git delivery; the bot's deterministic system gate remains authoritative.
+
+
+**Select an optional PR reviewer** → use
+`tcb loop pr-review get <file> <project|repository> <id>` and
+`tcb loop pr-review set <file> <project|repository> <id> native|ralphworks`.
+This configures individual immutable PR review passes, while the native
+supervisor retains discovery, bounded repair, consecutive-pass counts and GitHub
+delivery. Workspace opt-in is rejected. The supervisor uses
+`tcb loop pr-review pass <workOrderFile> <number> --repository <owner/repo> --base <sha> --head <sha>`
+for each exact revision. Findings/incomplete reports do not approve; revisions
+reset clean-pass counts, and external failures block without native fallback.
+See [the manual](../manual.md#optional-ralphworks-pr-review-passes).

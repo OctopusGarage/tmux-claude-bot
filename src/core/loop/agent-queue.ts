@@ -187,15 +187,34 @@ async function enqueueContextResetIfNeeded(
   deps: QueueDeps,
   sessionName: string,
   reset: LoopAgentPrompt["contextReset"],
+  authorityFence?: () => void,
 ): Promise<LoopRunCommandResult | null> {
   if (reset === undefined || reset === "none") return null;
   return new Promise((resolve) => {
+    const messageId = newMessageId();
     const verdict = deps.queue.enqueue({
-      id: newMessageId(),
+      id: messageId,
       text: "",
       chatId: "loop-engineering",
       sessionName,
       action: reset,
+      ...(authorityFence === undefined
+        ? {}
+        : {
+            started: () => {
+              try {
+                authorityFence();
+                return true;
+              } catch {
+                deps.queue.cancelQueued(
+                  sessionName,
+                  messageId,
+                  "external execution authority lost",
+                );
+                return false;
+              }
+            },
+          }),
       channel: "control",
       origin: "system",
       promptSource: "control",
@@ -223,6 +242,7 @@ async function enqueueLoopAgentPromptToSession(
   signal?: AbortSignal,
   timeoutMs?: number,
   deferLeaseUntilConsumption = false,
+  authorityFence?: () => void,
 ): Promise<SupervisorDispatchResult> {
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
@@ -237,6 +257,21 @@ async function enqueueLoopAgentPromptToSession(
   if (signal?.aborted) {
     return { status: 1, stdout: "", stderr: "loop supervisor task was cancelled before enqueue" };
   }
+  const authorityFailure = (): SupervisorDispatchResult | null => {
+    try {
+      authorityFence?.();
+      return null;
+    } catch {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "external execution authority lost",
+        finalSummaryRecovery: "disabled",
+      };
+    }
+  };
+  const readinessFailure = authorityFailure();
+  if (readinessFailure) return readinessFailure;
 
   const messageId = newMessageId();
   let attempt: DelegationAttempt | undefined;
@@ -334,10 +369,15 @@ async function enqueueLoopAgentPromptToSession(
     }
   }
 
-  const resetResult = await enqueueContextResetIfNeeded(deps, sessionName, contextReset);
+  const resetResult = await enqueueContextResetIfNeeded(
+    deps,
+    sessionName,
+    contextReset,
+    authorityFence,
+  );
   if (resetResult !== null && resetResult.status !== 0) {
     releaseFailureLease();
-    return settlePreparationFailure(resetResult);
+    return settlePreparationFailure(authorityFailure() ?? resetResult);
   }
   if (signal?.aborted) {
     releaseFailureLease();
@@ -348,6 +388,8 @@ async function enqueueLoopAgentPromptToSession(
     });
   }
 
+  const resetAuthorityFailure = authorityFailure();
+  if (resetAuthorityFailure) return resetAuthorityFailure;
   return new Promise((resolve) => {
     let consumed = false;
     let settled = false;
@@ -413,6 +455,13 @@ async function enqueueLoopAgentPromptToSession(
         attempt?.attemptId,
       ),
       started: () => {
+        const failure = authorityFailure();
+        if (failure) {
+          ownsAttempt = false;
+          deps.queue.cancelQueued(sessionName, messageId, failure.stderr);
+          settle(failure);
+          return false;
+        }
         if (deferLeaseUntilConsumption) {
           const lease = acquireLease();
           if (lease.status === "unavailable") return false;
@@ -456,6 +505,13 @@ async function enqueueLoopAgentPromptToSession(
         stderr: "duplicate loop supervisor task is already queued or running",
       });
     } else {
+      const failure = authorityFailure();
+      if (failure) {
+        ownsAttempt = false;
+        deps.queue.cancelQueued(sessionName, messageId, failure.stderr);
+        settle(failure);
+        return;
+      }
       writeLoopSupervisorWorkOrderState({
         workOrder,
         supervisorSession: sessionName,
@@ -552,6 +608,7 @@ export function createLoopSupervisorTaskRunner(
       request.signal,
       request.timeoutMs,
       options.deferLeaseUntilConsumption ?? request.deferLeaseUntilConsumption ?? false,
+      request.authorityFence,
     );
 }
 

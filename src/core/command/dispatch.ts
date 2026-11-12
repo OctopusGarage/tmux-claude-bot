@@ -10,15 +10,26 @@ import { normalizeError } from "../../shared/utils/error.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { getAgentRuntimeRecord, recordAgentLaunch } from "../agents/agent-runtime-records.js";
-import { buildAgentStatusReport, readAgentLatestReply } from "../agents/read.js";
+import {
+  buildAgentStatusReport,
+  readAgentLatestReply,
+  readAgentTurnCompletion,
+} from "../agents/read.js";
 import { CODEX_SKIP_PERMS, SKIP_PERMS } from "../agents/resume-command.js";
+import type { AgentTurnCursor } from "../agents/types.js";
 import { findProjectAutomationConflictForSession } from "../automation/project-conflicts.js";
 import type { HandlerDeps } from "../deps.js";
 import { messages } from "../i18n/index.js";
+import { readLoopSupervisorWorkerLeaseState } from "../loop/supervisor-pool.js";
+import {
+  listUnfinishedLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
+} from "../loop/supervisor-state.js";
+import { isLoopWorkerSessionName } from "../projects/operator.js";
 import { getPathBySession, resolveLiveSessionName } from "../projects/sessionPathMap.js";
 import { recoveryStartCommand } from "../recovery/recover.js";
 import { getActionPrecondition, isMessageAction } from "./actions.js";
-import { sendContextReset } from "./context-reset.js";
+import { sendContextReset, verifyAutomationInputPane } from "./context-reset.js";
 import { parseKeyChord } from "./key-chord.js";
 import type { QueuedMessage } from "./queue.js";
 
@@ -269,9 +280,19 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
     }
   }
 
+  const reservedWorker = isLoopWorkerSessionName(session, deps.config.projectSessionPrefix);
+  const workerOwnership = reservedWorker ? activeWorkerOwnership(session) : null;
+  const workerInput = reservedWorker && ["text", "clear", "compact"].includes(msg.action);
+  if (workerInput && workerOwnership === null && managedWorkerReferenced(session))
+    throw new Error(
+      "Reserved worker ownership requires an active matching lease and work order path",
+    );
+  const verifyWorkerOwnership =
+    workerOwnership === null ? undefined : () => activeWorkerOwnership(session) === workerOwnership;
+
   switch (msg.action) {
     case "text": {
-      if (msg.origin !== "system") {
+      if (msg.origin !== "system" && workerOwnership === null) {
         const conflict = findProjectAutomationConflictForSession(session);
         if (conflict !== null) {
           log.warn("text rejected: project automation conflict", {
@@ -298,7 +319,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       try {
         await waitUntilInputReadyForMessage(msg, deps, session);
       } catch (err) {
-        if (msg.origin === "system") throw err;
+        if (msg.origin === "system" || workerOwnership !== null) throw err;
         log.warn("text rejected: agent input surface not ready", {
           err,
           data: { session, action: msg.action, channel: msg.channel },
@@ -307,9 +328,83 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         return m.agentInputNotReady;
       }
       const promptText = text;
+      let managedTurnCursor: AgentTurnCursor | undefined;
+      let bootstrapPid: number | undefined;
+      let bootstrapOwnership: string | null = null;
+      let verifyManagedOwnership = verifyWorkerOwnership;
+      if ((msg.origin === "system" && msg.doneProbe !== undefined) || workerOwnership !== null) {
+        let before = await readAgentTurnCompletion(
+          deps.configResolver,
+          session,
+          promptText,
+          Number.POSITIVE_INFINITY,
+        );
+        const readyDeadline = Date.now() + deps.config.maxWaitReadyMs;
+        while (before?.status === "unavailable" && Date.now() < readyDeadline) {
+          await sleep(Math.min(500, Math.max(0, readyDeadline - Date.now())));
+          before = await readAgentTurnCompletion(
+            deps.configResolver,
+            session,
+            promptText,
+            Number.POSITIVE_INFINITY,
+          );
+        }
+        if (before !== null) {
+          if (before.status === "unavailable" || before.cursor === undefined) {
+            const identity = await deps.configResolver.resolveLiveAgentIdentity?.(session);
+            bootstrapOwnership = workerOwnership ?? activeSupervisorOwnership(session);
+            if (
+              identity?.kind !== "codex" ||
+              identity.agentPid === null ||
+              identity.transcript !== null ||
+              bootstrapOwnership === null
+            )
+              throw new Error("Codex live transcript unavailable for managed completion evidence");
+            bootstrapPid = identity.agentPid;
+            verifyManagedOwnership = () =>
+              (workerOwnership !== null
+                ? activeWorkerOwnership(session)
+                : activeSupervisorOwnership(session)) === bootstrapOwnership;
+          }
+          if (before.status === "running")
+            throw new Error("Codex has an unresolved active turn before managed dispatch");
+          managedTurnCursor = before.cursor;
+          if (managedTurnCursor) deps.agent.consumeFreshLaunch?.(session, -1);
+          await verifyAutomationInputPane(deps, session);
+        }
+      }
       log.debug("sending prompt to agent", { data: { session } });
       if (msg.delivery && !(await msg.delivery.claim())) return m.doneShort;
+      const submittedAt = Date.now();
       try {
+        if (bootstrapPid !== undefined) {
+          await verifyAutomationInputPane(deps, session);
+          const identity = await deps.configResolver.resolveLiveAgentIdentity?.(session);
+          const owner =
+            workerOwnership !== null
+              ? activeWorkerOwnership(session)
+              : activeSupervisorOwnership(session);
+          if (
+            identity?.kind !== "codex" ||
+            identity.agentPid !== bootstrapPid ||
+            identity.transcript !== null ||
+            owner !== bootstrapOwnership
+          )
+            throw new Error("Codex bootstrap process or ownership changed before submission");
+          const grant = deps.agent.consumeFreshLaunch?.(session, bootstrapPid);
+          if (!grant)
+            throw new Error("Codex live transcript unavailable and no fresh launch grant");
+          managedTurnCursor = {
+            path: "",
+            sessionId: "",
+            fileIdentity: "",
+            offset: 0,
+            agentPid: grant.agentPid,
+            bootstrapIssuedAt: grant.issuedAt,
+          };
+        } else deps.agent.consumeFreshLaunch?.(session, -1);
+        if (verifyWorkerOwnership && !verifyWorkerOwnership())
+          throw new Error("Reserved worker ownership changed before managed submission");
         if (msg.delivery?.pinnedTarget) {
           await deps.bridge.sendKeysToPinnedPane(promptText, msg.delivery.pinnedTarget);
         } else {
@@ -329,6 +424,17 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       // typed into a still-busy pane. Past the horizon, give up with partials.
       let rawResult: string | undefined;
       try {
+        if (managedTurnCursor !== undefined) {
+          return await waitUntilManagedTurnDone(
+            msg,
+            deps,
+            session,
+            promptText,
+            submittedAt,
+            managedTurnCursor,
+            verifyManagedOwnership,
+          );
+        }
         let round = await deps.agent.waitUntilDone(session);
         let waitedMs = deps.config.maxWaitDoneMs;
         const maxWaitDoneTotalMs = msg.maxWaitDoneTotalMs ?? deps.config.maxWaitDoneTotalMs;
@@ -356,6 +462,7 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
         }
         rawResult ??= round.output;
       } catch (err) {
+        if (managedTurnCursor !== undefined) throw err;
         log.error("agent completion wait failed", { err, data: { session } });
         try {
           const pane = await deps.bridge.capturePane(session);
@@ -449,16 +556,25 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       return m.interrupted;
     }
     case "clear": {
-      log.info(`sending /clear session=${session}`);
+      log.info(`clearing agent context session=${session}`);
+      const supervisorOwnership =
+        msg.origin === "system" ? activeSupervisorOwnership(session) : null;
+      const verifyOwnership =
+        verifyWorkerOwnership ??
+        (supervisorOwnership === null
+          ? undefined
+          : () => activeSupervisorOwnership(session) === supervisorOwnership);
       await sendContextReset(deps, session, "clear", {
-        ensureSubmitted: msg.origin === "system",
+        ensureSubmitted: msg.origin === "system" || workerOwnership !== null,
+        ...(verifyOwnership ? { verifyOwnership } : {}),
       });
       return m.clearedContext;
     }
     case "compact": {
       log.info(`sending /compact session=${session}`);
       await sendContextReset(deps, session, "compact", {
-        ensureSubmitted: msg.origin === "system",
+        ensureSubmitted: msg.origin === "system" || workerOwnership !== null,
+        ...(verifyWorkerOwnership ? { verifyOwnership: verifyWorkerOwnership } : {}),
       });
       return m.compactedContext;
     }
@@ -508,6 +624,155 @@ export async function executeMessage(msg: QueuedMessage, deps: HandlerDeps): Pro
       throw new Error(`Unknown action: ${_exhaustive}`);
     }
   }
+}
+
+function managedWorkerReferenced(session: string): boolean {
+  return readLoopSupervisorWorkOrderRegistry().records.some(
+    ({ workOrder }) =>
+      workOrder.workerSession === session ||
+      workOrder.workspace?.repositories.some((repository) => repository.workerSession === session),
+  );
+}
+
+function activeSupervisorOwnership(session: string): string | null {
+  const leases = readLoopSupervisorWorkerLeaseState().leases;
+  for (const { workOrder, state } of listUnfinishedLoopSupervisorWorkOrders())
+    if (
+      state.supervisorSession === session &&
+      leases.some(
+        (lease) =>
+          lease.status === "active" &&
+          lease.workerSession === session &&
+          lease.workOrderId === workOrder.id &&
+          lease.projectId === workOrder.projectId &&
+          nodePath.resolve(lease.projectPath) === nodePath.resolve(workOrder.projectPath),
+      )
+    )
+      return JSON.stringify([workOrder.id, session, nodePath.resolve(workOrder.projectPath)]);
+  return null;
+}
+
+function activeWorkerOwnership(session: string): string | null {
+  const mapped = getPathBySession(session);
+  if (!mapped) return null;
+  const leases = readLoopSupervisorWorkerLeaseState().leases;
+  for (const { workOrder, state } of listUnfinishedLoopSupervisorWorkOrders()) {
+    const paths = workOrder.workspace
+      ? workOrder.workspace.repositories
+          .filter((repository) => repository.workerSession === session)
+          .map((repository) => repository.path)
+      : workOrder.workerSession === session
+        ? [workOrder.projectPath]
+        : [];
+    if (!paths.some((path) => nodePath.resolve(path) === nodePath.resolve(mapped))) continue;
+    if (
+      leases.some(
+        (lease) =>
+          lease.status === "active" &&
+          lease.workerSession === state.supervisorSession &&
+          lease.workOrderId === workOrder.id &&
+          lease.projectId === workOrder.projectId &&
+          nodePath.resolve(lease.projectPath) === nodePath.resolve(workOrder.projectPath),
+      )
+    )
+      return JSON.stringify([workOrder.id, state.supervisorSession, nodePath.resolve(mapped)]);
+  }
+  return null;
+}
+
+async function waitUntilManagedTurnDone(
+  msg: QueuedMessage,
+  deps: HandlerDeps,
+  session: string,
+  promptText: string,
+  submittedAt: number,
+  cursor: AgentTurnCursor,
+  verifyOwnership?: () => boolean,
+): Promise<string> {
+  const deadline = submittedAt + (msg.maxWaitDoneTotalMs ?? deps.config.maxWaitDoneTotalMs);
+  while (Date.now() < deadline) {
+    if (
+      cursor.bootstrapIssuedAt !== undefined &&
+      Date.now() >= submittedAt + deps.config.maxWaitReadyMs
+    )
+      throw new Error("Codex bootstrap live transcript binding timed out; stop unverified");
+    const evidence = await readAgentTurnCompletion(
+      deps.configResolver,
+      session,
+      promptText,
+      submittedAt,
+      cursor,
+    );
+    if (Date.now() >= deadline) break;
+    if (evidence === null || evidence.status === "unavailable")
+      throw new Error("Codex live transcript unavailable for managed completion evidence");
+    if (evidence.cursor !== undefined) cursor = evidence.cursor;
+    if (evidence.status === "aborted")
+      throw new Error("Codex managed turn was interrupted before completion");
+    if (evidence.status === "completed") {
+      if (verifyOwnership && !verifyOwnership())
+        throw new Error("Reserved worker ownership changed before terminal acceptance");
+      return evidence.output;
+    }
+    await sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+  }
+  if (verifyOwnership && !verifyOwnership())
+    throw new Error(
+      "Codex managed completion deadline exhausted; stop unverified (worker ownership changed)",
+    );
+  const ownedTurn = cursor.turn?.matched ? cursor.turn.id : undefined;
+  const proof = await readAgentTurnCompletion(
+    deps.configResolver,
+    session,
+    promptText,
+    submittedAt,
+    cursor,
+    { fresh: true },
+  );
+  if (
+    !ownedTurn ||
+    !proof?.cursor?.turn?.matched ||
+    proof.cursor.turn.id !== ownedTurn ||
+    proof.status === "unavailable"
+  )
+    throw new Error(
+      "Codex managed completion deadline exhausted; stop unverified (current turn identity unavailable or changed)",
+    );
+  if (proof.status === "completed" || proof.status === "aborted")
+    throw new Error("Codex managed completion deadline exhausted before terminal proof");
+  if (proof.cursor.atEnd !== true || proof.cursor.turn.status !== "running")
+    throw new Error(
+      "Codex managed completion deadline exhausted; stop unverified (unread or ambiguous rollout records)",
+    );
+  if (verifyOwnership && !verifyOwnership())
+    throw new Error(
+      "Codex managed completion deadline exhausted; stop unverified (worker ownership changed before interrupt)",
+    );
+  cursor = proof.cursor;
+  await deps.bridge.sendRawKey("C-c", session);
+  const stopDeadline = Date.now() + deps.config.maxWaitReadyMs;
+  while (Date.now() < stopDeadline) {
+    const stopped = await readAgentTurnCompletion(
+      deps.configResolver,
+      session,
+      promptText,
+      submittedAt,
+      cursor,
+    );
+    if (
+      !stopped?.cursor?.turn?.matched ||
+      stopped.cursor.turn.id !== ownedTurn ||
+      stopped.status === "unavailable"
+    )
+      break;
+    cursor = stopped.cursor;
+    if (stopped.status === "completed" || stopped.status === "aborted")
+      throw new Error("Codex managed completion deadline exhausted; owned turn stopped");
+    await sleep(Math.min(500, Math.max(0, stopDeadline - Date.now())));
+  }
+  throw new Error(
+    "Codex managed completion deadline exhausted; stop unverified after scoped interrupt",
+  );
 }
 
 async function waitUntilInputReadyForMessage(

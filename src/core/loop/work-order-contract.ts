@@ -1,6 +1,6 @@
 import type { NotificationChannelSelection } from "../notifications/gateway.js";
 import type { ApprovedSkill } from "../skills/schema.js";
-import type { LoopProjectConfig } from "./config.js";
+import type { LoopProjectConfig, TaskImplementation } from "./config.js";
 import type { LoopSupervisorPlanReview, LoopWorkOrderPlanning } from "./planning.js";
 
 export type SupervisorFinalStatus = "completed" | "failed" | "blocked" | "timeout" | "cancelled";
@@ -168,14 +168,25 @@ export type HarnessAutoSubtask =
       prompt?: string;
     };
 
+export type LoopPrReviewContext = {
+  repository: string;
+  number: number;
+  baseSha: string;
+  headSha: string;
+  diffSha256: string;
+  diff: string;
+  pass: number;
+};
+
 export type LoopWorkOrderTask =
-  | { kind: "architecture" }
+  | { kind: "architecture"; implementation?: TaskImplementation }
   | {
       kind: "workspace-architecture";
       prompt?: string;
     }
   | {
       kind: "bug-fix";
+      implementation?: TaskImplementation;
       maxRounds: number;
       maxBugsPerRound: number;
       requireRegressionTest: boolean;
@@ -184,6 +195,7 @@ export type LoopWorkOrderTask =
     }
   | {
       kind: "test-coverage";
+      implementation?: TaskImplementation;
       targetCoverage: number;
       maxRounds: number;
       requireMeaningfulTests: boolean;
@@ -196,6 +208,7 @@ export type LoopWorkOrderTask =
     }
   | {
       kind: "security-maintenance";
+      implementation?: TaskImplementation;
       maxRounds: number;
       actionThreshold: number;
       criticalThreshold: number;
@@ -238,6 +251,8 @@ export type LoopWorkOrderTask =
     }
   | {
       kind: "pull-request-review";
+      reviewer?: TaskImplementation;
+      reviewContext?: LoopPrReviewContext;
       lookbackHours: number;
       consecutivePasses: number;
       autoMerge: boolean;
@@ -246,6 +261,8 @@ export type LoopWorkOrderTask =
     }
   | {
       kind: "repository-pull-request-review";
+      reviewer?: TaskImplementation;
+      reviewContext?: LoopPrReviewContext;
       repo: string;
       base?: string;
       lookbackHours: number;

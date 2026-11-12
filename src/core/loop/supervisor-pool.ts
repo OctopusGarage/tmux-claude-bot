@@ -76,6 +76,24 @@ export function readLoopSupervisorWorkerLeaseState(): LoopSupervisorWorkerLeaseS
   }
 }
 
+/** Existing in-process reservation and durable lease must agree on the live owner. */
+export function hasReservedLoopSupervisorLease(
+  workOrder: LoopSupervisorWorkerLeaseWorkOrder,
+  supervisorSession: string,
+): boolean {
+  return (
+    inFlightSupervisorSessions.has(supervisorSession) &&
+    readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workerSession === supervisorSession &&
+        lease.workOrderId === workOrder.id &&
+        lease.projectId === workOrder.projectId &&
+        lease.projectPath === workOrder.projectPath,
+    )
+  );
+}
+
 export function writeLoopSupervisorWorkerLeaseState(state: LoopSupervisorWorkerLeaseState): void {
   const path = leaseStatePath();
   mkdirSync(dirname(path), { recursive: true });

@@ -3,6 +3,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
 import { createLogger } from "../../shared/utils/logger.js";
+import { loopExecutionPathQuarantined } from "./execution-quarantine.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import {
   type LoopWorkOrder,
@@ -11,6 +12,12 @@ import {
   withLoopSourceWorktree,
   withLoopWorkspaceRepositoryExecutionWorktrees,
 } from "./work-order.js";
+import {
+  archiveLoopCommit,
+  archiveLoopWorktree,
+  archiveMissingLoopWorktree,
+  safeOwnedWorktreePath,
+} from "./worktree-recovery.js";
 
 const log = createLogger("loop.execution-worktree");
 const logUnexpectedWorktreeRefusal = createWarningCoalescer(log, {
@@ -24,6 +31,24 @@ export function prepareLoopExecutionWorktrees(input: {
   defaultMode?: LoopWorktreeIsolationMode;
   onPreparationFailure?: (failure: LoopExecutionWorktreePreparationFailure) => void;
 }): LoopWorkOrder {
+  if (
+    loopExecutionPathQuarantined(input.workOrder.projectPath) ||
+    (input.workOrder.executionIsolation?.sourceWorktree !== undefined &&
+      loopExecutionPathQuarantined(input.workOrder.executionIsolation.sourceWorktree)) ||
+    input.workOrder.workspace?.repositories.some(
+      (repository) =>
+        loopExecutionPathQuarantined(repository.path) ||
+        (repository.sourcePath !== undefined &&
+          loopExecutionPathQuarantined(repository.sourcePath)),
+    )
+  ) {
+    return failExecutionWorktreePreparation(input, {
+      repositoryId: input.workOrder.projectId,
+      sourceWorktree: input.workOrder.projectPath,
+      reason: "external process ownership is quarantined",
+      repairDisposition: "target-or-external-blocker",
+    });
+  }
   if (input.runGit === undefined) return input.workOrder;
   if (input.workOrder.workspace !== undefined) {
     return prepareWorkspaceExecutionWorktrees(
@@ -89,6 +114,7 @@ export function prepareLoopExecutionWorktrees(input: {
  */
 type LoopExecutionWorktreeCleanupInput = {
   worktree: string;
+  workOrderId?: string;
   sourceWorktree?: string;
   expectedBranch?: string;
 };
@@ -144,6 +170,11 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult,
   registrations: MissingWorktreeRegistrations,
 ): LoopExecutionWorktreeCleanupResult {
+  if (
+    loopExecutionPathQuarantined(input.worktree) ||
+    (input.sourceWorktree !== undefined && loopExecutionPathQuarantined(input.sourceWorktree))
+  )
+    return "failed";
   const worktree = resolvePath(input.worktree);
   const reconciliationKey = missingWorktreeReconciliationKey({
     worktree,
@@ -197,6 +228,8 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
       });
       return "already-clean";
     }
+    if (!archiveMissingLoopWorktree({ ...input, worktree, sourceWorktree, runGit }))
+      return "failed";
     const removed = runGit({
       cwd: sourceWorktree,
       args: ["worktree", "remove", "--force", worktree],
@@ -230,6 +263,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   }
   clearMissingWorktreeReconciliations(worktree);
   let branchHead: string | undefined;
+  let currentBranchName: string | undefined;
   if (input.expectedBranch !== undefined) {
     if (input.sourceWorktree === undefined) {
       log.warn("loop cannot remove a local branch without its source repository", {
@@ -264,7 +298,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
   }
   if (input.expectedBranch !== undefined) {
     const currentBranch = runGit({ cwd: worktree, args: ["branch", "--show-current"] });
-    const currentBranchName = currentBranch.stdout.trim();
+    currentBranchName = currentBranch.stdout.trim();
     if (
       currentBranch.status !== 0 ||
       (currentBranchName !== "" && currentBranchName !== input.expectedBranch)
@@ -286,6 +320,10 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
       return "failed";
     }
     branchHead = head.stdout.trim();
+  }
+  const archive = archiveLoopWorktree({ ...input, worktree, runGit });
+  if (archive === null) return "failed";
+  if (input.expectedBranch !== undefined && branchHead !== undefined) {
     if (currentBranchName === input.expectedBranch) {
       const detached = runGit({ cwd: worktree, args: ["switch", "--detach", branchHead] });
       if (detached.status !== 0) {
@@ -301,12 +339,14 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
         sourceWorktree: resolvePath(input.sourceWorktree),
         branch: input.expectedBranch,
         expectedSha: branchHead,
+        commitArchived: true,
         runGit,
       })
     ) {
       return "failed";
     }
   }
+  if (!archive.verify(true)) return "failed";
   const removed = runGit({
     cwd: worktree,
     args: ["worktree", "remove", "--force", worktree],
@@ -316,6 +356,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
       removeStandaloneBotCheckoutAfterMainWorktreeFailure({
         worktree,
         reason: removed.stderr || removed.stdout,
+        verifyArchive: () => archive.verify(true),
         runGit,
       })
     ) {
@@ -339,6 +380,7 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
 function removeStandaloneBotCheckoutAfterMainWorktreeFailure(input: {
   worktree: string;
   reason: string;
+  verifyArchive: () => boolean;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): boolean {
   if (!input.reason.includes("is a main working tree")) return false;
@@ -349,6 +391,7 @@ function removeStandaloneBotCheckoutAfterMainWorktreeFailure(input: {
   if (branch.status !== 0 || branch.stdout.trim() !== "") return false;
   const status = input.runGit({ cwd: input.worktree, args: ["status", "--porcelain"] });
   if (status.status !== 0 || status.stdout.trim() !== "") return false;
+  if (!input.verifyArchive()) return false;
   try {
     rmSync(input.worktree, { recursive: true, force: true });
     return !existsSync(input.worktree);
@@ -365,6 +408,7 @@ function cleanupExactLocalLoopBranch(input: {
   sourceWorktree: string;
   branch: string;
   expectedSha?: string;
+  commitArchived?: boolean;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
 }): boolean {
   const listed = input.runGit({
@@ -392,6 +436,16 @@ function cleanupExactLocalLoopBranch(input: {
     });
     return false;
   }
+  if (
+    !input.commitArchived &&
+    !archiveLoopCommit({
+      repository: input.sourceWorktree,
+      head: observedSha,
+      branch: input.branch,
+      runGit: input.runGit,
+    })
+  )
+    return false;
   const deleted = input.runGit({
     cwd: input.sourceWorktree,
     args: ["update-ref", "-d", ref, observedSha],
@@ -473,9 +527,11 @@ function readMissingWorktreeRegistrations(input: {
 }
 
 export function isBotOwnedLoopExecutionWorktree(worktree: string): boolean {
-  const root = resolvePath(join(appStateDir(), "loop-worktrees"));
-  const resolved = resolvePath(worktree);
-  return resolved !== root && resolved.startsWith(`${root}/`);
+  try {
+    return safeOwnedWorktreePath(worktree);
+  } catch {
+    return false;
+  }
 }
 
 export type LoopExecutionWorktreePreparationFailure = {

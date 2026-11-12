@@ -8,6 +8,7 @@ import {
 } from "./delegation-attempt.js";
 import { parseSupervisorFinalSummaryFile } from "./final-summary-contract.js";
 import { readFreshSupervisorFinalSummary } from "./final-summary-freshness.js";
+import { hasRalphTask } from "./ralph-task.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
 import { completeLoopSupervisorRun } from "./supervisor-completion.js";
 import { workOrderStateForResult, writeLoopSupervisorWorkOrderState } from "./supervisor-state.js";
@@ -46,6 +47,8 @@ export function restoredLoopSupervisorMessage(
 ): QueuedMessage | null {
   const restore = parseLoopSupervisorControlRestore(persisted);
   if (restore === null) return null;
+  // An external continuation cannot recreate its process-local reservation after restart.
+  if (hasRalphTask(restore.workOrder)) return null;
   // A crash can leave the durable queue item behind after the worker has already
   // written its authoritative final summary. Replaying that prompt would turn a
   // completed WorkOrder back into in-flight work and duplicate expensive checks.
@@ -125,6 +128,7 @@ export function restoredLoopSupervisorMessage(
 export function shouldDiscardRestoredLoopSupervisorMessage(persisted: PersistedMessage): boolean {
   const restore = parseLoopSupervisorControlRestore(persisted);
   if (restore === null) return false;
+  if (hasRalphTask(restore.workOrder)) return true;
   if (restore.attemptId !== undefined)
     return (
       readDelegationAttempt(restore.workOrder, restore.supervisorSession, restore.attemptId)

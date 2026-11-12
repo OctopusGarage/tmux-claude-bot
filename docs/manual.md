@@ -479,9 +479,6 @@ otherwise to the owner fallback configured for the bot.
 
 ## 8. Loop Engineering
 
-For the intelligent automation terminology map and maintenance boundaries, see
-`docs/intelligent-automation.md`.
-
 Loop Engineering runs recurring maintenance work from a YAML config. It is off by
 default; enable it by setting:
 
@@ -493,6 +490,52 @@ LOOP_ENGINEERING_TICK_MS=300000   # 0 disables the managed loop
 Set `enabled: false` on a project, workspace, or `prReview.repositories` entry
 to pause all schedules for that configured target while preserving its schedule,
 GitHub account, branch, prompt, and repair policy for later re-enable.
+
+Codex startup skips a recognized active update menu without updating the CLI or
+changing its update preferences. A footer advertising `esc skip` uses Escape;
+the legacy menu selects temporary Skip only when its current selection is known.
+Unknown selectors or footers receive no confirmation. After an update menu,
+startup waits for a newly captured composer within the existing readiness
+deadline; a menu selector, historical prompt or stable boot screen is insufficient.
+Normal input waits do not confirm update or trust menus, and the pending-input
+guard still runs before managed submission.
+
+Managed Codex supervisor completion and active owned loop-worker control sends require a fresh exact prompt in the live
+session rollout and a matching root turn terminal event. Fresh native process
+and open-file identity are verified before submission, terminal acceptance and
+any timeout interrupt; routine polls read bounded new rollout records. A stable pane, old final
+marker, or transcript browsing view cannot complete the current WorkOrder. A fresh bot-started direct Codex process may create its rollout only after the
+first prompt. That one submission requires a single-use launch grant, a clean
+verified input surface and active managed ownership; the bot then binds only the
+same native process's newly opened rollout. Unknown, resumed, adopted or custom
+launches receive no bootstrap grant. Missing live evidence otherwise blocks
+submission or fails the attempt; the bot does not substitute
+a different session's history. A typed aborted turn fails immediately. The actual
+elapsed WorkOrder deadline remains binding; on expiry, the bot interrupts only a
+revalidated owned turn and waits a bounded interval for terminal stop evidence.
+An unverified stop is reported as failure, and an unresolved active turn blocks
+the next managed prompt. A genuine terminal reply without its final marker still
+uses the existing bounded output-contract repair.
+
+Automation context reset verifies the input composer before sending its slash
+command and presses Enter again only while that exact command remains pending.
+Transcript browsing, queued input, missing capture, or unrelated pending text
+blocks the next automation prompt. Active owned loop-worker control resets use the same input checks, including
+commands submitted by a supervisor through the public control surface. Retained,
+missing or mismatched worker ownership blocks new worker input and cannot grant
+interrupt authority. Ordinary chat completion behavior is unchanged.
+
+An actively owned Codex automation clear starts a fresh native process instead
+of sending `/clear`, because Codex may defer its new rollout until the first
+prompt. The bot verifies the clean composer, current ownership and old process
+identity, waits for that process to exit, and uses the normal dispatcher start
+within one readiness deadline. The owned stop pins its tmux pane and server,
+rechecks native identity and ownership before Ctrl-C and `/exit`, and bounds each
+tmux command by the remaining time. Verified absence after Ctrl-C skips `/exit`.
+It does not use the ordinary exit's terminal cleanup. Only that proven fresh
+start can grant the first managed submission. Changed or unavailable process identity, an unconfirmed exit
+or lost ownership blocks the handoff. Ordinary user `/clear`, Claude resets and
+`/compact` retain their slash-command behavior.
 
 Each scheduled project chooses a runner:
 
@@ -574,7 +617,13 @@ Each scheduled project chooses a runner:
   passes, and only auto-merges when CI/status checks and mergeability are
   acceptable. Drafts and same-repository conflicts are not excluded: inspect
   each one, repair and mark it ready when safe, close obsolete or non-actionable
-  work with evidence, or record a specific human blocker. Set `mergeMethod` to
+  work with evidence, or record a specific human blocker. Bounded repair may
+  commit and push only to an eligible PR's existing same-repository head branch;
+  project review never creates a new implementation branch or PR, regardless of
+  the project's implementation commit defaults. The native supervisor owns repair
+  even when RalphWorks performs the immutable review passes. After repair, repeat
+  the required review, CI, mergeability and system gates on the updated revision.
+  Set `mergeMethod` to
   `squash`, `merge`, or `rebase` to choose the GitHub CLI merge mode; the default
   is `squash`. It is intended to catch introduced bugs and operational risks,
   not to block on style nits.
@@ -908,6 +957,328 @@ Useful commands:
 - `tcb capabilities update --default [--json]` to print the refresh path before
   running `tcb loop skills refresh <file> --write`
 
+Disabling a repository review target stops discovery and queued consumption on
+the next tick that reads the updated config. Pending and retry-wait reviews stay
+queued without consuming dispatch attempts; re-enabling the target resumes them.
+Paused entries do not block enabled repositories behind them in the queue. A
+pause does not cancel work already admitted or change a tick's config snapshot.
+This target switch does not pause Project Recovery or active delegation.
+
+### Optional RalphWorks task execution
+
+Architecture, bug-fix, test-coverage and security-maintenance tasks use native execution by default.
+An operator may explicitly select RalphWorks separately for each standalone
+single-project family through `execution.architecture`, `execution.bugFix` or
+`execution.testCoverage` or `execution.securityMaintenance`. The existing scheduler, pre-dispatch assessment,
+worktree preparation, admission and leases still own the run. Other task families,
+active delegation, all workspace tasks and harness-auto keep native behavior,
+including maintenance subtasks selected by harness-auto.
+
+Install the public `ralph` CLI separately and configure its runtime through
+RalphWorks. The bot neither loads runtime file contents nor manages provider
+credentials. Opt in through the dedicated commands (configuration output is JSON;
+parameter values are redacted):
+
+```bash
+tcb loop architecture get /path/to/loop.yaml example
+tcb loop architecture set /path/to/loop.yaml example ralphworks --profile builtin:architecture --runtime local --param maxChanges=2
+tcb loop architecture set /path/to/loop.yaml example native
+tcb loop bugfix get /path/to/loop.yaml example
+tcb loop bugfix set /path/to/loop.yaml example ralphworks --runtime local
+tcb loop bugfix set /path/to/loop.yaml example native
+tcb loop test-coverage get /path/to/loop.yaml example
+tcb loop test-coverage set /path/to/loop.yaml example ralphworks --runtime local
+tcb loop test-coverage set /path/to/loop.yaml example native
+tcb loop security-maintenance get /path/to/loop.yaml example
+tcb loop security-maintenance set /path/to/loop.yaml example ralphworks --runtime local
+tcb loop security-maintenance set /path/to/loop.yaml example native
+```
+
+The project must already enable `execution.agent` and use
+`runner.kind: agent-supervised`. The equivalent optional configuration is:
+
+```yaml
+execution:
+  agent: true
+  architecture:
+    kind: ralphworks
+    profile: builtin:architecture
+    runtime: local
+    params:
+      maxChanges: 2
+  bugFix:
+    kind: ralphworks
+    runtime: local
+  testCoverage:
+    kind: ralphworks
+    runtime: local
+  securityMaintenance:
+    kind: ralphworks
+    runtime: local
+```
+
+Each family defaults independently to native when its selector is absent; setting
+one back to native preserves the others. External selection is rejected unless
+supervised agent execution is enabled. Invalid selections and credential-like
+parameters are rejected before writing configuration.
+
+Default profiles are `builtin:architecture`, `builtin:bugfix`,
+`builtin:test-coverage` and `builtin:security-maintenance`. For `builtin:bugfix`, the bot supplies discovery mode
+(`mode: discover`) and derives `maxFixes` from `bugFix.maxBugsPerRound`, capped at the built-in profile limit of 10. For
+`builtin:test-coverage`, it derives `targetCoverage`, `includeIntegration` and
+`includeE2E` from the configured coverage policy. Custom profile references remain
+opaque; the generated task still carries caller policy and requires the report
+to account for that policy. A custom profile cannot waive bot acceptance gates.
+For `builtin:security-maintenance`, the bot supplies `allowDependencyUpdates`,
+`allowConfigHardening` and `allowStaticAnalysisFixes` from caller policy and rejects
+conflicting parameters. The task retains action/critical risk thresholds,
+`maxRounds`, custom prompt and cleanup policy. Risk-based dispatch remains in the
+bot. `maxFixes` remains the profile's independently configured parameter; it is
+not derived from rounds or risk scores.
+
+`profile`, `runtime` and `params` are optional. Runtime and profile strings are
+opaque references resolved by RalphWorks; params are non-secret strings, finite
+numbers or booleans. Credential-like parameter names are rejected. This is an
+external execution opt-in, not a new bot model integration. The initial supported
+transport is explicitly `--executor host --workspace current --commit none`.
+The external tool runs in the bot-owned working tree and cannot own Git delivery.
+Use it only for trusted task/profile/runtime inputs within that authorized scope.
+
+Lifecycle snapshots request only PID, parent PID, process group and start time.
+They reject malformed, partial or duplicate identity rows; CPU, memory and command
+text remain part of the separate host resource sampler. This reduces probe work
+but does not guarantee that process enumeration cannot time out.
+
+Ownership snapshot failures report whether the process probe failed or the
+ownership-persistence callback failed, with sanitized error name/code, killed
+flag, signal and elapsed milliseconds. Unknown metadata is reported as unknown
+or null; raw error messages, commands, process output and paths are excluded.
+During execution, including a timeout crossing successful CLI close, one fresh
+probe retry is allowed for a confirmed five-second `ps` timeout marked by the
+probe's own timer after its helper closes
+(`ResourceProcessProbeTimeoutError`, `ETIMEDOUT`). The observed exit signal is
+diagnostic information, not timeout proof. A helper that ignores TERM receives
+KILL through its original handle after 250 ms; retry still waits for helper close. A
+fresh successful snapshot and any required ownership persistence reset that
+consecutive retry budget. Recovered timeouts appear as `ownershipProbeRetries`
+in the process result, with a count and last sanitized timeout diagnostic. Each
+allowed retry also writes a structured warning containing only those safe fields.
+The retry shares the original execution deadline. Cancellation, child exit,
+final verification and stop cleanup retain fresh-proof requirements; parser,
+other probe and persistence failures are not retried. Quarantine and process
+stop verification remain authoritative.
+
+The bot generates a concrete Markdown task from the WorkOrder goal, allowed and
+blocked actions, planning acceptance criteria, stop conditions and required
+checks. The original goal and task-specific prompt remain caller context. The
+external phase owns bounded implementation, required local verification and the
+family report; native review, final system acceptance, commits and PR delivery
+remain bot-owned downstream work. Pending downstream actions alone do not block
+an external completion request, but incomplete implementation or missing/failed
+required local verification and plan/report evidence still do. Scheduled checks
+and output validation may follow that request and retain their existing gates.
+A skipped assessment or null score is not measured success. RalphWorks resolves
+the methodology and skills. Before invocation the
+bot requires the exact repository root, a clean worktree, an unchanged HEAD and
+no existing `.ralph` task state. An absent `.ralph` or a verified empty, non-symlink directory is allowed; any contents, lock entry, symlink, non-directory or unreadable directory blocks invocation without cleanup. Configured preflight checks must pass without leaving
+changes. The CLI receives a unique invocation ID, caller-owned receipt path and explicit `--state-dir` pointing to fresh `ralph-active-state` under the attempt's artifact directory, outside the worktree. Runtime inputs, resources, progress, run records and current pointer stay there. RalphWorks keeps its worktree-scoped `.ralph/run.lock` with PID/UUID ownership, so different state directories cannot run concurrently against the same worktree; this tiny coordination lock is not path-bearing task metadata.
+The bot checks task/receipt hashes, source identity, terminal status, final-round
+checks, result artifacts and declared output hashes. A nonempty
+family report (`ARCHITECTURE_REPORT.md`, `BUGFIX_REPORT.md`,
+`COVERAGE_REPORT.md` or `SECURITY_REPORT.md`) must preserve the WorkOrder's baseline findings, scope,
+policy, verification and risks, including required planning or score evidence.
+Receipt success does not prove that a task target or plan review passed.
+
+After the CLI and tracked descendants stop, the bot moves the job-owned external active state to the run's archive directory: `architecture-execution/ralph-state`
+for architecture and `external-execution/ralph-state` for bug-fix, test-coverage or security-maintenance.
+The receipt preserves original paths; the reservation binds the selected active root and `accepted-receipt.json` records the archive
+mapping and identity. Historical reservations without that field retain validation against the original worktree `.ralph` layout; existing artifacts are not migrated or rewritten. A cross-filesystem archive failure blocks delivery and
+retains state for inspection. Preexisting Ralph state is never removed. Failed
+runs retain generated evidence for inspection. Valid terminal state is archived;
+missing or invalid receipts retain caller-owned active state outside the worktree. Existing archive destinations are never replaced. Do not commit generated runtime state.
+An existing attempt reservation blocks automatic re-execution of the same
+WorkOrder, including readiness retries or recovery. Inspect its evidence and
+start a new authorized run after resolving the blocker.
+
+The native supervisor then performs review and delivery only: it inspects the
+actual diff and attributed external evidence, independently reruns checks and
+assessment, completes honest `reviewGate` and `planReview` fields, and commits or
+opens a PR only under existing policies. It must not rerun implementation, sync,
+reset, discard changes or invoke a fallback native implementation skill. Missing
+planning/score evidence blocks acceptance. The system gate revalidates the
+receipt and output evidence before its existing deterministic gates; all existing
+CI, GitHub, clean-worktree and final acceptance rules still apply.
+
+The external phase receives at most 80% of the remaining WorkOrder budget,
+reserving time for native review, verification and delivery. Actual elapsed time
+is deducted before the native phase; cleanup never extends an accepted deadline.
+
+The review prompt carries its fixed UTC deadline and actual remaining budget;
+transport retries and summary finalization consume that same allowance. Required
+commands use the repository's documented budgets rather than a guessed short
+limit for an entire selected test batch. A local timeout may receive at most one
+verification-only retry when its old processes are confirmed stopped and a
+justified larger limit fits the remaining budget. Preserve both attempts and
+require an actual passing result; assertion failures never authorize retrying
+implementation, editing tests or skipping a gate. The frozen system still owns
+final acceptance.
+
+External review inventories checks first and starts long read-only checks before
+reviewing the diff, preserving fixed inputs, logs, child cleanup and actual
+results. When assessment and an explicitly configured eval use exactly the same
+command, the production system gate owns its fresh independent execution; the
+reviewer inspects prior passing evidence without repeating that command merely
+to duplicate the gate. Distinct assessment commands and assessment-only setups
+still require review-phase execution. All other required checks remain required.
+A review handoff is preliminary until the production gate passes; reserve time
+for that command, Git delivery and the final summary within the original budget.
+Keep the handoff concise and reference exact command manifests and logs rather
+than copying full selected-file lists. Omit optional `planReview` when no planning
+contract exists. Required planning flags are JSON booleans, never null or strings;
+score claims require measured evidence. Deterministic gate evidence is one string
+reference, and its optional command can remain in the referenced manifest. Prepare
+a truthful incomplete draft during verification, then publish completed status
+only after required checks and authorized Git delivery finish.
+
+Keep this backend explicitly optional. A frozen fourteen-execution composition
+study on mesh-talk completed all six native scoped tasks but none of the six
+RalphWorks scoped tasks within twenty minutes, despite passing independent
+automated checks on all resulting patches. A separate history task completed
+through the real system gate in both modes, and one separately registered
+service-failure replay completed with source acceptance. An unpaired thirty-minute
+diagnostic still blocked when a required reviewer-selected Node batch reached its
+own 120-second timeout while overall time remained. Choose the existing runner
+and command budgets to cover implementation and independent review; increasing
+the total timeout alone does not establish reliability. Preserve failed evidence,
+configured checks and native review rather than treating a completed receipt as
+acceptance or silently retrying implementation. These small known-fixture results
+do not establish default replacement readiness or live-daemon delivery coverage.
+
+A separate reliability follow-up preserves those failures and tests the improved
+composition in eight fresh runs: two calls, one presence and one history task per
+method, with the same 45-minute total WorkOrder allowance and at most two combined
+worker/validator slots. Both native and RalphWorks complete review, local commit
+and the production gate in 4/4 runs; independent checks pass for every result.
+Partially masked source review accepts 2/4 native results and 4/4 RalphWorks
+results: native presence loses actual semantic source context and native history
+loses the original visual requirement for helper-only changes. All eight preserve
+the assessed behavior and original assertions. Source-report accuracy is 3/4
+versus 4/4, and completeness 2/4 versus 4/4, with reviewer qualifications retained.
+The separate baseline-sensitive calls endpoint passes 1/2 native and 2/2 RalphWorks
+results; one pass per method prevents replacement admission, so a passing probe
+alone must not be described as preserving an admitted replacement.
+
+The architecture profile now defaults its existing configured-check timeout to
+180 seconds; explicit profile/task overrides still apply. Bot review, revisions,
+readiness recovery and final acceptance share the original deadline. Independent
+gates, receipt provenance and quarantine remain required; there is no implementation
+replay or native fallback. The tested 45-minute configuration supports explicit
+opt-in while leaving native as the backward-compatible default. These small
+known-fixture results do not validate the old twenty-minute allowance, isolate
+the effects of candidate/budget/concurrency changes, or exercise live daemon,
+tmux, notifications or remote PR delivery. Both projects' full local gates pass
+for the frozen candidate; final documentation is checked separately. Detailed
+outcomes, retained failures, actual command/Git evidence and cleanup/integrity
+records are in the separate `2026-10-23-composition-optimization` evidence bundle.
+
+For cancellation or a deadline with healthy ownership, one stop operation first
+captures and persists a fresh process census before sending TERM to observed
+children and the original live root handle. This preserves ancestry for ordinary
+preflight shell children born between polls. Census capture has a 250 ms bound;
+failure or expiry requests TERM immediately and permanently retains ownership
+uncertainty, even if a late snapshot is empty. An existing ownership failure
+requests cooperative TERM immediately without this census wait.
+
+An independent timer allows 1.25 seconds after actual TERM for cooperative
+cleanup, including the compatible CLI's one-second detached-worker escalation,
+then forces only the still-live original root handle. Descendant signals require
+fresh exact identities. An unverified process in the launched group prevents
+successful stop proof; its group number alone never permits adoption or a signal.
+Root exit is tracked separately from pipe closure.
+A successful snapshot that crosses either event is discarded before ownership
+inference and refreshed within the same serialized scan. Final proof therefore
+uses a table begun after close; probe failures retain their original handling.
+
+Stop proof has a 3.25-second total budget from the first stop request. New stop
+probes use the remaining budget; a pre-existing probe retains its own bounded
+helper lifetime, but cannot delay root signals or stop settlement. Late results
+cannot resume tracking or establish success. Root closure alone never proves
+descendant shutdown: unavailable verification retains the first ownership failure
+and quarantine even if cooperative cleanup succeeds. Structured cleanup warnings
+report the TERM request, observed root exit/close and sanitized probe diagnostics.
+RalphWorks remains responsible for its cooperative child cleanup;
+an external tool that deliberately daemonizes outside observable ancestry is
+outside this contract. Unverified process termination is a failure requiring
+a durable quarantine and operator reconciliation, not permission to reuse a worktree.
+Quarantine is recorded before child launch and has no TTL: source paths, execution
+worktrees, admission and cleanup stay blocked across restarts and ordinary lease
+expiry. Missing/invalid receipts also retain quarantine because a process snapshot
+cannot prove that an incompatible CLI did not detach an unobserved child. This is
+a cooperative compatible-CLI contract, not a hostile-process containment sandbox.
+Inspect and explicitly reconcile through:
+
+```bash
+tcb loop architecture quarantine list
+tcb loop architecture quarantine release <workOrderId> --processes-stopped
+```
+
+Release requires the operator to establish that all external processes stopped;
+the command also rechecks every recorded PID/start-time identity and refuses
+release while one remains. Do not release an uncertain hold merely because its
+ordinary failure retention expired.
+
+Released bot-owned Loop worktrees are archived before removal, including failed,
+cancelled and timed-out runs. Newly created WorkOrders default to zero failure
+retention; an explicit positive retention window or retained lease is respected.
+Live work, uncertain ownership and quarantine continue to block cleanup. Terminal
+handling and the existing startup/tick reconciliation perform cleanup; current
+project workspaces and evaluation copies outside the bot-owned root are excluded.
+
+Recovery lives under `~/.tmux-claude-bot/state/loop-worktree-archives/` (or the configured
+state directory). Private compressed JSON records preserve the original path,
+HEAD, index, binary staged/unstaged patches, changed/untracked source, file modes,
+symlink targets and reports. `objects.git` holds verified recovery refs in a shared
+Git object store, including commits unique to an independent checkout. Each record
+names its `objectStore` and `headRef` for recovery with Git; source patches and file
+data are stored alongside that identity. Cleanup verifies the archive and rechecks
+source identity before deletion. Failure retains the workspace for a later retry.
+Ignored reproducible dependencies and build caches are excluded; nonignored source,
+browser traces/screenshots and coverage evidence are preserved. Symlink targets are
+recorded without following them. These compact recovery records are not disposable
+workspaces and are not automatically expired.
+
+For a standalone checkout, recovery also preserves all local refs and reflog tips,
+including side branches, annotated tags and older stashes, before its Git directory
+is removed. The `standaloneHistory` map records original refs and reflog object IDs;
+objects use recovery refs named `refs/loop-recovery/<object-id>`. Cleanup verifies
+the snapshot again immediately before direct removal.
+Synchronous archival is deliberately bounded: 32 MiB per captured source/index file,
+64 MiB aggregate captured input, 10,000 filesystem entries, 128 MiB
+JSON/decompressed record, and 256 distinct Git history tips. Oversized evidence stays in its workspace with an
+explicit archive-limit reason for a separate archival operation; it is never
+silently discarded. Clean tracked files are hashed with a fixed-size buffer and
+recovered from Git, so large byte-identical assets do not consume the captured-byte
+budget. Raw bytes that differ from the index despite Git reporting clean (for
+example line-ending normalization or a lossy clean filter) are preserved as
+bounded file overlays. Compressed records are read with a bounded decompression limit.
+
+A cooperative cancellation or timeout may still publish a valid terminal receipt.
+After verified child shutdown the bot reads and validates that same correlated
+receipt without launching another command, archives state and clears quarantine.
+`reconciled-stop.json` preserves the raw receipt status separately from the bot
+cancellation/timeout outcome. Cancellation always wins over a late `completed`
+receipt: no native finalization or delivery runs. Missing, foreign or invalid
+receipts and uncertain child termination keep the durable hold.
+
+The dedicated CLI is the configuration surface. Chat, TUI, Observer MCP and the
+operator skill use the existing task/report views and link to these commands;
+they do not gain independent backend editors or scheduler paths.
+
+
+For the intelligent automation terminology map and maintenance boundaries, see
+`docs/intelligent-automation.md`.
+
+
 ## 9. Home operator
 
 When `HOME_OPERATOR_ENABLED=true`, the bot auto-starts a dedicated agent session
@@ -1114,3 +1485,64 @@ local terminal to enable protection immediately. Existing installs retain access
 until enrollment. In chat, use `/unlock`, approve privately with
 `/approve <request-id> <code>`, and `/lock` when finished. Local revoke, recovery,
 queue behavior and host-isolation limits are documented in [security.md](security.md).
+
+
+### Optional RalphWorks PR review passes
+
+PR review retains native discovery, repair, GitHub decisions, consecutive-pass
+counts, CI/mergeability checks and final acceptance. An operator can explicitly
+select `projects[].pullRequestReview.reviewer` or
+`prReview.repositories[].reviewer` with `kind: ralphworks` for individual immutable
+review passes. Native remains the default. Workspace reviewer opt-in is rejected;
+this selector does not change task implementation selection or harness behavior.
+Project selection requires `execution.agent: true` and `runner.kind:
+agent-supervised`; repository review already requires supervised execution.
+
+```bash
+tcb loop pr-review get /path/to/loop.yaml project example
+tcb loop pr-review set /path/to/loop.yaml project example ralphworks --runtime local
+tcb loop pr-review set /path/to/loop.yaml repository example ralphworks --profile builtin:code-review
+tcb loop pr-review set /path/to/loop.yaml project example native
+```
+
+The same non-secret primitive parameters, redaction, opaque runtime references
+and credential rejection rules apply. Each configured reviewer is cloned into
+its matching WorkOrder; it cannot authorize provider APIs in bot-owned code.
+For each candidate and exact base/head revision, the supervisor invokes:
+
+```bash
+tcb loop pr-review pass /path/to/work-order.json 42 --repository example/repository --base <base-sha> --head <head-sha> --timeout-minutes 10
+```
+
+The command reads the stored WorkOrder and invokes the public external boundary
+for one pass using `builtin:code-review` by default. Its JSON report is
+`CODE_REVIEW.json`, distinct from the implementation security report
+`SECURITY_REPORT.md`. The bot binds evidence to repository, candidate number,
+base/head and diff digest. Findings and incomplete reports never count as a
+clean pass; external failure never silently falls back to native review. Source
+and Git mutations during the external review pass are rejected. Bounded native
+repairs still follow existing policy; every new revision invalidates previous
+clean-pass counts. The configured consecutive clean passes must all match the
+current revision before approval or merge. Every PR decision records the exact
+`reviewedHeadSha`. The independent bot gate verifies revision-bound evidence
+alongside normal CI and delivery checks. A pass timeout can shorten the stored
+WorkOrder deadline; it cannot extend it. Reports and receipts remain preserved
+and must never be edited to force acceptance.
+
+Review snapshots remain available through the final gate. Once the parent
+WorkOrder is terminal, startup and Loop tick reconciliation archive and remove
+its snapshots using the existing failure-retention policy, even if the parent
+execution checkout is already gone. Pass records, receipts, logs and archived
+Ralph state remain in the run directory; `CODE_REVIEW.json` is retained beside
+the pass records, and `workspace-cleanup.json` points to the verified shared
+recovery archive. Git history, the index and local file bytes are preserved by
+the same recovery mechanism used for execution worktrees. A terminal parent
+cannot start another pass.
+
+Active review locks, live worker ownership, retained leases, quarantine,
+mismatched identities and unavailable process inspection retain the snapshot.
+Cleanup checks same-user open files and working directories before removal;
+`lsof` must be available. Failed archival is retried by normal reconciliation.
+No additional schedule or retention setting is needed.
+
+External PR review binds every clean pass to one complete frozen base/head/diff identity. Immediately before delivery, re-read the current PR state and merge with `--match-head-commit` set to the reviewed head. Post-merge API state cannot independently reconstruct whether the base moved immediately before the merge; native CI, mergeability and branch policy remain required.

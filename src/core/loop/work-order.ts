@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appStateDir } from "../../shared/state-dir.js";
 import { opportunityReportPath } from "../opportunities/store.js";
 import { loopWorkerRunSessionName } from "../projects/operator.js";
@@ -19,7 +19,10 @@ import type {
 import { finalMarkerForWorkOrder, SUPERVISOR_FINAL_STATUS_LIST } from "./final-summary-contract.js";
 import { iterationCheckpointPolicy } from "./iteration-checkpoint.js";
 import { defaultActiveDelegationPlanning, type LoopWorkOrderPlanning } from "./planning.js";
+import { hasRalphPrReviewer } from "./ralph-pr-review.js";
+import { hasRalphTask, ralphExecutionArtifact } from "./ralph-task.js";
 import { loopTaskFamilyGovernance } from "./task-family.js";
+import { TASK_IMPLEMENTATIONS } from "./task-implementation.js";
 import type {
   HarnessAutoSubtask,
   HarnessAutoSubtaskKind,
@@ -58,7 +61,7 @@ export function buildLoopWorkOrder(input: {
     | "automation-governance-review"
     | "pull-request-review";
 }): LoopWorkOrder {
-  const task =
+  const task: NonNullable<LoopWorkOrder["task"]> =
     input.jobKind === "pull-request-review"
       ? pullRequestReviewTask(input.project.pullRequestReview)
       : input.jobKind === "test-coverage"
@@ -82,7 +85,22 @@ export function buildLoopWorkOrder(input: {
                 ? opportunityDiscoveryTask(input.project.opportunityDiscovery)
                 : input.jobKind === "automation-governance-review"
                   ? automationGovernanceReviewTask(input.project.automationGovernanceReview)
-                  : { kind: "architecture" as const };
+                  : {
+                      kind: "architecture" as const,
+                      ...(input.project.execution.architecture === undefined
+                        ? {}
+                        : {
+                            implementation: structuredClone(input.project.execution.architecture),
+                          }),
+                    };
+  if (
+    task.kind === "bug-fix" ||
+    task.kind === "test-coverage" ||
+    task.kind === "security-maintenance"
+  ) {
+    const implementation = input.project.execution[TASK_IMPLEMENTATIONS[task.kind].configKey];
+    if (implementation !== undefined) task.implementation = structuredClone(implementation);
+  }
   const workOrder: LoopWorkOrder = {
     id: input.runId,
     scheduledAt: input.scheduledAt,
@@ -232,7 +250,7 @@ export function buildLoopWorkspaceWorkOrder(input: {
   const workspace = input.workspace;
   const task =
     input.jobKind === "pull-request-review"
-      ? pullRequestReviewTask(workspace.pullRequestReview)
+      ? pullRequestReviewTask({ ...workspace.pullRequestReview, reviewer: undefined })
       : input.jobKind === "test-coverage"
         ? testCoverageTask(workspace.testCoverage)
         : input.jobKind === "security-maintenance"
@@ -457,7 +475,7 @@ function defaultExecutionIsolation(expectedWorktree: string): LoopExecutionIsola
     cleanup: {
       success: "release-worker",
       failure: "retain-for-ttl",
-      retainFailureForHours: 72,
+      retainFailureForHours: 0,
     },
   };
 }
@@ -622,6 +640,60 @@ function workspaceTaskTargetScore(
   return 100;
 }
 
+function ralphTaskReviewPolicy(workOrder: LoopWorkOrder): string[] {
+  if (!hasRalphTask(workOrder)) return [];
+  const task = workOrder.task;
+  if (task === undefined || !(task.kind in TASK_IMPLEMENTATIONS)) return [];
+  const metadata = TASK_IMPLEMENTATIONS[task.kind as keyof typeof TASK_IMPLEMENTATIONS];
+  const evidenceDir = join(
+    dirname(
+      workOrder.finalSummaryPath ?? finalSummaryPathForWorkOrder(workOrder.projectId, workOrder.id),
+    ),
+    ralphExecutionArtifact(workOrder),
+  );
+  return [
+    `- RalphWorks performed the ${metadata.label} implementation. Your role is review and delivery only.`,
+    `- Do not rerun RalphWorks or implement ${metadata.label} changes with the native skill. Do not sync, switch, reset, or clean the worktree. A failed external result has no automatic native fallback.`,
+    `- Read accepted-receipt.json, receipt.json, task.md and archived run evidence under ${shellQuote(evidenceDir)}, then inspect ${metadata.report} and the actual diff. The receipt is execution transport evidence, not proof of ${metadata.label} quality or system acceptance.`,
+    ...(workOrder.eval?.command !== undefined &&
+    workOrder.assessment.command === workOrder.eval.command
+      ? [
+          `- The configured assessment is identical to eval.command: ${shellQuote(workOrder.eval.command)}. The fresh production system gate remains pending and will independently execute this command after your handoff. Do not manually rerun this identical assessment command solely to duplicate that gate. Inspect passing command logs bound to the hashed external evidence as preliminary facts, not final acceptance; independently inspect the actual source and independently run all other required checks. Missing or failed required evidence still requires an actual passing check; rerun when needed for diagnosis, changed inputs, or explicit task requirements.`,
+          "- Attribute prior measured scores and passing checks to their external logs. finalVerification describes completed review-owned verification and attributed external checks; list the pending production command as not-run in reviewGate.deterministicGates and explain its ownership in notes. A completed review handoff is not system acceptance; the production gate must still pass. Do not infer targetScoreMet from RalphWorks completion.",
+        ]
+      : [
+          "- Independently run the configured checks and assessment against the actual result. Perform post-mutation review and report the measured score and remaining risks; do not infer targetScoreMet from RalphWorks completion.",
+        ]),
+    "- Reserve time within the original WorkOrder deadline for the configured final eval, Git delivery and final-summary handoff, using documented command budgets and observed durations. No review, command retry or continuation increases that budget. Do not claim the pending production gate passed; block if required review, verification and delivery cannot finish safely within the original deadline.",
+    "- Plan required verification from the repository's documented commands and actual affected-check selectors before running it. Preserve all required checks, use their documented time budgets and keep logs outside maintained source in this WorkOrder's artifact directory. Do not invent short universal 60/120-second limits for a selected batch of many tests; bound commands by their expected duration and the actual remaining review budget, leaving time for final evidence and delivery.",
+    "- Required-check timeouts are not assertion failures. If a command hits an uncalibrated local timeout while total review time remains, retain the original timeout evidence, confirm its child processes stopped, and make at most one verification-only retry with a justified larger limit within the same deadline. Record both attempts and require an actual passing result. Do not retry failed assertions, alter tests, repair source, rerun implementation, or treat unavailable verification as passed; block if required verification cannot finish safely.",
+    "- Attribute pre-mutation planning and review to the external report and preserved evidence. Do not claim you reviewed before changes, completed a checklist, or reached a score without evidence. If required planReview or pre-mutation evidence is missing, report blocked with a concrete reason.",
+    "- If WorkOrder.planning is absent, omit planReview entirely; put review findings and pending verification in reviewGate and followUps instead.",
+    "- When planReview is required, checklistCompleted, targetScoreMet, stopConditionReached, overOptimizationAvoided and verificationCompleted must be JSON booleans true or false, never null or strings. remainingRisks must be an array of strings. Use false for an unmet or unverified claim and explain the evidence or uncertainty in remainingRisks.",
+    "- Set targetScoreMet=true only when actual measured command logs show the configured target was met; attribute external measurements to their preserved logs. RalphWorks completion alone is not score evidence. Keep pending production verification separate in reviewGate.deterministicGates and notes; do not encode it as a null planning field or claim the production gate passed.",
+    "- Maintain a concise final summary incrementally as draft evidence while reviewing. Reference command manifests and logs instead of duplicating full selected-file lists, command output or the architecture report; preserve exact argv and exit results in artifacts. For each reviewGate.deterministicGates object, evidence must be one string, never an array: use an artifact path plus result and hash when available. command is optional; reference the exact command manifest in evidence rather than expanding a long selected-test invocation inline.",
+    "- Complete all required checks before final success. Once verification and authorized Git delivery finish, write the final JSON and print the marker promptly; do not start additional exploration or expand the report. Preserve every required summary field and unresolved risk, and keep the pending production gate explicitly separate from completed review evidence.",
+    "- Preserve the original acceptance criteria, stop conditions, bounded scope, commit and PR policies, and required final reviewGate and planReview contracts. Missing or failed evidence blocks delivery; it never authorizes native reimplementation.",
+  ];
+}
+
+function ralphPrReviewPolicy(workOrder: LoopWorkOrder): string[] {
+  if (!hasRalphPrReviewer(workOrder)) return [];
+  const task = workOrder.task;
+  if (task?.kind !== "pull-request-review" && task?.kind !== "repository-pull-request-review")
+    return [];
+  const orderPath = loopRunArtifactPath(workOrder.projectId, workOrder.id, "workOrder");
+  return [
+    "- This WorkOrder explicitly delegates each immutable PR review pass to RalphWorks. The native supervisor still owns candidate discovery, repair, GitHub decisions, CI/mergeability checks, consecutive-pass counts and final delivery.",
+    `- For each candidate, resolve its exact base and head SHA, then invoke ${loopControlCliCommand()} loop pr-review pass ${shellQuote(orderPath)} <number> --repository <owner/repo> --base <baseSha> --head <headSha>. Require ${task.consecutivePasses} consecutive clean external passes on that exact revision before approval or merge.`,
+    "- Findings or incomplete reports never count as approval. Repair only within caller policy and bounded repair allowances; after every fix, push, base change or other revision change, discard previous clean-pass counts and invoke fresh passes bound to the new base/head. Never reuse an old revision's report.",
+    "- External failure, unavailable CLI, invalid receipt or missing report blocks review; there is no automatic native reviewer fallback. Do not fabricate, mutate or repair CODE_REVIEW.json, receipts or accepted evidence. RalphWorks owns review methodology; native repair never substitutes for a required external pass.",
+    "- Preserve normal CI, mergeability and delivery policy. Every pullRequestDecisions entry, including blocked, repaired and closed outcomes, must record reviewedHeadSha equal to the exact reviewed head. The bot independently validates bound clean passes before accepting approved or merged outcomes.",
+    "- Immediately before approval or merge, re-read the PR head, base, CI and mergeability. A changed revision requires fresh external passes. For a merge, use gh pr merge with --match-head-commit <reviewedHeadSha> and the configured merge method; never bypass required checks or branch policy. A clean code review does not authorize merging a different head.",
+    "- Keep all passes, repair and delivery within the original WorkOrder deadline. A pass command timeout option may shorten the budget but cannot extend it. Persist report/evidence references and truthful blockers in the final summary.",
+  ];
+}
+
 export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
   const cli = loopControlCliCommand();
   const baseBranch = baseBranchForWorkOrder(workOrder);
@@ -629,7 +701,21 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
   const ghIdentityPolicy = githubIdentityPolicy(workOrder);
   const taskPolicy = [
     ...buildLoopWorkspacePolicyLines(workOrder),
-    ...buildLoopTaskPolicyLines(workOrder, baseBranch),
+    ...(hasRalphTask(workOrder) && workOrder.task?.kind !== "architecture"
+      ? []
+      : buildLoopTaskPolicyLines(workOrder, baseBranch)
+          .filter(
+            (line) =>
+              !hasRalphPrReviewer(workOrder) ||
+              !line.includes("review passes may use the worker agent"),
+          )
+          .map((line) =>
+            hasRalphPrReviewer(workOrder)
+              ? line
+                  .replaceAll("Run two independent review passes", "Run independent review passes")
+                  .replaceAll("both review passes", "the configured consecutive review passes")
+              : line,
+          )),
   ];
   return [
     "You are the Loop Supervisor for tmux-claude-bot.",
@@ -641,12 +727,23 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     "- Execute only this bounded work order.",
     ...taskPolicy,
     "- Use the currently running Claude Code / Codex agent capability only.",
-    "- Use native agent capabilities inside the worker when useful, including planning, broad exploration, self-review, or native subagents supported by the active agent surface.",
+    ...(hasRalphTask(workOrder)
+      ? [
+          "- Inventory the required checks and existing evidence first; select commands from the repository's documented validation scope before starting verification. Independently review the existing source, diff and evidence in this supervisor context.",
+          "- Launch long required checks early after scope and command selection. Serialize CPU-heavy, browser, and build suites; bound each tool's internal concurrency to avoid resource contention. Overlap only cheap independent checks or source review while a heavy suite executes. Keep inputs fixed, retain their logs and actual exit results, and await every check and child process before committing or handing off. Do not substitute a narrower check for required coverage.",
+        ]
+      : [
+          "- Use native agent capabilities inside the worker when useful, including planning, broad exploration, self-review, or native subagents supported by the active agent surface.",
+        ]),
     "- Do not create tmux-claude-bot service roles, queues, leases, or lifecycle state for researcher, planner, evaluator, or subagent work.",
-    "- Agentic coding loop: Explore -> Plan -> Code -> Verify -> Review -> Record.",
-    "- Explore before editing: inspect relevant code, tests, errors, logs, reports, prior handoff, and system-gate evidence.",
-    "- Plan the smallest verifiable slice, including risk, expected behavior, and verification commands before broad or risky edits.",
-    "- Code in minimal bounded changes; avoid broad rewrites, unrelated cleanup, and speculative product work.",
+    ...(hasRalphTask(workOrder)
+      ? ["- Review and delivery loop: Inventory -> Verify -> Review -> Record -> Deliver."]
+      : [
+          "- Agentic coding loop: Explore -> Plan -> Code -> Verify -> Review -> Record.",
+          "- Explore before editing: inspect relevant code, tests, errors, logs, reports, prior handoff, and system-gate evidence.",
+          "- Plan the smallest verifiable slice, including risk, expected behavior, and verification commands before broad or risky edits.",
+          "- Code in minimal bounded changes; avoid broad rewrites, unrelated cleanup, and speculative product work.",
+        ]),
     "- Verify with deterministic tests, typecheck, lint, CI, browser/E2E, reproduction commands, or the narrowest available check; do not rely on visual inspection or intuition alone.",
     "- Review behavior, boundaries, regressions, over-engineering, and security risk before finalizing.",
     "- Record what failed or was skipped, and say whether it should become a regression test, eval, monitor, trace, checklist, or doc update.",
@@ -657,9 +754,15 @@ export function buildLoopSupervisorPrompt(workOrder: LoopWorkOrder): string {
     "- Do not add model SDKs, model API keys, or direct model HTTP integrations.",
     "- Respect allowedActions and blockedActions exactly.",
     "- Preserve unrelated user work and avoid broad rewrites.",
+    ...ralphTaskReviewPolicy(workOrder),
+    ...ralphPrReviewPolicy(workOrder),
     ...executionIsolationPolicy(workOrder),
     syncPolicy(workOrder, baseBranch),
-    "- If the base sync fails, the worktree is dirty, or rebase is impossible, stop and report blocked; do not optimize stale code.",
+    ...(hasRalphTask(workOrder)
+      ? []
+      : [
+          "- If the base sync fails, the worktree is dirty, or rebase is impossible, stop and report blocked; do not optimize stale code.",
+        ]),
     commitBranchPolicy(workOrder),
     ghIdentityPolicy,
     ...agentSessionPolicy(workOrder, cli),
@@ -727,7 +830,7 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
       ...workspaceWorktreeVerificationPolicy(workOrder),
       `- Reset delegated worker context(s) with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
       `- Record leased worker/session names, expected worktrees, actual git toplevels, reset actions, and cleanup decisions in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
-      `- On completion, release workers after successful system acceptance; retain workers for ${isolation.cleanup.retainFailureForHours} hour(s) on failure, timeout, cancellation, or invalid output so transcripts can be inspected, then allow cleanup.`,
+      `- On completion, release workers after successful system acceptance. For failure, timeout, cancellation, or invalid output, configured retention: ${isolation.cleanup.retainFailureForHours} hour(s). The system archives recoverable source before removing released workspaces; workspace cleanup is system-owned.`,
     ];
   }
   const sourceWorktreeLines =
@@ -751,7 +854,7 @@ function executionIsolationPolicy(workOrder: LoopWorkOrder): string[] {
     ...workspaceWorktreeVerificationPolicy(workOrder),
     `- Reset the delegated worker context with ${isolation.contextReset} before substantive task execution and between unrelated subtasks; preserve only the WorkOrder JSON and current verified evidence.`,
     `- Record the leased worker/session name, expected worktree, actual git toplevel, reset action, and cleanup decision in actionsTaken or followUps so the run can be replayed from persisted artifacts.`,
-    `- On completion, release the worker after successful system acceptance; retain the worker for ${isolation.cleanup.retainFailureForHours} hour(s) on failure, timeout, cancellation, or invalid output so the transcript can be inspected, then allow cleanup.`,
+    `- On completion, release the worker after successful system acceptance. For failure, timeout, cancellation, or invalid output, configured retention: ${isolation.cleanup.retainFailureForHours} hour(s). The system archives recoverable source before removing released workspaces; workspace cleanup is system-owned.`,
   ];
 }
 
@@ -927,6 +1030,7 @@ function pullRequestReviewTask(
 ): Extract<LoopWorkOrder["task"], { kind: "pull-request-review" }> {
   return {
     kind: "pull-request-review",
+    ...(policy.reviewer === undefined ? {} : { reviewer: structuredClone(policy.reviewer) }),
     lookbackHours: policy.lookbackHours,
     consecutivePasses: policy.consecutivePasses,
     autoMerge: policy.autoMerge,
@@ -1019,6 +1123,7 @@ function repositoryPullRequestReviewTask(
 ): Extract<LoopWorkOrder["task"], { kind: "repository-pull-request-review" }> {
   return {
     kind: "repository-pull-request-review",
+    ...(policy.reviewer === undefined ? {} : { reviewer: structuredClone(policy.reviewer) }),
     repo: policy.repo,
     ...(policy.base !== undefined ? { base: policy.base } : {}),
     lookbackHours: policy.lookbackHours,
@@ -1069,6 +1174,8 @@ function cleanupPolicyForWorkspaceTask(
 }
 
 function syncPolicy(workOrder: LoopWorkOrder, baseBranch: string): string {
+  if (hasRalphTask(workOrder))
+    return "- RalphWorks has already changed the verified worktree. Do not sync, checkout, reset, clean, or discard those changes; inspect and verify them in place.";
   const isolation = workOrder.executionIsolation;
   if (workOrder.task?.kind === "active-delegated-task") {
     if (workOrder.commitPolicy.enabled && workOrder.pullRequestPolicy?.enabled) {
@@ -1139,6 +1246,12 @@ function gitInWorktree(path: string, args: string): string {
 }
 
 function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
+  if (hasRalphTask(workOrder))
+    return [
+      workOrder.task?.kind === "architecture"
+        ? "- Perform review and delivery in this isolated supervisor context. Do not open or delegate another implementation worker, reset another session, or invoke the native architecture skill."
+        : "- Perform review and delivery in this isolated supervisor context. Do not open or delegate another implementation worker, reset another session, or invoke native implementation skills.",
+    ];
   const task = workOrderTask(workOrder);
   if (workOrder.workspace !== undefined) {
     return [
@@ -1198,6 +1311,8 @@ function agentSessionPolicy(workOrder: LoopWorkOrder, cli: string): string[] {
 }
 
 function commitBranchPolicy(workOrder: LoopWorkOrder): string {
+  if (hasRalphTask(workOrder))
+    return "- Preserve the existing prepared branch and HEAD until review passes. Commit only under commitPolicy and deliver only under pullRequestPolicy; never reset or recreate the branch over the RalphWorks changes.";
   const task = workOrderTask(workOrder);
   if (workOrder.workspace !== undefined) {
     return "- This workspace task uses the repository-scoped branch and PR policy listed above; the top-level workspace commitPolicy is only a container default and must not block repository branches or PRs.";
@@ -1214,7 +1329,7 @@ function commitBranchPolicy(workOrder: LoopWorkOrder): string {
     return "- This opportunity discovery task must not create a branch, commit, PR, or code change.";
   }
   if (task.kind === "pull-request-review") {
-    return "- This review task must not create a new PR branch or commit code changes.";
+    return "- This review task must not create a new implementation branch or PR, regardless of commitPolicy; the native supervisor may commit and push bounded repair only on an eligible PR's existing same-repository head branch under the review policy.";
   }
   if (task.kind === "repository-pull-request-review") {
     if (!task.repair.enabled || task.repair.maxAttempts === 0) {
@@ -1441,6 +1556,8 @@ export function buildLoopSupervisorFinalizationPrompt(
     previousOutput.slice(-4000),
     "",
     "Required action now:",
+    ...ralphTaskReviewPolicy(workOrder),
+    ...ralphPrReviewPolicy(workOrder),
     "- Inspect the target project/session state as needed.",
     "- If the delegated target is still working, wait or poll until it reaches a safe handoff.",
     "- If work is complete, verify the final project state, commit/push/open PR as required by the WorkOrder. New PRs should be ready for review by default; create a Draft only when a concrete incomplete-work or human-decision blocker is recorded, and never leave that Draft without a follow-up decision.",
@@ -1487,6 +1604,8 @@ export function buildLoopSupervisorRevisionPrompt(input: {
     input.previousOutput.slice(-4000),
     "",
     "Required action now:",
+    ...ralphTaskReviewPolicy(input.workOrder),
+    ...ralphPrReviewPolicy(input.workOrder),
     "- Inspect the target project, PR, CI, and local repository state as needed.",
     "- Fix only the listed validation failures; do not start a new task, branch, or PR.",
     "- Re-run the minimum verification needed for the repaired validation failure.",

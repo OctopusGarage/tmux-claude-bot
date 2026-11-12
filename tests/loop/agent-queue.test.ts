@@ -311,6 +311,49 @@ describe("createLoopSupervisorTaskRunner", () => {
     requiredFinalMarker: "[LOOP_SUPERVISOR_DONE:wo-1]",
   } satisfies LoopWorkOrder;
 
+  it.each(["readiness", "reset", "consumption"] as const)(
+    "rejects external authority lost at %s without native input or state resurrection",
+    async (boundary) => {
+      const { queue, deps } = queueDeps("/repo/hub", true);
+      let valid = true;
+      let releaseReady!: (value: boolean) => void;
+      const ready = new Promise<boolean>((resolve) => {
+        releaseReady = resolve;
+      });
+      deps.bridge.hasSession = async () => (boundary === "readiness" ? ready : true);
+      const handled: string[] = [];
+      queue.setHandler(async (message) => {
+        handled.push(message.action);
+        if (message.action === "clear") valid = false;
+        message.resolve("done");
+      });
+      if (boundary === "consumption")
+        queue.setReadinessProbe(async () => {
+          valid = false;
+          return true;
+        });
+      const pending = createLoopSupervisorTaskRunner(deps)({
+        session: "tmux_proj_loop-supervisor",
+        prompt: "external review",
+        signal: new AbortController().signal,
+        workOrder,
+        contextReset: boundary === "reset" ? "clear" : "none",
+        authorityFence: () => {
+          if (!valid) throw new Error("lost original external ownership");
+        },
+      });
+      if (boundary === "readiness") {
+        valid = false;
+        releaseReady(true);
+      }
+      const result = await pending;
+      expect(result.status).toBe(1);
+      expect(result.finalSummaryRecovery).toBe("disabled");
+      expect(handled).toEqual(boundary === "reset" ? ["clear"] : []);
+      expect(queue.size("tmux_proj_loop-supervisor")).toBe(0);
+    },
+  );
+
   function persistedSupervisorMessage(id: string, text: string): PersistedMessage {
     return {
       id,

@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   runLoopSupervisedProjectAsync,
   runLoopSupervisorRevisionAsync,
@@ -637,5 +637,226 @@ describe("runLoopSupervisorRevisionAsync", () => {
         finalVerification: "passed",
       },
     });
+  });
+});
+
+describe.each([
+  { kind: "architecture", implementation: { kind: "ralphworks" } },
+  {
+    kind: "bug-fix",
+    maxRounds: 1,
+    maxBugsPerRound: 1,
+    requireRegressionTest: true,
+    implementation: { kind: "ralphworks" },
+  },
+  {
+    kind: "test-coverage",
+    targetCoverage: 90,
+    maxRounds: 1,
+    requireMeaningfulTests: true,
+    allowIntegrationTests: false,
+    allowSmokeTests: false,
+    allowE2ETests: false,
+    allowAiEvalTests: false,
+    implementation: { kind: "ralphworks" },
+  },
+  {
+    kind: "security-maintenance",
+    maxRounds: 3,
+    actionThreshold: 70,
+    criticalThreshold: 90,
+    allowDependencyUpdates: false,
+    allowConfigHardening: true,
+    allowStaticAnalysisFixes: false,
+    implementation: { kind: "ralphworks" },
+  },
+] satisfies NonNullable<LoopWorkOrder["task"]>[])("external $kind execution", (task) => {
+  const external: LoopWorkOrder = { ...workOrder, task };
+  it("keeps an exhausted shared deadline terminal before native review", async () => {
+    let now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const dispatch = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    try {
+      const result = await runLoopSupervisedProjectAsync({
+        workOrder: external,
+        supervisorSession: "supervisor",
+        timeoutMs: 1000,
+        deadline: now + 1000,
+        executeTask: async () => {
+          now += 1001;
+          return {
+            invocationId: "nonce",
+            taskInputSha256: "hash",
+            receiptFile: "/evidence/receipt.json",
+            receiptSha256: "hash",
+            archivePath: "/evidence/ralph-state",
+            profileFingerprint: "hash",
+          };
+        },
+        dispatch,
+      });
+      expect(result).toMatchObject({
+        status: "dispatch-timeout",
+        finalSummaryRecovery: "disabled",
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("reports an expired review deadline as timeout before retrying transport failure", async () => {
+    let now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    let dispatches = 0;
+    try {
+      const result = await runLoopSupervisedProjectAsync({
+        workOrder: external,
+        supervisorSession: "supervisor",
+        timeoutMs: 1000,
+        executeTask: async () => ({
+          invocationId: "nonce",
+          taskInputSha256: "hash",
+          receiptFile: "/evidence/receipt.json",
+          receiptSha256: "hash",
+          archivePath: "/evidence/ralph-state",
+          profileFingerprint: "hash",
+        }),
+        dispatch: async () => {
+          dispatches++;
+          now += 1001;
+          return { status: 1, stdout: "", stderr: "API Error: 503 overloaded" };
+        },
+      });
+      expect(dispatches).toBe(1);
+      expect(result.status).toBe("dispatch-timeout");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("gives review its remaining fixed deadline and reduces it across transport retries", async () => {
+    let now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const timeouts: number[] = [];
+    try {
+      const result = await runLoopSupervisedProjectAsync({
+        workOrder: external,
+        supervisorSession: "supervisor",
+        timeoutMs: 1000,
+        executeTask: async () => {
+          now += 250;
+          return {
+            invocationId: "nonce",
+            taskInputSha256: "hash",
+            receiptFile: "/evidence/receipt.json",
+            receiptSha256: "hash",
+            archivePath: "/evidence/ralph-state",
+            profileFingerprint: "hash",
+          };
+        },
+        dispatch: async (request) => {
+          if (request.timeoutMs === undefined) throw new Error("Expected bounded dispatch");
+          timeouts.push(request.timeoutMs);
+          expect(request.prompt).toContain(new Date(1_800_000_001_000).toISOString());
+          expect(request.prompt).toContain("Required-check timeouts are not assertion failures");
+          expect(request.prompt).toContain("retain the original timeout evidence");
+          expect(request.prompt).toContain("Do not retry failed assertions");
+          if (timeouts.length === 1) {
+            now += 100;
+            return { status: 1, stdout: "", stderr: "API Error: 503 overloaded" };
+          }
+          return {
+            status: 0,
+            stdout:
+              '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"blocked","projectId":"datavibe","actionsTaken":["required assertion failed"],"delegatedTasks":[],"finalVerification":"failed","commits":[],"followUps":[]}',
+            stderr: "",
+          };
+        },
+      });
+      expect(timeouts).toEqual([750, 650]);
+      expect(result.status).toBe("blocked");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it("executes RalphWorks before native review and never uses native implementation instructions", async () => {
+    const events: string[] = [];
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder: external,
+      supervisorSession: "supervisor",
+      timeoutMs: 1000,
+      executeTask: async ({ timeoutMs }) => {
+        expect(timeoutMs).toBe(800);
+        events.push("ralph");
+        return {
+          invocationId: "nonce",
+          taskInputSha256: "hash",
+          receiptFile: "/evidence/receipt.json",
+          receiptSha256: "hash",
+          archivePath: "/evidence/ralph-state",
+          profileFingerprint: "hash",
+        };
+      },
+      dispatch: async ({ prompt }) => {
+        events.push("review");
+        expect(prompt).toContain("review and delivery only");
+        expect(prompt).toContain("Do not rerun RalphWorks");
+        expect(prompt).not.toContain("Before assessment or delegated work, sync");
+        expect(prompt).not.toContain("create or reset the WorkOrder branch");
+        return {
+          status: 0,
+          stdout:
+            '[LOOP_SUPERVISOR_DONE:wo-1]\n{"status":"blocked","projectId":"datavibe","actionsTaken":["missing pre-mutation evidence"],"delegatedTasks":[],"finalVerification":"not-run","commits":[],"followUps":[]}',
+          stderr: "",
+        };
+      },
+    });
+    expect(events).toEqual(["ralph", "review"]);
+    expect(result.status).toBe("blocked");
+  });
+
+  it("disables summary recovery and native fallback after external failure", async () => {
+    let dispatches = 0;
+    const result = await runLoopSupervisedProjectAsync({
+      workOrder: external,
+      supervisorSession: "supervisor",
+      timeoutMs: 1000,
+      executeTask: async () => {
+        throw new Error("receipt rejected");
+      },
+      dispatch: async () => {
+        dispatches++;
+        throw new Error("must not dispatch");
+      },
+    });
+    expect(result).toMatchObject({ status: "dispatch-failed", finalSummaryRecovery: "disabled" });
+    expect(dispatches).toBe(0);
+  });
+
+  it("awaits external cancellation cleanup before returning", async () => {
+    const controller = new AbortController();
+    let stopped = false;
+    const result = runLoopSupervisedProjectAsync({
+      workOrder: external,
+      supervisorSession: "supervisor",
+      timeoutMs: 1000,
+      cancelSignal: controller.signal,
+      executeTask: async ({ signal }) =>
+        new Promise((_, reject) => {
+          signal.addEventListener("abort", () =>
+            setTimeout(() => {
+              stopped = true;
+              reject(new Error("cancelled after stop"));
+            }, 20),
+          );
+        }),
+      dispatch: async () => {
+        throw new Error("must not dispatch");
+      },
+    });
+    controller.abort();
+    await result;
+    expect(stopped).toBe(true);
   });
 });

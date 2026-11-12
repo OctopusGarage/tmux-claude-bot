@@ -124,6 +124,7 @@ describe("seam: live process detection wins over the persisted launch-intent", (
       }) as unknown as AgentRunner;
     const bridge = { resolveSessionName: async (s?: string) => s ?? session } as TmuxBridge;
     const dispatcher = new AgentRunnerDispatcher({
+      maxWaitReadyMs: 1000,
       bridge,
       claude: rec("claude"),
       codex: rec("codex"),

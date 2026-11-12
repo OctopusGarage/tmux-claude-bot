@@ -309,3 +309,41 @@ When adding or changing a governed prompt:
    WorkOrder behavior, PR review, self-repair, or AI/eval behavior.
 10. Update user-facing docs only when the prompt changes visible behavior.
 11. Run focused tests and `pnpm verify:local` before claiming completion.
+
+
+## External Maintenance Review Contract
+
+For an explicit single-project RalphWorks architecture, bug-fix, test-coverage or security-maintenance
+WorkOrder, supervisor main, finalization
+and revision prompts restrict the active native agent to independent evidence
+review, verification and policy-bound delivery. They prohibit reimplementation,
+native fallback, worktree reset/sync and another execution worker. The report and
+receipt carry attributed external evidence; they cannot fabricate native
+pre-mutation review, measured architecture scores, plan completion or commits.
+Missing required evidence blocks. The generated external task contains concrete
+WorkOrder scope/acceptance/checks only; RalphWorks owns methodology and skills.
+Default builtin bug-fix tasks carry discovery mode and the configured maximum
+bug count; builtin coverage tasks carry the target and integration/E2E policy.
+Custom profiles remain opaque, while generated tasks and required family reports
+retain caller policy. Bug-fix and coverage reports must preserve baseline,
+verification and remaining risks without inventing score or coverage claims.
+Contract tests cover this conditional policy. Workspace tasks, harness-auto,
+active delegation and all other task families remain native. No new AI eval or
+comparative result is implied by this extension.
+
+
+## Optional External PR Review Passes
+
+Project `pullRequestReview.reviewer` and repository-review `reviewer` selectors
+independently opt immutable PR passes into the public RalphWorks CLI. Native is
+the default; workspace opt-in is rejected. `tcb loop pr-review get|set` provides
+redacted, validated project/repository configuration, and `tcb loop pr-review pass`
+executes one repository/number/base/head-bound pass within the stored deadline.
+The bot binds `CODE_REVIEW.json` and receipts to the diff and retains native
+candidate discovery, repair, consecutive-pass counting, CI, mergeability and
+GitHub delivery. Findings/incomplete results never approve. Revision changes
+invalidate old passes; external failures block without fallback. Every decision
+records `reviewedHeadSha`, and the independent bot gate validates clean passes
+before accepting approval or merge. External review does not authorize source
+mutation, provider integration, edited evidence or a new deadline. Existing
+native prompts remain unchanged when the reviewer selector is absent.

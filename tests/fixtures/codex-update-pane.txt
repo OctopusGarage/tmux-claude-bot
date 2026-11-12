@@ -1,0 +1,6 @@
+  Update available · 0.165.0 → 0.166.0
+› 1. Update now (runs `npm install -g @openai/codex`)
+  2. Skip
+  3. Skip until next version
+
+  enter continue · esc skip

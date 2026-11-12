@@ -7,7 +7,168 @@ import {
   latestReplyForSentText,
   type SessionEntry,
 } from "../../read/transcript.js";
+import type { AgentTurnCompletion, AgentTurnCursor } from "../types.js";
 import { collectRolloutFiles, findRolloutForProject, rolloutMeta } from "./codex-rollout.js";
+
+/** Managed completion reads only bounded new bytes from the exact live rollout. */
+export async function readCodexTurnCompletion(
+  rolloutPath: string,
+  sessionId: string,
+  sentText: string,
+  sentAfter: number,
+  cursor?: AgentTurnCursor,
+): Promise<AgentTurnCompletion> {
+  const unavailable: AgentTurnCompletion = { status: "unavailable", output: "" };
+  if (cursor && (cursor.path !== rolloutPath || cursor.sessionId !== sessionId)) return unavailable;
+  let file: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    file = await fs.open(rolloutPath, "r");
+    const stat = await file.stat();
+    const fileIdentity = `${stat.dev}:${stat.ino}`;
+    if (cursor && (cursor.fileIdentity !== fileIdentity || stat.size < cursor.offset))
+      return unavailable;
+    const header = Buffer.alloc(64 * 1024);
+    const head = await file.read(header, 0, header.length, 0);
+    const meta = JSON.parse(header.toString("utf8", 0, head.bytesRead).split("\n")[0] ?? "") as {
+      type?: string;
+      payload?: { id?: string };
+    };
+    if (meta.type !== "session_meta" || meta.payload?.id !== sessionId) return unavailable;
+    const next: AgentTurnCursor = {
+      path: rolloutPath,
+      sessionId,
+      fileIdentity,
+      ...(cursor?.agentPid !== undefined ? { agentPid: cursor.agentPid } : {}),
+      offset: cursor?.offset ?? 0,
+      ...(cursor?.turn ? { turn: { ...cursor.turn } } : {}),
+    };
+    const limit = 1024 * 1024;
+    if (sentAfter === Number.POSITIVE_INFINITY) {
+      const tailStart = Math.max(0, stat.size - limit);
+      const tail = Buffer.alloc(stat.size - tailStart);
+      await file.read(tail, 0, tail.length, tailStart);
+      const content = tail.toString("utf8");
+      if (!content.endsWith("\n")) return unavailable;
+      let root: string | undefined;
+      let terminal = false;
+      for (const entry of parseTurnRecords<{
+        type?: string;
+        payload?: { type?: string; turn_id?: string; root_turn_id?: string };
+      }>(tailStart ? content.slice(content.indexOf("\n") + 1) : content)) {
+        const p = entry.payload;
+        if (entry.type !== "event_msg" || !p) continue;
+        if (p.type === "task_started" && p.turn_id && p.turn_id === p.root_turn_id) {
+          root = p.turn_id;
+          terminal = false;
+        } else if (
+          root &&
+          p.turn_id === root &&
+          p.root_turn_id === root &&
+          (p.type === "task_complete" || p.type === "turn_aborted")
+        )
+          terminal = true;
+      }
+      if (tailStart && !root) return unavailable;
+      return {
+        status: root && !terminal ? "running" : "pending",
+        output: "",
+        cursor: { ...next, offset: stat.size, atEnd: true },
+      };
+    }
+    const bytes = Math.min(limit, Math.max(0, stat.size - next.offset));
+    if (bytes > 0) {
+      const buffer = Buffer.alloc(bytes);
+      const read = await file.read(buffer, 0, bytes, next.offset);
+      const newline = buffer.lastIndexOf(10, read.bytesRead - 1);
+      if (newline < 0 && read.bytesRead === limit) return unavailable;
+      if (newline >= 0) {
+        const content = buffer.toString("utf8", 0, newline + 1);
+        next.offset += newline + 1;
+        for (const entry of parseTurnRecords<{
+          type?: string;
+          timestamp?: string;
+          payload?: {
+            type?: string;
+            role?: string;
+            turn_id?: string;
+            root_turn_id?: string;
+            content?: Array<{ type?: string; text?: string }>;
+          };
+        }>(content)) {
+          const payload = entry.payload;
+          const timestamp = Date.parse(entry.timestamp ?? "");
+          if (!payload || !Number.isFinite(timestamp) || timestamp < sentAfter) continue;
+          if (entry.type === "event_msg" && payload.type === "task_started") {
+            if (typeof payload.turn_id !== "string" || typeof payload.root_turn_id !== "string")
+              delete next.turn;
+            else if (payload.turn_id === payload.root_turn_id)
+              next.turn = {
+                id: payload.turn_id,
+                rootId: payload.root_turn_id,
+                matched: false,
+                status: "pending",
+                output: "",
+              };
+          } else if (next.turn && entry.type === "response_item" && payload.type === "message") {
+            const text = (Array.isArray(payload.content) ? payload.content : [])
+              .filter((item) => item.type === "input_text" || item.type === "output_text")
+              .map((item) => item.text ?? "")
+              .join("")
+              .trim();
+            if (payload.role === "user") {
+              if (next.turn.status === "completed" || next.turn.status === "aborted") {
+                delete next.turn;
+                continue;
+              }
+              // Context/steering USER records do not replace an already bound active root.
+              if (!next.turn.matched) {
+                next.turn.matched = text === sentText.trim();
+                next.turn.status = next.turn.matched ? "running" : "pending";
+                next.turn.output = "";
+              }
+            } else if (
+              payload.role === "assistant" &&
+              next.turn.matched &&
+              next.turn.status === "running" &&
+              text
+            ) {
+              next.turn.output = `${next.turn.output}${next.turn.output ? "\n" : ""}${text}`.slice(
+                -limit,
+              );
+            }
+          } else if (
+            next.turn?.matched &&
+            entry.type === "event_msg" &&
+            payload.turn_id === next.turn.id &&
+            payload.root_turn_id === next.turn.rootId
+          ) {
+            if (payload.type === "task_complete") next.turn.status = "completed";
+            if (payload.type === "turn_aborted") next.turn.status = "aborted";
+          }
+        }
+      }
+    }
+    next.atEnd = next.offset === stat.size;
+    const status = next.turn?.status ?? "pending";
+    // Do not accept a terminal event while newer unread records may supersede it.
+    return {
+      status: !next.atEnd && (status === "completed" || status === "aborted") ? "running" : status,
+      output: next.turn?.output ?? "",
+      cursor: next,
+    };
+  } catch {
+    return unavailable;
+  } finally {
+    await file?.close().catch(() => {});
+  }
+}
+
+function parseTurnRecords<T>(content: string): T[] {
+  return content
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as T);
+}
 
 /**
  * Parse a codex session rollout (JSONL) into chronological user→assistant rounds,

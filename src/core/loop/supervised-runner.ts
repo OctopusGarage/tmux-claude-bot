@@ -6,6 +6,7 @@ import {
 } from "../prompts/loop-supervisor.js";
 import { reserveDelegationBudget } from "./delegation-budget.js";
 import { inspectDelegationContinuation } from "./delegation-continuation.js";
+import { hasLoopExecutionQuarantine } from "./execution-quarantine.js";
 import { recoverNonTerminalPullRequestDecisions } from "./final-summary-contract.js";
 import {
   captureFinalSummaryFreshness,
@@ -14,6 +15,17 @@ import {
 } from "./final-summary-freshness.js";
 import { supervisorFinalStatusToRunStatus } from "./final-summary-recovery.js";
 import { readIterationCheckpoint } from "./iteration-checkpoint.js";
+import {
+  hasRalphPrReviewer,
+  ralphPrReviewDeadline,
+  reserveRalphPrReviewDeadline,
+} from "./ralph-pr-review.js";
+import {
+  executeRalphTask,
+  hasRalphTask,
+  RalphTaskStoppedError,
+  readRalphTaskEvidence,
+} from "./ralph-task.js";
 import type { LoopGitInvocation, LoopRunCommandResult } from "./run.js";
 import {
   type LoopSupervisorFinalSummary,
@@ -30,6 +42,7 @@ export type SupervisorDispatchRequest = {
   timeoutMs?: number;
   contextReset?: "none" | "compact" | "clear";
   deferLeaseUntilConsumption?: boolean;
+  authorityFence?: () => void;
 };
 
 export type SupervisorDispatchResult = {
@@ -67,17 +80,22 @@ export type LoopSupervisedRunResult = (
   repairDisposition?: LoopRepairDisposition;
   finalSummaryRecovery?: "disabled";
   finalSummaryFreshness?: FinalSummaryFreshness;
+  executionOwnership?: "quarantined";
 };
 
 export type LoopSupervisedRunnerInput = {
   workOrder: LoopWorkOrder;
   supervisorSession: string;
   timeoutMs: number;
+  deadline?: number;
   resetBeforeWorkOrder?: "none" | "compact" | "clear";
   cancelSignal?: AbortSignal;
   transientDispatchMaxAttempts?: number;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   dispatch: (request: SupervisorDispatchRequest) => Promise<SupervisorDispatchResult>;
+  executeTask?: typeof executeRalphTask;
+  onExternalExecutionStarted?: () => void;
+  recoverDispatchReadiness?: (failure: LoopSupervisedRunResult) => Promise<boolean>;
 };
 
 export type LoopSupervisorRevisionInput = LoopSupervisedRunnerInput & {
@@ -92,15 +110,90 @@ type SupervisorPromptSequenceInput = LoopSupervisedRunnerInput & {
   finalSummaryFreshness?: FinalSummaryFreshness;
 };
 
+class ExternalReviewDeadlineError extends Error {}
+
 export async function runLoopSupervisedProjectAsync(
   input: LoopSupervisedRunnerInput,
 ): Promise<LoopSupervisedRunResult> {
   if (input.cancelSignal?.aborted) {
     return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
   }
+  if (hasRalphPrReviewer(input.workOrder)) {
+    try {
+      reserveRalphPrReviewDeadline(input.workOrder, input.timeoutMs, input.deadline);
+      input = {
+        ...input,
+        deadline: ralphPrReviewDeadline(input.workOrder),
+        timeoutMs: Math.min(input.timeoutMs, ralphPrReviewDeadline(input.workOrder) - Date.now()),
+      };
+    } catch {
+      return externalDeadlineExhausted();
+    }
+  }
+  if (hasRalphTask(input.workOrder)) {
+    const deadline = input.deadline ?? Date.now() + input.timeoutMs;
+    input = { ...input, deadline, timeoutMs: Math.min(input.timeoutMs, deadline - Date.now()) };
+    if (input.timeoutMs <= 0) return externalDeadlineExhausted();
+  }
   const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs);
   if (!reservation.ok) return reservation;
   input = { ...input, timeoutMs: reservation.timeoutMs };
+  if (hasRalphTask(input.workOrder)) {
+    const startedAt = Date.now();
+    try {
+      // Await the subprocess owner's bounded stop; do not race it against lease release.
+      await (input.executeTask ?? executeRalphTask)({
+        workOrder: input.workOrder,
+        timeoutMs: Math.max(1, Math.floor(input.timeoutMs * 0.8)),
+        signal: input.cancelSignal ?? new AbortController().signal,
+        ...(input.onExternalExecutionStarted
+          ? { onStarted: input.onExternalExecutionStarted }
+          : {}),
+      });
+      if (input.cancelSignal?.aborted)
+        return {
+          ...cancelledRunResult(input.workOrder, abortReason(input.cancelSignal)),
+          finalSummaryRecovery: "disabled",
+        };
+      input = { ...input, timeoutMs: input.timeoutMs - (Date.now() - startedAt) };
+      if (input.timeoutMs <= 0) return externalDeadlineExhausted();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "RalphWorks execution failed";
+      const ownership = hasLoopExecutionQuarantine(input.workOrder.id)
+        ? { executionOwnership: "quarantined" as const }
+        : {};
+      if (input.cancelSignal?.aborted || error instanceof RalphTaskStoppedError) {
+        if (
+          !input.cancelSignal?.aborted &&
+          error instanceof RalphTaskStoppedError &&
+          error.reason === "timed_out"
+        ) {
+          return {
+            status: "dispatch-timeout",
+            reason,
+            output: reason,
+            finalSummaryRecovery: "disabled",
+            ...ownership,
+          };
+        }
+        return {
+          ...cancelledRunResult(input.workOrder, reason),
+          finalSummaryRecovery: "disabled",
+          ...ownership,
+        };
+      }
+      return {
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+        finalSummaryRecovery: "disabled",
+        repairDisposition: "target-or-external-blocker",
+        ...(hasLoopExecutionQuarantine(input.workOrder.id)
+          ? { executionOwnership: "quarantined" as const }
+          : {}),
+      };
+    }
+  }
   const freshness = captureFinalSummaryFreshness(input.workOrder);
   const freshnessResult = freshness === undefined ? {} : { finalSummaryFreshness: freshness };
   const controller = new AbortController();
@@ -108,7 +201,14 @@ export async function runLoopSupervisedProjectAsync(
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
     .catch((err: unknown): LoopSupervisedRunResult => {
       const message = err instanceof Error ? err.message : String(err);
-      return { status: "dispatch-failed", reason: message, output: message };
+      return {
+        status: err instanceof ExternalReviewDeadlineError ? "dispatch-timeout" : "dispatch-failed",
+        reason: message,
+        output: message,
+        ...(err instanceof ExternalReviewDeadlineError
+          ? { finalSummaryRecovery: "disabled" as const }
+          : {}),
+      };
     });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -132,6 +232,9 @@ export async function runLoopSupervisedProjectAsync(
       reason: result.reason,
       output: result.reason,
       ...freshnessResult,
+      ...(hasRalphTask(input.workOrder) || hasRalphPrReviewer(input.workOrder)
+        ? { finalSummaryRecovery: "disabled" as const }
+        : {}),
     };
   }
 
@@ -141,8 +244,32 @@ export async function runLoopSupervisedProjectAsync(
 export async function runLoopSupervisorRevisionAsync(
   input: LoopSupervisorRevisionInput,
 ): Promise<LoopSupervisedRunResult> {
+  if (hasRalphPrReviewer(input.workOrder)) {
+    try {
+      const deadline = ralphPrReviewDeadline(input.workOrder);
+      input = { ...input, deadline, timeoutMs: Math.min(input.timeoutMs, deadline - Date.now()) };
+      if (input.timeoutMs <= 0) return externalDeadlineExhausted();
+    } catch {
+      return externalDeadlineExhausted();
+    }
+  }
   if (input.cancelSignal?.aborted) {
     return cancelledRunResult(input.workOrder, abortReason(input.cancelSignal));
+  }
+  if (hasRalphTask(input.workOrder)) {
+    const deadline = input.deadline ?? Date.now() + input.timeoutMs;
+    input = { ...input, deadline, timeoutMs: Math.min(input.timeoutMs, deadline - Date.now()) };
+    if (input.timeoutMs <= 0) return externalDeadlineExhausted();
+    try {
+      readRalphTaskEvidence(input.workOrder);
+    } catch {
+      return {
+        status: "dispatch-failed",
+        reason: "RalphWorks review revision requires intact execution evidence",
+        output: "RalphWorks review revision requires intact execution evidence",
+        finalSummaryRecovery: "disabled",
+      };
+    }
   }
   const reservation = reserveDelegationBudget(input.workOrder, input.timeoutMs, input.maxAttempts);
   if (!reservation.ok) return reservation;
@@ -154,7 +281,14 @@ export async function runLoopSupervisorRevisionAsync(
     .then((result): LoopSupervisedRunResult | TimedOutResult => result)
     .catch((err: unknown): LoopSupervisedRunResult => {
       const message = err instanceof Error ? err.message : String(err);
-      return { status: "dispatch-failed", reason: message, output: message };
+      return {
+        status: err instanceof ExternalReviewDeadlineError ? "dispatch-timeout" : "dispatch-failed",
+        reason: message,
+        output: message,
+        ...(err instanceof ExternalReviewDeadlineError
+          ? { finalSummaryRecovery: "disabled" as const }
+          : {}),
+      };
     });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -178,6 +312,9 @@ export async function runLoopSupervisorRevisionAsync(
       reason: result.reason,
       output: result.reason,
       ...freshnessResult,
+      ...(hasRalphTask(input.workOrder) || hasRalphPrReviewer(input.workOrder)
+        ? { finalSummaryRecovery: "disabled" as const }
+        : {}),
     };
   }
 
@@ -224,6 +361,8 @@ async function runSupervisorPromptSequence(
   input: SupervisorPromptSequenceInput,
   signal: AbortSignal,
 ): Promise<LoopSupervisedRunResult> {
+  if (hasRalphTask(input.workOrder))
+    input = { ...input, deadline: input.deadline ?? Date.now() + input.timeoutMs };
   let before = readIterationCheckpoint(input.workOrder);
   let first = await dispatchWithProviderTransientRetry(input, signal, {
     prompt: input.prompt,
@@ -232,6 +371,42 @@ async function runSupervisorPromptSequence(
       : {}),
   });
   let firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
+  if (
+    hasRalphTask(input.workOrder) &&
+    input.recoverDispatchReadiness !== undefined &&
+    firstParsed.status === "dispatch-failed" &&
+    firstParsed.finalSummaryRecovery !== "disabled"
+  ) {
+    const assertSafeReviewRetry = () => {
+      signal.throwIfAborted();
+      if (input.deadline !== undefined && Date.now() >= input.deadline)
+        throw new ExternalReviewDeadlineError("External review exhausted the WorkOrder deadline");
+      if (hasLoopExecutionQuarantine(input.workOrder.id))
+        throw new Error("RalphWorks review ownership is quarantined");
+      readRalphTaskEvidence(input.workOrder);
+    };
+    try {
+      assertSafeReviewRetry();
+      if (await input.recoverDispatchReadiness(firstParsed)) {
+        assertSafeReviewRetry();
+        first = await dispatchWithProviderTransientRetry(input, signal, { prompt: input.prompt });
+        firstParsed = parseDispatchOutput(first, input.workOrder, input.finalSummaryFreshness);
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (error instanceof ExternalReviewDeadlineError) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      return {
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+        finalSummaryRecovery: "disabled",
+        ...(hasLoopExecutionQuarantine(input.workOrder.id)
+          ? { executionOwnership: "quarantined" as const }
+          : {}),
+      };
+    }
+  }
   while (firstParsed.status === "invalid-output" && firstParsed.reason === "missing-final-marker") {
     signal.throwIfAborted();
     const decision = inspectDelegationContinuation(input.workOrder, before, input.runGit);
@@ -276,6 +451,11 @@ async function runSupervisorPromptSequence(
   };
 }
 
+function externalDeadlineExhausted(): LoopSupervisedRunResult {
+  const reason = "External review exhausted the WorkOrder deadline";
+  return { status: "dispatch-timeout", reason, output: reason, finalSummaryRecovery: "disabled" };
+}
+
 async function dispatchWithProviderTransientRetry(
   input: SupervisorPromptSequenceInput,
   signal: AbortSignal,
@@ -286,13 +466,29 @@ async function dispatchWithProviderTransientRetry(
   let lastTransientOutput: string | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     signal.throwIfAborted();
+    const remaining =
+      input.deadline === undefined
+        ? input.timeoutMs
+        : Math.min(input.timeoutMs, input.deadline - Date.now());
+    if (input.deadline !== undefined && remaining <= 0)
+      throw new ExternalReviewDeadlineError("External review exhausted the WorkOrder deadline");
+    if (remaining <= 0) throw new Error("External review exhausted the WorkOrder deadline");
     try {
       const result = await input.dispatch({
         session: input.supervisorSession,
-        prompt: request.prompt,
+        prompt:
+          input.deadline === undefined
+            ? request.prompt
+            : [
+                request.prompt,
+                "",
+                `Review hard deadline (UTC): ${new Date(input.deadline).toISOString()}`,
+                `Remaining review budget at dispatch: ${remaining} milliseconds, including final summary, commit and system-gate handoff.`,
+                "Use this remaining budget rather than the original WorkOrder timeout. Recompute it before long commands; no retry or continuation extends the deadline.",
+              ].join("\n"),
         signal,
         workOrder: input.workOrder,
-        timeoutMs: input.timeoutMs,
+        timeoutMs: remaining,
         ...(request.contextReset !== undefined ? { contextReset: request.contextReset } : {}),
       });
       signal.throwIfAborted();

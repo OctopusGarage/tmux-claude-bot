@@ -17,7 +17,8 @@ const HELPER = nodePath.resolve("tests/helpers/lock-acquirer.ts");
 let procs: ChildProcess[] = [];
 
 function spawnAcquirer(stateDir: string, holdMs: number): ChildProcess {
-  const p = spawn(TSX, [HELPER], {
+  // Match the real bot command marker even when the checkout directory is renamed.
+  const p = spawn(TSX, [HELPER, "tmux-claude-bot-instance-lock-fixture"], {
     env: { ...process.env, TCB_STATE_DIR: stateDir, HOLD_MS: String(holdMs) },
     stdio: ["ignore", "pipe", "inherit"],
   });

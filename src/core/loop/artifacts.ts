@@ -19,6 +19,8 @@ export const LOOP_RUN_ARTIFACTS = {
   continuationEvidence: "continuation-evidence",
   systemGate: "system-gate.json",
   commandVerifications: "command-verifications",
+  architectureExecution: "architecture-execution",
+  externalExecution: "external-execution",
   workOrder: "work-order.json",
   workOrderState: "work-order-state.json",
   opportunities: "opportunities.json",

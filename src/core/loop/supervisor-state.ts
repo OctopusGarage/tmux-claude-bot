@@ -3,7 +3,9 @@ import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../../shared/utils/atomic-write.js";
 import { LOOP_RUN_ARTIFACTS, loopRunArtifactPath, loopRunDir, loopRunsRoot } from "./artifacts.js";
 import { readDelegationRecovery } from "./delegation-recovery.js";
+import { hasRalphTask } from "./ralph-task.js";
 import type { LoopSupervisedRunResult } from "./supervised-runner.js";
+import { hasReservedLoopSupervisorLease } from "./supervisor-pool.js";
 import { type LoopWorkOrder, parseSupervisorFinalSummaryFile } from "./work-order.js";
 
 export type LoopSupervisorWorkOrderStateStatus =
@@ -22,6 +24,7 @@ export type LoopSupervisorWorkOrderState = {
   supervisorSession: string;
   scheduledAt: number;
   updatedAt: number;
+  deadlineAt?: number;
   resultStatus?: LoopSupervisedRunResult["status"];
   revisionAttempt?: number;
   revisionReasons?: string[];
@@ -32,6 +35,30 @@ export type UnfinishedLoopSupervisorWorkOrder = {
   state: LoopSupervisorWorkOrderState;
   runDir: string;
 };
+
+/** Live external ownership is narrower than a durable unfinished reservation. */
+export function hasLiveExternalExecution(
+  record: UnfinishedLoopSupervisorWorkOrder,
+  now: number,
+  statuses: readonly LoopSupervisorWorkOrderStateStatus[] = [
+    "in-flight",
+    "queued",
+    "needs-revision",
+  ],
+): boolean {
+  const { workOrder, state } = record;
+  return (
+    hasRalphTask(workOrder) &&
+    state.runId === workOrder.id &&
+    state.projectId === workOrder.projectId &&
+    state.scheduledAt === workOrder.scheduledAt &&
+    typeof state.deadlineAt === "number" &&
+    Number.isFinite(state.deadlineAt) &&
+    state.deadlineAt > now &&
+    statuses.includes(state.status) &&
+    hasReservedLoopSupervisorLease(workOrder, state.supervisorSession)
+  );
+}
 
 /** Classified WorkOrder views from one durable artifact scan. */
 export type LoopSupervisorWorkOrderRegistry = {
@@ -81,6 +108,7 @@ export function writeLoopSupervisorWorkOrderState(input: {
   supervisorSession: string;
   status: LoopSupervisorWorkOrderStateStatus;
   now: number;
+  deadlineAt?: number;
   resultStatus?: LoopSupervisedRunResult["status"];
   revisionAttempt?: number;
   revisionReasons?: string[];
@@ -89,6 +117,13 @@ export function writeLoopSupervisorWorkOrderState(input: {
   mkdirSync(runDir, { recursive: true });
   clearStaleActiveDelegatedArtifacts(input.workOrder, input.status, runDir);
   writeFileAtomicSync(workOrderPath(runDir), `${JSON.stringify(input.workOrder, null, 2)}\n`);
+  const previous = parseState(readJsonFile(statePath(runDir)));
+  const deadlineAt =
+    previous?.runId === input.workOrder.id &&
+    previous.projectId === input.workOrder.projectId &&
+    previous.supervisorSession === input.supervisorSession
+      ? previous.deadlineAt
+      : input.deadlineAt;
   const state: LoopSupervisorWorkOrderState = {
     status: input.status,
     projectId: input.workOrder.projectId,
@@ -96,6 +131,7 @@ export function writeLoopSupervisorWorkOrderState(input: {
     supervisorSession: input.supervisorSession,
     scheduledAt: input.workOrder.scheduledAt,
     updatedAt: input.now,
+    ...(deadlineAt === undefined ? {} : { deadlineAt }),
   };
   if (input.resultStatus !== undefined) state.resultStatus = input.resultStatus;
   if (input.revisionAttempt !== undefined) state.revisionAttempt = input.revisionAttempt;
@@ -160,6 +196,7 @@ function parseState(value: unknown): LoopSupervisorWorkOrderState | null {
     supervisorSession: record.supervisorSession,
     scheduledAt: record.scheduledAt,
     updatedAt: record.updatedAt,
+    ...(typeof record.deadlineAt === "number" ? { deadlineAt: record.deadlineAt } : {}),
     ...(typeof record.resultStatus === "string" ? { resultStatus: record.resultStatus } : {}),
     ...(typeof record.revisionAttempt === "number"
       ? { revisionAttempt: record.revisionAttempt }
@@ -232,18 +269,27 @@ export function readLoopSupervisorWorkOrderRegistry(
   now = Date.now(),
 ): LoopSupervisorWorkOrderRegistry {
   const records = readLoopSupervisorWorkOrderRecords();
-  const recovery = new Map(
-    records.map((record) => [record, readDelegationRecovery(record.workOrder)]),
-  );
+  const recovery = new Map<
+    UnfinishedLoopSupervisorWorkOrder,
+    ReturnType<typeof readDelegationRecovery>
+  >();
+  const recoveryFor = (record: UnfinishedLoopSupervisorWorkOrder) => {
+    let candidate = recovery.get(record);
+    if (candidate === undefined) {
+      candidate = readDelegationRecovery(record.workOrder);
+      recovery.set(record, candidate);
+    }
+    return candidate;
+  };
   const hasCompletion = (record: UnfinishedLoopSupervisorWorkOrder): boolean => {
-    const candidate = recovery.get(record);
+    const candidate = recoveryFor(record);
     return (
-      candidate?.kind === "settled" ||
-      (candidate?.kind === "legacy" && parseSupervisorFinalSummaryFile(record.workOrder).ok)
+      candidate.kind === "settled" ||
+      (candidate.kind === "legacy" && parseSupervisorFinalSummaryFile(record.workOrder).ok)
     );
   };
   const canProgress = (record: UnfinishedLoopSupervisorWorkOrder): boolean =>
-    recovery.get(record)?.kind !== "legacy" ||
+    recoveryFor(record).kind !== "legacy" ||
     unfinishedWorkOrderCanStillProgress(record.state, record.workOrder, now);
 
   const terminal = records.filter(({ state }) => TERMINAL_STATES.has(state.status));
@@ -264,8 +310,8 @@ export function readLoopSupervisorWorkOrderRegistry(
     abandoned: nonTerminal.filter((record) => !hasCompletion(record) && !canProgress(record)),
     staleDispatching: records.filter(
       (record) =>
-        recovery.get(record)?.kind === "legacy" &&
         record.state.status === "dispatching" &&
+        recoveryFor(record).kind === "legacy" &&
         !hasFinalSummaryFileForState(record.state) &&
         now - record.state.updatedAt > STALE_DISPATCHING_WORK_ORDER_MS &&
         now - record.state.updatedAt <= STALE_UNFINISHED_RESERVATION_MS,

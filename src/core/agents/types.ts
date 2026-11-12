@@ -15,6 +15,11 @@ import type { AgentKind } from "../../shared/types.js";
  * so `types.ts` stays import-light and free of a cycle with `agent-config-resolver`.
  */
 export type ReadResolver = {
+  resolveLiveAgentIdentity?(session: string): Promise<{
+    kind: AgentKind | null;
+    agentPid: number | null;
+    transcript: { path: string; sessionId: string | null; agentPid?: number } | null;
+  } | null>;
   resolveConfigRoot(session: string): Promise<string>;
   resolveCodexHome?(session: string): Promise<string | null>;
   /** The transcript the live agent (claude or codex) holds open, for exact
@@ -23,7 +28,31 @@ export type ReadResolver = {
    * open but the id can't be read). */
   resolveLiveTranscript?(
     session: string,
-  ): Promise<{ path: string; sessionId: string | null } | null>;
+    options?: { fresh?: boolean },
+  ): Promise<{ path: string; sessionId: string | null; agentPid?: number } | null>;
+};
+
+export type AgentTurnCompletion = {
+  status: "unavailable" | "pending" | "running" | "completed" | "aborted";
+  output: string;
+  cursor?: AgentTurnCursor;
+};
+
+export type AgentTurnCursor = {
+  agentPid?: number;
+  atEnd?: boolean;
+  bootstrapIssuedAt?: number;
+  path: string;
+  sessionId: string;
+  fileIdentity: string;
+  offset: number;
+  turn?: {
+    id: string;
+    rootId: string;
+    matched: boolean;
+    status: AgentTurnCompletion["status"];
+    output: string;
+  };
 };
 
 /**
@@ -86,6 +115,15 @@ export interface AgentProfile {
     projectPath: string,
     sentText: string,
   ): Promise<string | null>;
+  /** Exact live-transcript evidence for one newly submitted managed prompt. */
+  getTurnCompletion?(
+    resolver: ReadResolver,
+    session: string,
+    sentText: string,
+    sentAfter: number,
+    cursor?: AgentTurnCursor,
+    options?: { fresh?: boolean },
+  ): Promise<AgentTurnCompletion>;
   /** Structured current usage for a session (context %, rate limits), or null when
    * none is available. Used by the dashboard; mirrors the /status usage resolution. */
   readUsage(

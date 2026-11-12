@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigResolver } from "../src/core/agents/agent-config-resolver.js";
 import { CodexRunner, paneLooksReady } from "../src/core/agents/codex/codex-runner.js";
 import {
@@ -14,6 +14,15 @@ import type { TmuxBridge } from "../src/core/session/tmux.js";
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const ready = fs.readFileSync(join(FIXTURES, "codex-ready-pane.txt"), "utf8");
 const busy = fs.readFileSync(join(FIXTURES, "codex-busy-pane.txt"), "utf8");
+const updateMenu = `${fs.readFileSync(join(FIXTURES, "codex-update-pane.txt"), "utf8")}\n\n`;
+const legacyUpdateMenu = updateMenu
+  .replace("Update available ·", "Update available!")
+  .replace("enter continue · esc skip", "Press enter to continue");
+function selectUpdateOption(menu: string, option: number | null): string {
+  return menu.replace(/^› /m, "  ").replace(new RegExp(`^  ${option}\\.`, "m"), `› ${option}.`);
+}
+
+const postUpdateBoot = "› Previous conversation\nStarting Codex\nLoading resources\nPlease wait";
 const completedGoalPane = [
   "◦ Working (2s • esc to interrupt)",
   "",
@@ -120,6 +129,53 @@ describe("codex pane heuristics", () => {
     expect(paneNeedsConfirm(staleUpdatePrompt)).toBe(false);
   });
 
+  it.each([1, 2, 3])("uses only Escape for current update selection %i", (option) => {
+    const pane = selectUpdateOption(updateMenu, option);
+    expect(paneNeedsConfirm(pane)).toBe(true);
+    expect(paneConfirmAction(pane)).toEqual({ sendRawKey: "Escape" });
+    expect(paneLooksReady(pane)).toBe(false);
+  });
+
+  it.each([
+    [1, { sendRawKeys: ["Down", "Enter"] }],
+    [2, { sendRawKey: "Enter" }],
+    [3, { sendRawKeys: ["Up", "Enter"] }],
+  ])("selects temporary Skip safely from legacy option %i", (option, action) => {
+    expect(paneConfirmAction(selectUpdateOption(legacyUpdateMenu, option as number))).toEqual(
+      action,
+    );
+  });
+
+  it.each([
+    selectUpdateOption(legacyUpdateMenu, null),
+    legacyUpdateMenu.replace("›", "?"),
+    legacyUpdateMenu.replace("›", "??"),
+    legacyUpdateMenu.replace("›", "selected"),
+    legacyUpdateMenu.replace("  3. Skip until next version\n", ""),
+    updateMenu.replace("enter continue · esc skip", "Press enter to continue or cancel"),
+  ])("does not blindly confirm an uncertain update menu", (pane) => {
+    expect(paneConfirmAction(pane)).toBe("wait");
+    expect(paneLooksReady(pane)).toBe(false);
+  });
+
+  it.each(["user@host:~/repo $", "› ", "› Update available · investigate this text"])(
+    "does not act on a stale menu above current input: %s",
+    (input) => {
+      expect(paneConfirmAction(`${updateMenu}\n${input}`)).toBe("wait");
+      expect(paneNeedsConfirm(`${updateMenu}\n${input}`)).toBe(false);
+    },
+  );
+
+  it.each([updateMenu, legacyUpdateMenu])(
+    "does not act on update text typed into the composer",
+    (menu) => expect(paneConfirmAction(menu.replace("  Update", "› Update"))).toBe("wait"),
+  );
+
+  it.each([postUpdateBoot, "› 2. Skip", `${updateMenu}\nuser@host:~/repo $`])(
+    "does not use a historical chevron or numbered selector as a composer",
+    (pane) => expect(paneLooksReady(pane)).toBe(false),
+  );
+
   it("does not treat stale confirm text above a shell prompt as an active gate", () => {
     const stale =
       "WARNING: Claude Code running in Bypass Permissions mode\n\n  ❯ 1. No, exit\n    2. Yes, I accept\n\n  Enter to confirm · Esc to cancel\n(base) user@host:~/repo|main ⇒";
@@ -141,6 +197,66 @@ describe("codex pane heuristics", () => {
     expect(paneCodexAdditionalSafetyAction(safetyMenu)).toEqual({
       sendRawKeys: ["Down", "Enter"],
     });
+  });
+});
+
+describe("CodexRunner update readiness", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function makeRunner(frames: string[]) {
+    let index = 0;
+    const capturePane = vi.fn(async () => frames[Math.min(index++, frames.length - 1)] ?? "");
+    const sendRawKey = vi.fn(async (_key: string) => {});
+    const runner = new CodexRunner({
+      bridge: {
+        resolveSessionName: async () => "sess",
+        capturePane,
+        sendRawKey,
+      } as unknown as TmuxBridge,
+      output: {} as OutputProcessor,
+      configResolver: { isCodexRunning: async () => true } as unknown as ConfigResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 2,
+      pollIntervalMs: 10,
+      maxWaitReadyMs: 100,
+      maxWaitDoneMs: 100,
+    });
+    return { runner, capturePane, sendRawKey };
+  }
+
+  it("waits past a stable post-skip boot pane for a fresh composer", async () => {
+    const frames = [updateMenu, ...Array<string>(4).fill(postUpdateBoot), ready];
+    const { runner, capturePane, sendRawKey } = makeRunner(frames);
+    const wait = runner.waitUntilReady("sess");
+    await Promise.all([wait, vi.runAllTimersAsync()]);
+    expect(capturePane).toHaveBeenCalledTimes(frames.length);
+    expect(sendRawKey.mock.calls.map(([key]) => key)).toEqual(["Escape"]);
+  });
+
+  it.each([
+    ["persistent menu", [updateMenu]],
+    ["post-skip boot", [updateMenu, postUpdateBoot]],
+    ["post-skip boot without a chevron", [updateMenu, "Starting Codex\nLoading\nPlease wait"]],
+    ["unknown legacy selection", [selectUpdateOption(legacyUpdateMenu, null)]],
+    ["unknown footer", [updateMenu.replace("enter continue · esc skip", "Choose an option")]],
+  ])("times out on %s within the existing readiness budget", async (_name, frames) => {
+    const { runner, capturePane, sendRawKey } = makeRunner(frames);
+    const wait = expect(runner.waitUntilReady("sess")).rejects.toThrow(
+      "Codex did not become ready in time",
+    );
+    await Promise.all([wait, vi.runAllTimersAsync()]);
+    expect(capturePane).toHaveBeenCalledTimes(10);
+    expect(sendRawKey.mock.calls.every(([key]) => key === "Escape")).toBe(true);
+  });
+
+  it("does not skip an update menu while waiting for normal input", async () => {
+    const { runner, sendRawKey } = makeRunner([updateMenu]);
+    const wait = expect(runner.waitUntilInputReady("sess")).rejects.toThrow(
+      "Codex did not become ready in time",
+    );
+    await Promise.all([wait, vi.runAllTimersAsync()]);
+    expect(sendRawKey).not.toHaveBeenCalled();
   });
 });
 
@@ -526,5 +642,24 @@ describe("CodexRunner restart", () => {
     const { runner, sent } = makeRunner([true]);
     await runner.exit("sess");
     expect(sent).toEqual(["raw:C-c", "keys:/exit"]);
+  });
+});
+
+describe("Codex fresh launch eligibility", () => {
+  it.each(["codex", "codex --yolo", "codex --no-alt-screen --yolo"])(
+    "recognizes direct interactive launch %s",
+    (command) => {
+      expect(CodexRunner.prototype.isFreshStartCommand(command)).toBe(true);
+    },
+  );
+  it.each([
+    "codex resume --last",
+    "codex fork",
+    "codex exec task",
+    "codex-custom",
+    "sh -c codex",
+    "codex; echo x",
+  ])("does not grant unknown or resumed launch %s", (command) => {
+    expect(CodexRunner.prototype.isFreshStartCommand(command)).toBe(false);
   });
 });

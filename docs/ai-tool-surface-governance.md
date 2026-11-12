@@ -463,3 +463,43 @@ same slice:
 
 If a feature cannot answer these questions, keep it out of MCP and skills until
 the boundary is clear.
+
+
+## Explicit External Maintenance Tasks
+
+Bot-owned reasoning stays active-agent-only. Explicit operator selection of
+`kind: ralphworks` in `execution.architecture`, `execution.bugFix` or
+`execution.testCoverage` or `execution.securityMaintenance` authorizes the matching standalone single-project task
+through the public installed CLI, with supervised agent execution required.
+RalphWorks owns methodology, skills,
+runtime resolution, credentials and model transport. The bot does not load those
+credentials, import implementation modules, copy skill/prompt bodies, or add any
+provider SDK/API calls. This exception does not authorize provider integration in
+`eval.command`, assessment commands, smoke helpers or other bot-owned features.
+
+The bot owns one verified worktree, admission/lease lifecycle, bounded process
+shutdown, immutable invocation/task receipt identity, native review and all
+existing delivery/system gates. `tcb loop architecture get|set`,
+`tcb loop bugfix get|set`, `tcb loop test-coverage get|set` and `tcb loop security-maintenance get|set` are the dedicated
+configuration surfaces, with parameter values redacted and credential-like names
+rejected. Selection is independent per family and native remains default.
+Workspace tasks, harness-auto, active delegation and other families stay native. External
+failure or absent review/score evidence blocks and cannot silently reroute to
+native implementation.
+
+
+## Optional External PR Review Passes
+
+Project `pullRequestReview.reviewer` and repository-review `reviewer` selectors
+independently opt immutable PR passes into the public RalphWorks CLI. Native is
+the default; workspace opt-in is rejected. `tcb loop pr-review get|set` provides
+redacted, validated project/repository configuration, and `tcb loop pr-review pass`
+executes one repository/number/base/head-bound pass within the stored deadline.
+The bot binds `CODE_REVIEW.json` and receipts to the diff and retains native
+candidate discovery, repair, consecutive-pass counting, CI, mergeability and
+GitHub delivery. Findings/incomplete results never approve. Revision changes
+invalidate old passes; external failures block without fallback. Every decision
+records `reviewedHeadSha`, and the independent bot gate validates clean passes
+before accepting approval or merge. External review does not authorize source
+mutation, provider integration, edited evidence or a new deadline. Existing
+native prompts remain unchanged when the reviewer selector is absent.

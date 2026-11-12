@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { codexProfile } from "../src/core/agents/codex/codex-profile.js";
 import type { ReadResolver } from "../src/core/agents/types.js";
 
@@ -162,4 +162,47 @@ describe("codexProfile.discoverSessionId / buildResumeCommand", () => {
       }),
     ).not.toContain("--yolo");
   });
+});
+
+describe("Codex bootstrap terminal identity", () => {
+  it.each(["task_complete", "turn_aborted"])(
+    "revalidates the process and open file after first-prefix %s",
+    async (terminal) => {
+      const timestamp = new Date().toISOString();
+      const issuedAt = Date.parse(timestamp) - 100;
+      const path = writeRollout([
+        { timestamp, type: "session_meta", payload: { id: UUID } },
+        {
+          timestamp,
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: "root", root_turn_id: "root" },
+        },
+        { timestamp, type: "response_item", ...userMsg("first prompt") },
+        { timestamp, type: "response_item", ...asstMsg("terminal reply") },
+        {
+          timestamp,
+          type: "event_msg",
+          payload: { type: terminal, turn_id: "root", root_turn_id: "root" },
+        },
+      ]);
+      fs.appendFileSync(path, "\n");
+      const live = { path, sessionId: UUID, agentPid: 123 };
+      const fresh = vi.fn(async () => ({ ...live, agentPid: 999 }));
+      const r: ReadResolver = {
+        ...resolver({}),
+        resolveLiveAgentIdentity: async () => ({ kind: "codex", agentPid: 123, transcript: live }),
+        resolveLiveTranscript: fresh,
+      };
+      const result = await codexProfile.getTurnCompletion?.(r, "sess", "first prompt", issuedAt, {
+        path: "",
+        sessionId: "",
+        fileIdentity: "",
+        offset: 0,
+        agentPid: 123,
+        bootstrapIssuedAt: issuedAt,
+      });
+      expect(result).toMatchObject({ status: "unavailable", output: "" });
+      expect(fresh).toHaveBeenCalledExactlyOnceWith("sess", { fresh: true });
+    },
+  );
 });

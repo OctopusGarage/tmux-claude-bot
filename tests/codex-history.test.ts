@@ -7,6 +7,7 @@ import {
   getRecentCodexConversations,
   listCodexSessions,
   parseCodexRounds,
+  readCodexTurnCompletion,
 } from "../src/core/agents/codex/codex-history.js";
 
 const ROLLOUT = [
@@ -232,4 +233,236 @@ describe("listCodexSessions", () => {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
   });
+});
+
+describe("managed Codex turn evidence", () => {
+  const sentAt = Date.parse("2026-10-26T10:00:00Z");
+  const prompt = "The exact current WorkOrder";
+  const event = (type: string, payload: object, timestamp = sentAt + 1) =>
+    `${JSON.stringify({ timestamp: new Date(timestamp).toISOString(), type, payload })}\n`;
+  const started = (id = "root", root = id, timestamp?: number) =>
+    event("event_msg", { type: "task_started", turn_id: id, root_turn_id: root }, timestamp);
+  const user = (text = prompt) =>
+    event("response_item", {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text }],
+    });
+  const assistant = (text = "actual final") =>
+    event("response_item", {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text }],
+    });
+  const terminal = (id = "root", root = id, type = "task_complete") =>
+    event("event_msg", { type, turn_id: id, root_turn_id: root });
+  async function fixture(existing = "") {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "codex-bound-turn-"));
+    const path = join(dir, "rollout.jsonl");
+    fs.writeFileSync(
+      path,
+      `${JSON.stringify({ type: "session_meta", payload: { id: "live" } })}\n${existing}`,
+    );
+    const baseline = await readCodexTurnCompletion(path, "live", prompt, Infinity);
+    if (baseline.cursor === undefined) throw new Error("missing baseline cursor");
+    return { path, cursor: baseline.cursor };
+  }
+
+  it("excludes an identical old prompt by the pre-submit cursor even at the same timestamp", async () => {
+    const { path, cursor } = await fixture(
+      started() + user() + assistant("old marker") + terminal(),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "pending",
+      output: "",
+    });
+    fs.appendFileSync(path, started("new") + user() + assistant("fresh result") + terminal("new"));
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "completed",
+      output: "fresh result",
+    });
+  });
+
+  it("requires exact prompt text, not fuzzy containment", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started() + user(`prior ${prompt} unrelated suffix`) + assistant() + terminal(),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "pending",
+      output: "",
+    });
+  });
+
+  it("requires a fresh task start, not just user text and a terminal event", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started("root", "root", sentAt - 1) + user() + assistant() + terminal(),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "pending",
+      output: "",
+    });
+  });
+
+  it("ignores child and foreign terminal events until the matched root completes", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started() +
+        user() +
+        assistant("still active") +
+        started("child", "root") +
+        terminal("child", "root") +
+        terminal("foreign"),
+    );
+    const active = await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor);
+    expect(active.status).toBe("running");
+    fs.appendFileSync(path, terminal());
+    expect(
+      await readCodexTurnCompletion(path, "live", prompt, sentAt, active.cursor),
+    ).toMatchObject({ status: "completed", output: "still active" });
+  });
+
+  it("recognizes a matching abort as a terminal failure", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(path, started() + user() + terminal("root", "root", "turn_aborted"));
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "aborted",
+    });
+  });
+
+  it("rejects changed live session, fork file and missing transcript instead of cwd fallback", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(path, started() + user() + assistant() + terminal());
+    const fork = `${path}.fork`;
+    fs.copyFileSync(path, fork);
+    expect(await readCodexTurnCompletion(path, "different", prompt, sentAt, cursor)).toMatchObject({
+      status: "unavailable",
+    });
+    expect(await readCodexTurnCompletion(fork, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "unavailable",
+    });
+    expect(await readCodexTurnCompletion(`${path}.missing`, "live", prompt, sentAt)).toMatchObject({
+      status: "unavailable",
+    });
+  });
+
+  it("does not treat partial terminal JSON as completion and resumes from the last complete line", async () => {
+    const { path, cursor } = await fixture();
+    const done = terminal();
+    fs.appendFileSync(path, started() + user() + assistant() + done.slice(0, -8));
+    const pending = await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor);
+    expect(pending.status).toBe("running");
+    fs.appendFileSync(path, done.slice(-8));
+    expect(
+      await readCodexTurnCompletion(path, "live", prompt, sentAt, pending.cursor),
+    ).toMatchObject({ status: "completed", output: "actual final" });
+  });
+
+  it("captures the baseline without parsing inherited history", async () => {
+    const { path, cursor } = await fixture(
+      `${"x".repeat(3 * 1024 * 1024)}\n${started()}${terminal()}`,
+    );
+    fs.appendFileSync(path, started() + user() + assistant() + terminal());
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "completed",
+      output: "actual final",
+    });
+  });
+  it("does not establish idle preflight from a torn or malformed trailing record", async () => {
+    const { path } = await fixture();
+    fs.appendFileSync(path, started().slice(0, -8));
+    expect(await readCodexTurnCompletion(path, "live", prompt, Infinity)).toMatchObject({
+      status: "unavailable",
+    });
+    fs.appendFileSync(path, "invalid-json\n");
+    expect(await readCodexTurnCompletion(path, "live", prompt, Infinity)).toMatchObject({
+      status: "unavailable",
+    });
+  });
+  it.each([
+    "# AGENTS.md instructions\nThese AGENTS instructions replace earlier instructions. Mesh help: http://127.0.0.1:54321/v1/help",
+    "Please continue with the same task and preserve the existing acceptance checks.",
+  ])(
+    "retains exact prompt binding through a later same-root context or steering USER: %s",
+    async (context) => {
+      const { path, cursor } = await fixture();
+      fs.appendFileSync(path, started() + user() + assistant("before context"));
+      const bound = await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor);
+      expect(bound.status).toBe("running");
+      fs.appendFileSync(path, user(context) + assistant("after context") + terminal());
+      expect(
+        await readCodexTurnCompletion(path, "live", prompt, sentAt, bound.cursor),
+      ).toMatchObject({ status: "completed", output: "before context\nafter context" });
+    },
+  );
+
+  it("recognizes same-root abort after a runtime context USER", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started() +
+        user() +
+        user("Updated AGENTS instructions") +
+        terminal("root", "root", "turn_aborted"),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "aborted",
+    });
+  });
+
+  it("never binds a root that did not receive the exact current prompt", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started() +
+        user("Another task") +
+        user("Updated AGENTS instructions") +
+        assistant() +
+        terminal(),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "pending",
+      output: "",
+    });
+  });
+
+  it("resets prior binding on a new root despite later context USER records", async () => {
+    const { path, cursor } = await fixture();
+    fs.appendFileSync(
+      path,
+      started() +
+        user() +
+        assistant("old active output") +
+        started("new-root") +
+        user("Updated AGENTS instructions") +
+        terminal("new-root"),
+    );
+    expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+      status: "pending",
+      output: "",
+    });
+  });
+
+  it.each(["task_complete", "turn_aborted"])(
+    "invalidates a prior %s when a later USER arrives",
+    async (type) => {
+      const { path, cursor } = await fixture();
+      fs.appendFileSync(
+        path,
+        started() +
+          user() +
+          assistant() +
+          terminal("root", "root", type) +
+          user("Updated AGENTS instructions"),
+      );
+      expect(await readCodexTurnCompletion(path, "live", prompt, sentAt, cursor)).toMatchObject({
+        status: "pending",
+        output: "",
+      });
+    },
+  );
 });

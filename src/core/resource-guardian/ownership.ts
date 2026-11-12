@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { isLoopSupervisorWorkerLeaseExpired } from "../loop/supervisor-pool.js";
 import type { ProcessIntrospector } from "../platform/introspector.js";
 import type { PaneSnapshotProbe } from "./pane-snapshot.js";
@@ -271,6 +270,50 @@ export type BulkProcessExec = (
   options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string }>;
 
+/** The probe's own timer aborted its helper, and that helper has closed. */
+export class ResourceProcessProbeTimeoutError extends Error {
+  override name = "ResourceProcessProbeTimeoutError";
+  readonly code = "ETIMEDOUT";
+  constructor(
+    readonly killed: boolean,
+    readonly signal: NodeJS.Signals | null,
+  ) {
+    super("Resource process probe owned timeout after helper close");
+  }
+}
+
+/** Preserve execFile's close-before-settlement contract with explicit timeout causality. */
+export const execResourceProcessProbe: BulkProcessExec = (file, args, options) =>
+  new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const timeoutCause = new Error("Resource process probe timer expired");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    const child = execFile(
+      file,
+      args,
+      { ...options, timeout: 0, signal: controller.signal, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        clearTimeout(timer);
+        if (error?.name === "AbortError" && error.cause === timeoutCause) {
+          // Abort's callback precedes close; no retry may overlap this helper.
+          child.once("close", () =>
+            reject(new ResourceProcessProbeTimeoutError(child.killed, child.signalCode)),
+          );
+        } else if (error) reject(error);
+        else resolve({ stdout, stderr });
+      },
+    );
+    child.once("close", () => clearTimeout(forceTimer));
+    timer = setTimeout(() => {
+      // A native maxBuffer/error stop must retain its original failure through close.
+      if (!child.killed) controller.abort(timeoutCause);
+      forceTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 250);
+    }, options.timeout);
+  });
+
 /** Parse the one bulk `ps` layout used by the deep resource sampler. */
 export function parseResourceProcessPs(stdout: string): ResourceProcess[] {
   const rows: ResourceProcess[] = [];
@@ -311,16 +354,18 @@ export function parseResourceProcessPs(stdout: string): ResourceProcess[] {
   return rows;
 }
 
+export const BULK_RESOURCE_PROCESS_TIMEOUT_MS = 5_000;
+
 export function createBulkResourceProcessProbe(input: {
   exec?: BulkProcessExec;
   now?: () => number;
   thermal?: DeepResourceSnapshot["thermal"];
 }): DeepResourceProbe {
-  const exec = input.exec ?? (promisify(execFile) as BulkProcessExec);
+  const exec = input.exec ?? execResourceProcessProbe;
   const now = input.now ?? Date.now;
   return async () => {
     const { stdout } = await exec("ps", ["-axo", "pid=,ppid=,pgid=,lstart=,%cpu=,rss=,command="], {
-      timeout: 5_000,
+      timeout: BULK_RESOURCE_PROCESS_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
     });
@@ -333,6 +378,63 @@ export function createBulkResourceProcessProbe(input: {
       thermal: input.thermal ?? "unknown",
       processes,
     };
+  };
+}
+
+/** Lifecycle ownership needs identity and ancestry, never resource telemetry. */
+export type ProcessIdentity = {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  startedAt: string;
+};
+
+/** Reject partial tables: a skipped row could hide a still-owned descendant. */
+export function parseProcessIdentityPs(stdout: string): ProcessIdentity[] {
+  const rows: ProcessIdentity[] = [];
+  const seen = new Set<number>();
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const match = line
+      .trim()
+      .match(
+        /^(\d+)\s+(\d+)\s+(\d+)\s+((?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})$/,
+      );
+    const pid = Number(match?.[1]);
+    const ppid = Number(match?.[2]);
+    const pgid = Number(match?.[3]);
+    const start = match?.[4] ?? "";
+    const date = new Date(start);
+    const normalized = start.replace(/\s+/g, " ");
+    const parts = date.toString().split(" ");
+    const roundTrip = `${parts[0]} ${parts[1]} ${Number(parts[2])} ${parts[4]} ${parts[3]}`;
+    if (
+      ![pid, ppid, pgid].every(Number.isSafeInteger) ||
+      pid <= 0 ||
+      ppid < 0 ||
+      pgid < 0 ||
+      seen.has(pid) ||
+      Number.isNaN(date.getTime()) ||
+      roundTrip !== normalized.replace(/ (0?\d) /, (_, day: string) => ` ${Number(day)} `)
+    )
+      throw new Error("invalid process identity snapshot");
+    seen.add(pid);
+    rows.push({ pid, ppid, pgid, startedAt: date.toISOString() });
+  }
+  return rows;
+}
+
+export function createProcessIdentityProbe(input: {
+  exec?: BulkProcessExec;
+}): (timeoutMs?: number) => Promise<{ processes: ProcessIdentity[] }> {
+  const exec = input.exec ?? execResourceProcessProbe;
+  return async (timeoutMs = BULK_RESOURCE_PROCESS_TIMEOUT_MS) => {
+    const { stdout } = await exec("ps", ["-axo", "pid=,ppid=,pgid=,lstart="], {
+      timeout: Math.min(timeoutMs, BULK_RESOURCE_PROCESS_TIMEOUT_MS),
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, LC_ALL: "C", LANG: "C" },
+    });
+    return { processes: parseProcessIdentityPs(stdout) };
   };
 }
 

@@ -43,6 +43,15 @@ import { DailyTaskLedger, singaporeDayWindow } from "../../src/core/tasks/task-l
 
 const originalStateDir = process.env.TCB_STATE_DIR;
 
+// Keep service lifecycle tests independent of archive I/O; the real-Git
+// worktree-recovery suite verifies archival and restoration before deletion.
+vi.mock("../../src/core/loop/worktree-recovery.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/loop/worktree-recovery.js")>()),
+  archiveLoopWorktree: () => ({ path: "/verified-recovery", verify: () => true }),
+  archiveLoopCommit: () => true,
+  archiveMissingLoopWorktree: () => true,
+}));
+
 const runLoopServiceTickAsync = async (
   input: Parameters<typeof runLoopServiceTickAsyncProduction>[0],
 ) => {

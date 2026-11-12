@@ -22,7 +22,7 @@ const EXIT_GRACE_MS = 2000;
  * Best-effort: a gate this misses is still caught by the stability fallback in
  * pollUntilReady (it won't hang), it just won't be auto-accepted. */
 export function paneNeedsConfirm(pane: string): boolean {
-  return paneConfirmAction(pane) !== "wait";
+  return activeCodexUpdateMenu(pane) !== null || paneConfirmAction(pane) !== "wait";
 }
 
 /** Whether the pane's latest lifecycle evidence still represents an active turn.
@@ -46,8 +46,8 @@ export function paneHasActiveTurn(pane: string): boolean {
 }
 
 export function paneConfirmAction(pane: string): ReadyVerdict {
-  const codexUpdate = paneCodexUpdateAction(pane);
-  if (codexUpdate !== "wait") return codexUpdate;
+  const codexUpdate = activeCodexUpdateMenu(pane);
+  if (codexUpdate) return paneCodexUpdateAction(codexUpdate);
   if (activeCodexAdditionalSafetyMenu(pane)) return "wait";
   if (!activeConfirmGate(pane)) return "wait";
   if (pane.includes("Bypass Permissions mode") && pane.includes("Yes, I accept")) {
@@ -63,10 +63,13 @@ export function paneCodexAdditionalSafetyAction(pane: string): ReadyVerdict {
   return { sendRawKeys: ["Down", "Enter"] };
 }
 
-function paneCodexUpdateAction(pane: string): ReadyVerdict {
-  if (!activeCodexUpdateMenu(pane)) return "wait";
-  if (/›\s*2\.\s*Skip\b/i.test(pane)) return { sendRawKey: "Enter" };
-  return { sendRawKeys: ["Down", "Enter"] };
+function paneCodexUpdateAction(menu: CodexUpdateMenu): ReadyVerdict {
+  if (/^enter continue\s*·\s*esc skip$/i.test(menu.footer)) return { sendRawKey: "Escape" };
+  if (!/^Press enter to continue$/i.test(menu.footer)) return "wait";
+  if (menu.selection === 1) return { sendRawKeys: ["Down", "Enter"] };
+  if (menu.selection === 2) return { sendRawKey: "Enter" };
+  if (menu.selection === 3) return { sendRawKeys: ["Up", "Enter"] };
+  return "wait";
 }
 
 function activeConfirmGate(pane: string): boolean {
@@ -102,17 +105,39 @@ function activeCodexAdditionalSafetyMenu(pane: string): boolean {
   );
 }
 
-function activeCodexUpdateMenu(pane: string): boolean {
-  const lines = pane.split("\n");
-  const lastNonBlank = findLastNonBlankLine(lines);
-  if (lastNonBlank < 0) return false;
-  const lastLine = lines[lastNonBlank] ?? "";
-  return (
-    /Update available!/i.test(pane) &&
-    /1\.\s*Update now/i.test(pane) &&
-    /2\.\s*Skip/i.test(pane) &&
-    /Press enter to continue/i.test(lastLine)
-  );
+type CodexUpdateMenu = { footer: string; selection: number | null };
+
+function activeCodexUpdateMenu(pane: string): CodexUpdateMenu | null {
+  const lines = pane
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const heading = findLastLine(lines, (line) => /^(?:›\s*)?Update available(?:!|\s*·)/i.test(line));
+  // Only the current bottom block may authorize keys. A later composer makes
+  // this scrollback; incomplete or unfamiliar controls block without guessing.
+  if (
+    heading < 0 ||
+    lines.length - heading > 5 ||
+    (lines[heading]?.startsWith("›") && lines.length - heading !== 5)
+  )
+    return null;
+  if (lines.slice(heading + 1).some((line) => line.startsWith("›") && !/^›\s*\d+\./.test(line)))
+    return null;
+  if (lines.length - heading !== 5 || lines[heading]?.startsWith("›"))
+    return { footer: "", selection: null };
+  const choices = [
+    /^([^\w]*)1\.\s*Update now(?:\s+\(runs .*\))?$/i.exec(lines[heading + 1] ?? ""),
+    /^([^\w]*)2\.\s*Skip$/i.exec(lines[heading + 2] ?? ""),
+    /^([^\w]*)3\.\s*Skip until next version$/i.exec(lines[heading + 3] ?? ""),
+  ];
+  if (choices.some((choice) => choice === null)) return { footer: "", selection: null };
+  const marked = choices.flatMap((choice, index) => (choice?.[1]?.trim() ? [index] : []));
+  const selected = marked.length === 1 ? marked[0] : undefined;
+  return {
+    footer: lines[heading + 4] ?? "",
+    selection:
+      selected !== undefined && choices[selected]?.[1]?.trim() === "›" ? selected + 1 : null,
+  };
 }
 
 function findLastNonBlankLine(lines: readonly string[]): number {
@@ -191,8 +216,18 @@ export abstract class AgentRunnerBase implements AgentRunner {
     return paneHasActiveTurn(pane);
   }
 
-  private async sendLaunchCommand(command: string, sessionName?: string): Promise<void> {
+  private assertStartupDeadline(deadlineAt?: number): void {
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new Error(this.notReadyError);
+  }
+
+  private async sendLaunchCommand(
+    command: string,
+    sessionName?: string,
+    deadlineAt?: number,
+  ): Promise<void> {
+    this.assertStartupDeadline(deadlineAt);
     await this.bridge.sendRawKey("C-u", sessionName);
+    this.assertStartupDeadline(deadlineAt);
     await this.bridge.sendKeys(command, sessionName);
   }
 
@@ -221,9 +256,9 @@ export abstract class AgentRunnerBase implements AgentRunner {
    * launch in a dir, blocking input) and wait for the composer. Best-effort —
    * swallow a slow/failed boot so the caller's action still completes (the user
    * can retry). Shared by both agents; never silently defaults to one's behavior. */
-  protected async waitReadyBestEffort(sessionName?: string): Promise<void> {
+  protected async waitReadyBestEffort(sessionName?: string, deadlineAt?: number): Promise<void> {
     try {
-      await this.waitUntilReady(sessionName);
+      await this.waitUntilReady(sessionName, deadlineAt);
       log.info("agent launch ready", {
         ...(sessionName === undefined ? {} : { session: sessionName }),
         data: { agent: this.logTag },
@@ -247,15 +282,18 @@ export abstract class AgentRunnerBase implements AgentRunner {
     return running;
   }
 
-  async start(sessionName?: string, command?: string): Promise<void> {
+  async start(sessionName?: string, command?: string, deadlineAt?: number): Promise<void> {
     await this.withLaunchLock(sessionName, async () => {
-      if (await this.checkIfRunning(sessionName)) return;
+      this.assertStartupDeadline(deadlineAt);
+      const running = await this.checkIfRunning(sessionName);
+      this.assertStartupDeadline(deadlineAt);
+      if (running) return;
       log.info("agent starting", {
         ...(sessionName === undefined ? {} : { session: sessionName }),
         data: { agent: this.logTag, resume: "fresh" },
       });
-      await this.sendLaunchCommand(command ?? this.command, sessionName);
-      await this.waitReadyBestEffort(sessionName);
+      await this.sendLaunchCommand(command ?? this.command, sessionName, deadlineAt);
+      await this.waitReadyBestEffort(sessionName, deadlineAt);
     });
   }
 
@@ -278,12 +316,17 @@ export abstract class AgentRunnerBase implements AgentRunner {
     });
   }
 
-  async waitUntilReady(sessionName?: string): Promise<void> {
+  async waitUntilReady(sessionName?: string, deadlineAt?: number): Promise<void> {
     const resolved = await this.bridge.resolveSessionName(sessionName);
+    let sawCodexUpdateMenu = false;
     return pollUntilReady({
       bridge: this.bridge,
       pollIntervalMs: this.pollIntervalMs,
-      maxWaitReadyMs: this.maxWaitReadyMs,
+      maxWaitReadyMs:
+        deadlineAt === undefined
+          ? this.maxWaitReadyMs
+          : Math.max(0, Math.min(this.maxWaitReadyMs, deadlineAt - Date.now())),
+      ...(deadlineAt === undefined ? {} : { deadlineAt }),
       sessionName,
       logTag: this.logTag,
       notReadyError: this.notReadyError,
@@ -291,6 +334,11 @@ export abstract class AgentRunnerBase implements AgentRunner {
       // when needed, then confirm; otherwise defer to the agent's positive ready
       // marker so a gate screen is never a false "ready".
       classify: (pane) => {
+        const update = activeCodexUpdateMenu(pane);
+        if (update) {
+          sawCodexUpdateMenu = true;
+          return paneCodexUpdateAction(update);
+        }
         const safety = paneCodexAdditionalSafetyAction(pane);
         if (safety !== "wait") return safety;
         const confirm = paneConfirmAction(pane);
@@ -306,6 +354,9 @@ export abstract class AgentRunnerBase implements AgentRunner {
         ticks: this.idlePollTicks,
         minLines: 3,
         isAlive: () => this.isRunning(resolved),
+        // Skipping an update must reveal a freshly captured composer; stable
+        // startup text is not evidence that the next input can be delivered.
+        isEligible: () => !sawCodexUpdateMenu,
       },
     });
   }

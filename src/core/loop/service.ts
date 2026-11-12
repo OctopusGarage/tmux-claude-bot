@@ -44,6 +44,7 @@ import {
 } from "./agent-queue.js";
 import { LOOP_RUN_ARTIFACTS } from "./artifacts.js";
 import { LoopBacklogStore } from "./backlog.js";
+import { runBoundedShellCommand } from "./bounded-command.js";
 import {
   type CheckpointSystemVerification,
   checkpointAcceptanceGate,
@@ -71,6 +72,8 @@ import {
   type LoopPreDispatchAssessment,
   resolveLoopPreDispatchAssessment,
 } from "./pre-dispatch-assessment.js";
+import { hasRalphPrReviewer, validateRalphPrReviewGate } from "./ralph-pr-review.js";
+import { hasRalphTask, readRalphTaskEvidence } from "./ralph-task.js";
 import {
   createLoopRemoteBranchMaintenance,
   type LoopRemoteBranchMaintenance,
@@ -124,6 +127,7 @@ import {
   startLoopSupervisor,
 } from "./supervisor-session.js";
 import {
+  hasLiveExternalExecution,
   type LoopSupervisorWorkOrderStateStatus,
   listTerminalLoopSupervisorWorkOrders,
   listUnfinishedLoopSupervisorWorkOrders,
@@ -139,6 +143,7 @@ import {
   buildRepositoryPullRequestReviewWorkOrder,
   parseSupervisorFinalSummaryFile,
 } from "./work-order.js";
+import { workOrderCommandEnv } from "./work-order-command-env.js";
 import type { LoopSupervisorFinalSummary } from "./work-order-contract.js";
 import { workerLeaseOutcome } from "./work-order-settlement.js";
 import { parseArchitectureAssessment } from "./workspace-assessment.js";
@@ -197,7 +202,12 @@ export function reconcileAutonomousCapacityLeases(
     ["claude", new Set()],
     ["codex", new Set()],
   ]);
-  for (const { workOrder } of readLoopSupervisorWorkOrderRegistry(now).unfinished) {
+  const registry = readLoopSupervisorWorkOrderRegistry(now);
+  const active = [
+    ...registry.unfinished,
+    ...registry.records.filter((record) => hasLiveExternalExecution(record, now)),
+  ];
+  for (const { workOrder } of active) {
     const leases = activeByAgent.get(workOrder.agent);
     for (const leaseId of activeCapacityLeaseIdsForWorkOrder(workOrder)) leases?.add(leaseId);
   }
@@ -833,10 +843,18 @@ export async function runLoopServiceTickAsync(input: {
         supervisorReservationFailure = lease.reason;
       }
     }
+    const externalDeadline =
+      hasRalphTask(workOrder) || hasRalphPrReviewer(workOrder)
+        ? Date.now() +
+          (runner.timeoutMs ??
+            input.defaultSupervisorTimeoutMs ??
+            DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS)
+        : undefined;
     writeLoopSupervisorWorkOrderState({
       workOrder,
       supervisorSession,
       status: "dispatching",
+      ...(externalDeadline === undefined ? {} : { deadlineAt: externalDeadline }),
       now: Date.now(),
     });
     const supervisorContextReset =
@@ -844,6 +862,157 @@ export async function runLoopServiceTickAsync(input: {
         ? ("clear" as const)
         : resetSupervisorBeforeWorkOrder;
     let result: LoopSupervisedRunResult;
+    const currentExternalRecord = () =>
+      readLoopSupervisorWorkOrderRegistry().records.find(
+        (record) => record.workOrder.id === workOrder.id,
+      );
+    const assertExternalOwner = (starting = false): void => {
+      const record = currentExternalRecord();
+      if (
+        externalDeadline === undefined ||
+        Date.now() >= externalDeadline ||
+        !record ||
+        record.workOrder.id !== workOrder.id ||
+        record.workOrder.projectId !== workOrder.projectId ||
+        record.workOrder.projectPath !== workOrder.projectPath ||
+        record.state.supervisorSession !== supervisorSession ||
+        record.state.deadlineAt !== externalDeadline ||
+        !hasLiveExternalExecution(
+          record,
+          Date.now(),
+          starting ? ["dispatching", "in-flight"] : ["in-flight", "queued", "needs-revision"],
+        )
+      )
+        throw new Error("External WorkOrder no longer owns its original execution reservation");
+      if (starting && record.state.status === "dispatching")
+        writeLoopSupervisorWorkOrderState({
+          workOrder,
+          supervisorSession,
+          status: "in-flight",
+          now: Date.now(),
+        });
+    };
+    let externalReadinessRecoveryUsed = false;
+    const lateExternalStatus = (): LoopSupervisedRunResult["status"] | undefined => {
+      if (!hasRalphTask(workOrder)) return undefined;
+      const record = currentExternalRecord();
+      if (record && ["completed", "failed", "cancelled"].includes(record.state.status))
+        return terminalStateToResultStatus(record.state.status);
+      if (
+        !record ||
+        record.workOrder.projectPath !== workOrder.projectPath ||
+        record.workOrder.projectId !== workOrder.projectId ||
+        record.state.runId !== workOrder.id ||
+        record.state.projectId !== workOrder.projectId ||
+        record.state.scheduledAt !== workOrder.scheduledAt ||
+        record.state.supervisorSession !== supervisorSession ||
+        record.state.deadlineAt !== externalDeadline
+      )
+        return "dispatch-failed";
+      return undefined;
+    };
+    const guardedDispatch: NonNullable<typeof input.runSupervisorTask> = async (request) => {
+      if (hasRalphTask(workOrder)) {
+        try {
+          assertExternalOwner();
+        } catch {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "external execution authority lost",
+            finalSummaryRecovery: "disabled",
+          };
+        }
+        return input.runSupervisorTask!({
+          ...request,
+          authorityFence: () => assertExternalOwner(),
+        });
+      }
+      return input.runSupervisorTask!(request);
+    };
+    const recoverExternalReadiness = async (failure: LoopSupervisedRunResult) => {
+      if (
+        externalReadinessRecoveryUsed ||
+        !isSupervisorDispatchReadinessFailure(failure) ||
+        input.ensureSupervisorSession === undefined
+      )
+        return false;
+      externalReadinessRecoveryUsed = true;
+      const recover = isAgentStartupFailureResult(failure)
+        ? (input.restartSupervisorSession ?? input.ensureSupervisorSession)
+        : input.ensureSupervisorSession;
+      return recover(supervisorSession);
+    };
+    const boundExternalResult = (current: LoopSupervisedRunResult): LoopSupervisedRunResult => {
+      if (hasRalphTask(workOrder)) {
+        const record = currentExternalRecord();
+        if (
+          !record ||
+          !hasLiveExternalExecution(record, Math.min(Date.now(), (externalDeadline ?? 0) - 1), [
+            "dispatching",
+            "in-flight",
+            "queued",
+            "needs-revision",
+          ])
+        )
+          return {
+            status: "dispatch-failed",
+            reason: "External WorkOrder execution authority lost",
+            output: current.output,
+            finalSummaryRecovery: "disabled",
+            ...(current.executionOwnership === undefined
+              ? {}
+              : { executionOwnership: current.executionOwnership }),
+          };
+      }
+      if (
+        externalDeadline === undefined ||
+        Date.now() < externalDeadline ||
+        current.status === "cancelled"
+      )
+        return current;
+      const reason = "External WorkOrder deadline exhausted";
+      return {
+        status: "dispatch-timeout",
+        reason,
+        output: [current.output, reason].filter(Boolean).join("\n"),
+        finalSummaryRecovery: "disabled",
+        ...(current.executionOwnership === undefined
+          ? {}
+          : { executionOwnership: current.executionOwnership }),
+      };
+    };
+    const runAcceptanceGate = (current: LoopSupervisedRunResult) => {
+      const gate = runSupervisedSystemGateOutcome({
+        project: systemGateProjectFromWorkOrder(workOrder),
+        workOrder,
+        result: boundExternalResult(current),
+        runCommand: (invocation) => {
+          if (externalDeadline !== undefined && Date.now() >= externalDeadline)
+            return { status: 124, stdout: "", stderr: "External WorkOrder deadline exhausted" };
+          return input.runCommand(
+            externalDeadline === undefined
+              ? invocation
+              : {
+                  ...invocation,
+                  timeoutMs: Math.min(
+                    invocation.timeoutMs ?? Number.POSITIVE_INFINITY,
+                    externalDeadline - Date.now(),
+                  ),
+                },
+          );
+        },
+        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
+      });
+      const bounded = boundExternalResult(gate.result);
+      return bounded === gate.result
+        ? gate
+        : {
+            ...gate,
+            result: bounded,
+            evidence: [...gate.evidence, "External WorkOrder deadline exhausted"],
+          };
+    };
     if (preparationFailures.length > 0) {
       const reason = `execution worktree isolation failed: ${preparationFailures
         .map(
@@ -891,6 +1060,7 @@ export async function runLoopServiceTickAsync(input: {
         output: "missing loop supervisor dispatch adapter",
       };
     } else {
+      const dispatch = input.runSupervisorTask;
       result = await runLoopSupervisedProjectAsync({
         workOrder,
         supervisorSession,
@@ -899,10 +1069,20 @@ export async function runLoopServiceTickAsync(input: {
           input.defaultSupervisorTimeoutMs ??
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
         resetBeforeWorkOrder: supervisorContextReset,
-        dispatch: input.runSupervisorTask,
+        dispatch: guardedDispatch,
+        ...(hasRalphTask(workOrder)
+          ? { onExternalExecutionStarted: () => assertExternalOwner(true) }
+          : {}),
+        ...(externalDeadline === undefined
+          ? {}
+          : {
+              deadline: externalDeadline,
+              recoverDispatchReadiness: recoverExternalReadiness,
+            }),
         ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
       });
       if (
+        !hasRalphTask(workOrder) &&
         isSupervisorDispatchReadinessFailure(result) &&
         input.ensureSupervisorSession !== undefined
       ) {
@@ -933,19 +1113,19 @@ export async function runLoopServiceTickAsync(input: {
         }
       }
     }
+    const lateStatus = lateExternalStatus();
+    if (lateStatus !== undefined) return lateStatus;
+    result = boundExternalResult(result);
     result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
-    let gate = runSupervisedSystemGateOutcome({
-      project: systemGateProjectFromWorkOrder(workOrder),
-      workOrder,
-      result,
-      runCommand: input.runCommand,
-      ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
-    });
+    const recoveredLateStatus = lateExternalStatus();
+    if (recoveredLateStatus !== undefined) return recoveredLateStatus;
+    let gate = runAcceptanceGate(result);
     let revisionAttempt = 0;
     let revisionFailures = supervisorRevisionFailures(gate.failures);
     while (
       revisionFailures.length > 0 &&
       revisionAttempt < maxSupervisorRevisionAttempts &&
+      (externalDeadline === undefined || Date.now() < externalDeadline) &&
       input.runSupervisorTask !== undefined
     ) {
       revisionAttempt += 1;
@@ -977,7 +1157,13 @@ export async function runLoopServiceTickAsync(input: {
           runner.timeoutMs ??
           input.defaultSupervisorTimeoutMs ??
           DEFAULT_LOOP_SUPERVISOR_TIMEOUT_MS,
-        dispatch: input.runSupervisorTask,
+        dispatch: guardedDispatch,
+        ...(externalDeadline === undefined
+          ? {}
+          : {
+              deadline: externalDeadline,
+              recoverDispatchReadiness: recoverExternalReadiness,
+            }),
         ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
         failures: revisionFailures,
         attempt: revisionAttempt,
@@ -985,14 +1171,11 @@ export async function runLoopServiceTickAsync(input: {
         previousOutput: gate.result.output,
         resetBeforeWorkOrder: supervisorContextReset,
       });
+      result = boundExternalResult(result);
       result = await recoverInvalidOutputFromFinalSummaryAsync(workOrder, result);
-      gate = runSupervisedSystemGateOutcome({
-        project: systemGateProjectFromWorkOrder(workOrder),
-        workOrder,
-        result,
-        runCommand: input.runCommand,
-        ...(input.runGit !== undefined ? { runGit: input.runGit } : {}),
-      });
+      const revisionLateStatus = lateExternalStatus();
+      if (revisionLateStatus !== undefined) return revisionLateStatus;
+      gate = runAcceptanceGate(result);
       revisionFailures = supervisorRevisionFailures(gate.failures);
     }
     result = gate.result;
@@ -1079,6 +1262,7 @@ export async function runLoopServiceTickAsync(input: {
       isPreparedIsolatedExecutionWorktree(workOrder) &&
       !cleanupLoopExecutionWorktree({
         worktree: workOrder.projectPath,
+        workOrderId: workOrder.id,
         runGit: input.runGit,
         ...(workOrder.executionIsolation?.sourceWorktree === undefined
           ? {}
@@ -1087,8 +1271,44 @@ export async function runLoopServiceTickAsync(input: {
           ? {}
           : { expectedBranch: workOrder.commitPolicy.branch }),
       });
-    settleLoopSupervisorWorkerLease(workOrder, result, endedAt, isolatedCleanupFailed);
+    settleLoopSupervisorWorkerLease(
+      workOrder,
+      result,
+      endedAt,
+      isolatedCleanupFailed,
+      hasRalphTask(workOrder) ? supervisorSession : undefined,
+    );
     await cleanupCompletedWorkerSession(workOrder, input.cleanupCompletedWorkerSession);
+    // Failure/cancellation cleanup follows lease settlement and worker shutdown.
+    // If shutdown cannot be proved here, startup/tick reconciliation retains its
+    // active-turn checks and performs the same archive-before-removal operation.
+    if (
+      result.status !== "completed" &&
+      workOrder.executionIsolation?.cleanup.retainFailureForHours === 0 &&
+      input.runGit !== undefined &&
+      isPreparedIsolatedExecutionWorktree(workOrder) &&
+      !readActiveLoopSupervisorResources().resourcePaths.has(workOrder.projectPath) &&
+      !readLoopSupervisorWorkerLeaseState().leases.some(
+        (lease) =>
+          lease.projectPath === workOrder.projectPath &&
+          (lease.status === "active" || (lease.retainUntil ?? Infinity) > endedAt),
+      ) &&
+      (workOrder.workerSession === undefined ||
+        (input.workerSessionExists !== undefined &&
+          !(await input.workerSessionExists(workOrder.workerSession))))
+    ) {
+      cleanupLoopExecutionWorktree({
+        worktree: workOrder.projectPath,
+        workOrderId: workOrder.id,
+        runGit: input.runGit,
+        ...(workOrder.executionIsolation.sourceWorktree === undefined
+          ? {}
+          : { sourceWorktree: workOrder.executionIsolation.sourceWorktree }),
+        ...(workOrder.commitPolicy.branch === undefined
+          ? {}
+          : { expectedBranch: workOrder.commitPolicy.branch }),
+      });
+    }
     if (checkpointScheduler) {
       if (completion.retrySchedule || result.status === "invalid-output") {
         restoreLastFired(input.schedulerStore, previousLastFired, due.jobKey, due.scheduledAt);
@@ -1371,12 +1591,12 @@ export async function runLoopServiceTickAsync(input: {
       }
 
       const now = tickNow;
-      const queueItems = repositoryReviewQueue.listReady(now, idleSupervisorSessions.length);
+      const queueItems = repositoryReviewQueue.listReady(now);
       const targets = queueItems.flatMap((item) => {
         const repository = config.prReview.repositories.find(
           (candidate) => candidate.id === item.repositoryId,
         );
-        if (repository === undefined) return [];
+        if (repository === undefined || repository.enabled === false) return [];
         return [
           {
             item,
@@ -1394,7 +1614,7 @@ export async function runLoopServiceTickAsync(input: {
         ];
       });
       const plan = planLoopSupervisorDispatch({
-        targets: targets.map(({ target }) => target),
+        targets: targets.slice(0, idleSupervisorSessions.length).map(({ target }) => target),
         activeResourcePaths: active.resourcePaths,
       });
       if (plan.ready.length === 0) {
@@ -2413,8 +2633,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
   const unfinished = [
     ...registry.recoverableFinalSummary,
     ...registry.unfinished,
-    ...registry.recoverableFailed,
+    ...registry.recoverableFailed.filter((record) => !hasRalphTask(record.workOrder)),
     ...registry.staleDispatching,
+    ...registry.records.filter((record) => hasLiveExternalExecution(record, input.now)),
   ];
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
@@ -2433,7 +2654,9 @@ export async function reconcileLoopSupervisorWorkOrders(input: {
       record.state.supervisorSession,
       input.now,
     );
-    const supervisorBusy = input.supervisorSessionBusy?.(record.state.supervisorSession) === true;
+    const externalBusy = hasLiveExternalExecution(record, input.now);
+    const supervisorBusy =
+      externalBusy || input.supervisorSessionBusy?.(record.state.supervisorSession) === true;
     if (
       supervisorBusy &&
       (!expiredStartedAttempt || input.cancelExpiredSupervisorWork === undefined)
@@ -2641,8 +2864,27 @@ function settleLoopSupervisorWorkerLease(
   result: LoopSupervisedRunResult,
   now: number,
   cleanupFailed = false,
+  workerSession?: string,
 ): void {
-  settleLoopSupervisorWorkerLeaseForStatus(workOrder, result.status, now, cleanupFailed);
+  if (
+    workerSession !== undefined &&
+    !readLoopSupervisorWorkerLeaseState().leases.some(
+      (lease) =>
+        lease.status === "active" &&
+        lease.workOrderId === workOrder.id &&
+        lease.projectId === workOrder.projectId &&
+        lease.projectPath === workOrder.projectPath &&
+        lease.workerSession === workerSession,
+    )
+  )
+    return;
+  settleLoopSupervisorWorkerLeaseForStatus(
+    workOrder,
+    result.status,
+    now,
+    cleanupFailed,
+    workerSession,
+  );
 }
 
 function terminalStateToResultStatus(
@@ -2873,6 +3115,35 @@ export function runSupervisedSystemGateOutcome(input: {
     };
   }
 
+  if (hasRalphTask(input.workOrder) || hasRalphPrReviewer(input.workOrder)) {
+    try {
+      if (hasRalphTask(input.workOrder)) readRalphTaskEvidence(input.workOrder);
+      if (hasRalphPrReviewer(input.workOrder))
+        validateRalphPrReviewGate(
+          input.workOrder,
+          input.result.summary.pullRequestDecisions,
+          input.runCommand,
+        );
+    } catch {
+      const reason = "RalphWorks execution evidence is missing, invalid, or changed";
+      return {
+        failures: [reason],
+        evidence: [reason],
+        result: {
+          status: "supervisor-failed",
+          summary: {
+            ...input.result.summary,
+            status: "failed",
+            finalVerification: "failed",
+            followUps: [...input.result.summary.followUps, reason],
+          },
+          output: [input.result.output, reason].join("\n"),
+          finalSummaryRecovery: "disabled",
+        },
+      };
+    }
+  }
+
   const missingCheckpointSystemVerification =
     "checkpoint system verification artifact is missing or not passed for current revision";
   const preliminaryCheckpointGate = checkpointAcceptanceGate(input.workOrder, input.runGit);
@@ -2950,18 +3221,7 @@ export function runSupervisedSystemGateOutcome(input: {
         kind: systemVerificationCommand.kind,
         command: systemVerificationCommand.command,
         cwd: input.workOrder.projectPath,
-        env: {
-          TCB_STATE_DIR: appStateDir(),
-          LOOP_WORK_ORDER_ID: input.workOrder.id,
-          LOOP_PROJECT_ID: input.workOrder.projectId,
-          LOOP_PROJECT_NAME: input.workOrder.projectName,
-          LOOP_PROJECT_AGENT: input.workOrder.agent,
-          LOOP_PROJECT_GOAL: input.workOrder.goal,
-          LOOP_PROJECT_PATH: input.workOrder.projectPath,
-          LOOP_BOT_ROOT: process.cwd(),
-          LOOP_PROJECT_TARGET_SCORE: String(input.workOrder.targetScore),
-          LOOP_PROJECT_MAX_ROUNDS: String(input.workOrder.maxRounds),
-        },
+        env: workOrderCommandEnv(input.workOrder),
       });
       const endedAt = new Date().toISOString();
       let parsed: { passed?: unknown; score?: unknown } | undefined;
@@ -4601,6 +4861,8 @@ function shellQuoteLocal(value: string): string {
 }
 
 export function runShellCommand(invocation: LoopRunCommandInvocation): LoopRunCommandResult {
+  if (invocation.timeoutMs !== undefined)
+    return runBoundedShellCommand({ ...invocation, timeoutMs: invocation.timeoutMs });
   const result = spawnSync("sh", ["-lc", invocation.command], {
     cwd: invocation.cwd,
     env: { ...process.env, ...invocation.env },

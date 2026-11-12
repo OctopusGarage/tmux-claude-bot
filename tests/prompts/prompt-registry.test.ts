@@ -40,10 +40,11 @@ describe("governed prompt registry", () => {
     expect(actionScopeAtMost(spec.actionScope, "pr-create")).toBe(true);
   });
 
-  it("versions the supervisor contract that delegates merged-PR source adoption", () => {
-    expect(governedPromptById("loop.supervisor.main").version).toBe(2);
-    expect(governedPromptById("loop.supervisor.finalization").version).toBe(2);
-    expect(governedPromptById("loop.supervisor.revision").version).toBe(2);
+  it("versions external architecture review and preserves merged-PR source adoption", () => {
+    expect(governedPromptById("loop.policy.architecture").version).toBe(2);
+    expect(governedPromptById("loop.supervisor.main").version).toBe(3);
+    expect(governedPromptById("loop.supervisor.finalization").version).toBe(3);
+    expect(governedPromptById("loop.supervisor.revision").version).toBe(3);
   });
 
   it("marks legacy loop prompts explicitly", () => {

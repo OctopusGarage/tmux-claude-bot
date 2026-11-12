@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import { listLoopExecutionQuarantines } from "./execution-quarantine.js";
 import { normalizeLoopResourcePaths } from "./supervisor-dispatch-plan.js";
 import { readLoopSupervisorWorkerLeaseState } from "./supervisor-pool.js";
 import { listUnfinishedLoopSupervisorWorkOrders } from "./supervisor-state.js";
@@ -15,6 +16,13 @@ export function readActiveLoopSupervisorResources(): ActiveLoopSupervisorResourc
   const supervisorSessions = new Set<string>();
   const projectPaths = new Set<string>();
   const resourcePaths = new Set<string>();
+  for (const quarantine of listLoopExecutionQuarantines()) {
+    if (quarantine.workerSession !== undefined) supervisorSessions.add(quarantine.workerSession);
+    for (const path of quarantine.resourcePaths) {
+      projectPaths.add(path);
+      resourcePaths.add(path);
+    }
+  }
   for (const record of listUnfinishedLoopSupervisorWorkOrders()) {
     if (record.state.resultStatus === "invalid-output") continue;
     supervisorSessions.add(record.state.supervisorSession);

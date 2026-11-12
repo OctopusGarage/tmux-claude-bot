@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import * as processOwnership from "../../src/core/resource-guardian/ownership.js";
 import {
   createBulkResourceProcessProbe,
   createProcessOwnershipResolver,
   createProductionProcessOwnershipCollector,
   createSupervisorProcessOwnershipCollector,
+  execResourceProcessProbe,
   normalizeSupervisorLeaseEvidence,
   normalizeSupervisorWorkOrderEvidence,
   parseResourceProcessPs,
+  ResourceProcessProbeTimeoutError,
   sameProcessInstance,
 } from "../../src/core/resource-guardian/ownership.js";
 import type { ResourceProcess } from "../../src/core/resource-guardian/types.js";
@@ -429,7 +432,11 @@ describe("process snapshot adapter", () => {
     expect(exec).toHaveBeenCalledWith(
       "ps",
       expect.arrayContaining(["-axo"]),
-      expect.objectContaining({ env: expect.objectContaining({ LC_ALL: "C", LANG: "C" }) }),
+      expect.objectContaining({
+        timeout: 5000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: expect.objectContaining({ LC_ALL: "C", LANG: "C" }),
+      }),
     );
   });
 
@@ -588,5 +595,152 @@ describe("process snapshot adapter", () => {
 
     expect(readRegistry).toHaveBeenCalledTimes(1);
     expect(readLeaseState).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("owned bulk process probe timeout", () => {
+  const options = { timeout: 25, maxBuffer: 8 * 1024 * 1024, env: { LC_ALL: "C", LANG: "C" } };
+  it("marks only its own timeout after the helper has actually exited", async () => {
+    await expect(
+      execResourceProcessProbe(
+        globalThis.process.execPath,
+        ["-e", "setInterval(()=>{},1000)"],
+        options,
+      ),
+    ).rejects.toMatchObject({
+      name: "ResourceProcessProbeTimeoutError",
+      code: "ETIMEDOUT",
+      killed: true,
+      signal: "SIGTERM",
+    });
+  });
+
+  it("force-stops its original helper when TERM is ignored and still waits for close", async () => {
+    const started = Date.now();
+    await expect(
+      execResourceProcessProbe(
+        globalThis.process.execPath,
+        ["-e", "process.on('SIGTERM',()=>{});setTimeout(()=>process.exit(0),2000)"],
+        { ...options, timeout: 300 },
+      ),
+    ).rejects.toMatchObject({
+      name: "ResourceProcessProbeTimeoutError",
+      code: "ETIMEDOUT",
+      signal: "SIGKILL",
+    });
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it("preserves maxBuffer failures without a causal timeout marker", async () => {
+    let failure: unknown;
+    try {
+      await execResourceProcessProbe(
+        globalThis.process.execPath,
+        ["-e", "process.stdout.write('x'.repeat(10000))"],
+        { ...options, timeout: 5000, maxBuffer: 100 },
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).not.toBeInstanceOf(ResourceProcessProbeTimeoutError);
+    expect(failure).toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+  });
+
+  it("preserves ordinary helper exit failures without a causal timeout marker", async () => {
+    let failure: unknown;
+    try {
+      await execResourceProcessProbe(globalThis.process.execPath, ["-e", "process.exit(7)"], {
+        ...options,
+        timeout: 5000,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).not.toBeInstanceOf(ResourceProcessProbeTimeoutError);
+    expect(failure).toMatchObject({ code: 7 });
+  });
+  it("preserves helper spawn failures without a causal timeout marker", async () => {
+    let failure: unknown;
+    try {
+      await execResourceProcessProbe("/nonexistent-tcb-owned-probe-fixture", [], {
+        ...options,
+        timeout: 5000,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).not.toBeInstanceOf(ResourceProcessProbeTimeoutError);
+    expect(failure).toMatchObject({ code: "ENOENT" });
+  });
+  it("does not relabel an earlier maxBuffer stop while its helper close is delayed", async () => {
+    let failure: unknown;
+    try {
+      await execResourceProcessProbe(
+        globalThis.process.execPath,
+        [
+          "-e",
+          "process.on('SIGTERM',()=>{});process.stdout.on('error',()=>{});process.stdout.write('x'.repeat(10000));setTimeout(()=>process.exit(0),2000)",
+        ],
+        { ...options, timeout: 1000, maxBuffer: 100 },
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).not.toBeInstanceOf(ResourceProcessProbeTimeoutError);
+    expect(failure).toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+  });
+});
+
+describe("lifecycle process identity probe", () => {
+  const row = "10 1 10 Sun Aug  9 10:00:00 2026";
+  it("requests only identity and ancestry in a controlled locale", async () => {
+    const exec = vi.fn(async () => ({ stdout: `${row}\n`, stderr: "" }));
+    const probe = processOwnership.createProcessIdentityProbe({ exec });
+    const { processes } = await probe();
+    expect(processes).toEqual([
+      { pid: 10, ppid: 1, pgid: 10, startedAt: new Date("Sun Aug 9 10:00:00 2026").toISOString() },
+    ]);
+    expect(exec).toHaveBeenCalledExactlyOnceWith("ps", ["-axo", "pid=,ppid=,pgid=,lstart="], {
+      timeout: 5000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: expect.objectContaining({ LC_ALL: "C", LANG: "C" }),
+    });
+  });
+  it.each([
+    "garbage",
+    `${row}\ntruncated row`,
+    `${row}\n${row}`,
+    "10 1 10 Sun Aug 9 10:00:00",
+    "10 1 10 Sun Nope 9 10:00:00 2026",
+    "0 1 10 Sun Aug 9 10:00:00 2026",
+    `${row} 1.5 100 secret-command`,
+    "10 1 10 Sun Feb 30 10:00:00 2026",
+  ])("rejects incomplete or ambiguous nonempty identity output: %s", (stdout) => {
+    expect(() => processOwnership.parseProcessIdentityPs(stdout)).toThrow(
+      "invalid process identity snapshot",
+    );
+  });
+  it("allows empty output and blank lines but never hides an unavailable snapshot", async () => {
+    expect(processOwnership.parseProcessIdentityPs("\n \n")).toEqual([]);
+    expect(processOwnership.parseProcessIdentityPs(`\n${row}\n\n`)).toHaveLength(1);
+    const unavailable = new Error("snapshot unavailable");
+    await expect(
+      processOwnership.createProcessIdentityProbe({
+        exec: async () => {
+          throw unavailable;
+        },
+      })(),
+    ).rejects.toBe(unavailable);
+  });
+  it("reads the real current process identity without resource telemetry", async () => {
+    const { processes } = await processOwnership.createProcessIdentityProbe({})();
+    const current = processes.find((entry) => entry.pid === globalThis.process.pid);
+    expect(current).toMatchObject({
+      pid: globalThis.process.pid,
+      ppid: globalThis.process.ppid,
+      pgid: expect.any(Number),
+      startedAt: expect.any(String),
+    });
+    expect(Object.keys(current ?? {}).sort()).toEqual(["pgid", "pid", "ppid", "startedAt"]);
   });
 });

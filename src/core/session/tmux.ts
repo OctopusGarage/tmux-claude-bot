@@ -162,9 +162,13 @@ export class TmuxBridge {
     }
   }
 
-  private async writePromptCommand(args: string[], serverPid?: string): Promise<void> {
+  private async writePromptCommand(
+    args: string[],
+    serverPid?: string,
+    timeout = 10000,
+  ): Promise<void> {
     if (serverPid === undefined) {
-      await this.execFile("tmux", args, { timeout: 10000 });
+      await this.execFile("tmux", args, { timeout });
       return;
     }
     // Arguments are entirely generated tokens or validated numeric pane IDs.
@@ -178,7 +182,7 @@ export class TmuxBridge {
         args.join(" "),
         "display-message -p TCB_TARGET_REPLACED",
       ],
-      { timeout: 10000 },
+      { timeout },
     );
     if (result.stdout.includes("TCB_TARGET_REPLACED"))
       throw new Error("Pinned tmux server was replaced");
@@ -249,6 +253,44 @@ export class TmuxBridge {
     await new Promise((r) => setTimeout(r, 300));
     await this.sendKeys("/exit", sessionName);
     await this.resetAttachedClientTerminalModes(sessionName);
+  }
+
+  /** Stop an owned automation process without an uncancellable exit sequence.
+   * The caller verifies its native PID and lease before each input; false means
+   * it already exited. Each tmux subprocess is killed on its remaining timeout. */
+  async sendOwnedExit(
+    sessionName: string,
+    options: { deadlineAt: number; verify: () => Promise<boolean> },
+  ): Promise<void> {
+    const remainingTimeout = (): number => {
+      const remaining = options.deadlineAt - Date.now();
+      if (remaining <= 0) throw new Error("Agent context reset readiness deadline exhausted");
+      return Math.min(10000, remaining);
+    };
+    const target = `${sessionName}:${this.window}.${this.pane}`;
+    const result = await this.execFile(
+      "tmux",
+      ["display-message", "-p", "-t", target, "#{pane_id} #{pid}"],
+      { timeout: remainingTimeout() },
+    );
+    remainingTimeout();
+    const pinned = /^(%\d+) (\d+)$/.exec(result.stdout.trim());
+    if (!pinned) throw new Error("Cannot pin tmux target for owned context reset");
+    const send = async (keys: string[]): Promise<boolean> => {
+      if (!(await options.verify())) return false;
+      await this.writePromptCommand(
+        ["send-keys", "-t", pinned[1] as string, ...keys],
+        pinned[2],
+        remainingTimeout(),
+      );
+      remainingTimeout();
+      return true;
+    };
+    if (!(await send(["C-c"]))) return;
+    await this.sleep(Math.min(300, remainingTimeout()));
+    // Fixed ASCII command and Enter travel in one guarded tmux invocation;
+    // there is no buffer/paste/submit delay or terminal-mode write to outlive it.
+    await send(["/exit", "C-m"]);
   }
 
   async resetAttachedClientTerminalModes(sessionName?: string): Promise<void> {

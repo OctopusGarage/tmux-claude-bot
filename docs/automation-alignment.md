@@ -320,6 +320,14 @@ time without incrementing the attempt count, so dashboards do not advertise
 already-past automatic retry times during quiet hours or closed admission.
 The top-level deferral also coalesces retries scheduled to become due before the
 admission retry time; retries already scheduled later remain unchanged.
+Repository review consumption must honor the configured repository target's
+`enabled` flag before per-item admission, queue leasing or dispatch. Filter
+paused entries before applying the available-worker limit so they cannot starve
+enabled repositories. Pending and retry-wait entries remain queued without
+consuming dispatch attempts and resume when re-enabled. The pause takes effect
+when a tick reads the updated config; it does not cancel already admitted work
+or invalidate an in-progress tick's snapshot. Project Recovery and active
+delegation retain their separate admission semantics.
 System Self-Heal broad agent sweeps must leave durable retryable failure ledger
 evidence when admission blocks the sweep before WorkOrder creation; otherwise
 the hourly operator-equivalent check can disappear from the next audit window.
@@ -416,6 +424,16 @@ must also restore due aggregate siblings that an older dedupe pass terminalized
 as `superseded`; this migration is evidence-bound and must not require operators
 to edit the durable repair queue. Derived aggregate links must never replace the
 original runtime finding id when a due record re-enters admission.
+Project PR review branch alignment: the composed WorkOrder instruction must
+permit the native supervisor's bounded commits and pushes only on an eligible
+PR's existing same-repository head under the review policy. Top-level
+implementation commit defaults must neither authorize a new branch or PR nor
+contradict that existing-head repair permission. Native and external reviewer
+prompts retain review, CI, mergeability and system gates after every repair;
+RalphWorks review passes remain immutable and require fresh revision-bound
+evidence. Repository review with repair disabled or zero attempts retains its
+code-commit ban. Rendered WorkOrder tests cover these boundaries.
+
 Repository PR review alignment invariant: every repository-wide review WorkOrder
 must persist one structured decision per in-scope PR. Only `merged` and
 evidence-backed allowlisted `closed` decisions complete the queue item; retryable
@@ -736,8 +754,11 @@ Runtime Guardian must also classify target-project and external blockers as
 terminal blocked findings, and reconcile stale invalid-output queue records from
 later gate artifacts. Terminal WorkOrders must release their worker session
 regardless of success, failure, timeout, or cancellation. Successful runs remove
-bot-owned isolated execution worktrees immediately; failed/timeout/cancelled
-runs retain those worktrees only until the configured retention TTL expires.
+bot-owned isolated execution worktrees after verified recovery archival;
+failed/timeout/cancelled runs do the same after release. Newly built WorkOrders
+default to zero failure retention. Explicit positive retention and retained-lease
+pins remain authoritative; live/excluded owners, active turns and quarantine block
+session and worktree cleanup. Existing terminal/startup/tick hooks own the process.
 Supervised system gates must resolve required git executables from the current
 service-safe environment at gate execution time so launch-time PATH drift does
 not create false terminal orchestration failures.
@@ -755,17 +776,32 @@ notification wording alone.
 When an isolated WorkOrder uses a bot-owned `loop/*` branch, successful or
 retention-expired cleanup must treat the worktree registration and its local
 branch ref as one lifecycle. Verify the source repository, expected branch, and
-HEAD; detach the terminal worktree; compare-and-delete the exact ref; then remove
+HEAD; preserve a verified private recovery record and independently stored Git
+objects; detach the terminal worktree; compare-and-delete the exact ref; then remove
 the worktree. When the directory disappeared first, the eligible terminal
 WorkOrder remains the authority: prove the source registry no longer owns that
 path, re-read the exact ref SHA, and compare-and-delete it rather than deleting
-by name.
+by name, archiving that commit first. Recovery records contain binary staged and
+unstaged patches, the index, source/report bytes and modes, and symlink metadata.
+Ignored reproducible dependencies/build caches are omitted, but nonignored source,
+browser diagnostics and coverage evidence are retained. Never follow symlinks
+outside owned paths. Archive failure or changed identity retains the workspace;
+crash replay reuses verified recovery. Independent checkout removal must preserve
+its unique commits outside its own Git directory before deleting that directory.
 An isolated worktree created before its WorkOrder became durable has no terminal
 record to drive cleanup. Reconciliation must treat it as an orphan only when no
 WorkOrder resource path or worker lease references the exact state-owned path;
-it must then preserve the path for the default 72-hour failure-evidence window
-and repeat the exact Git-toplevel check before removal. Young, referenced,
+it must then preserve the path for the existing seven-day orphan window
+and repeat the exact Git-toplevel check and recovery archive before removal. Young, referenced,
 leased, and unverifiable paths remain fail-closed.
+
+Tests route ordinary temporary fixtures into per-file sandboxes within one
+Vitest-owned run root. File teardown removes each sandbox; global teardown also
+removes the run root after failed imports or failed/timed-out file hooks. A hard
+kill of the test runner can prevent teardown.
+Fake CLI/process suites stop only known fixture children with current identity
+proof before removing their roots. Test cleanup never sweeps shared temporary
+directories or signals processes by a name/group guess.
 
 Host power alignment invariant: macOS owns the decision to sleep; the bot never
 forces it. `off` leaves power behavior unmanaged, `always` explicitly holds the
@@ -1317,6 +1353,273 @@ summary. This report-level guard does not replace independent acceptance gates.
 Live and restored journaled supervisor completion probes both require a valid
 current summary. A bare completion marker or pre-attempt summary cannot finish
 the queue item; restoration retains the same attempt identity and freshness fence.
+
+
+## Optional External Task Delegation
+
+The canonical implementation selectors are `project.execution.architecture`,
+`project.execution.bugFix`, `project.execution.testCoverage` and `project.execution.securityMaintenance`, copied only into
+the matching standalone single-project WorkOrder. Missing configuration and
+`kind: native` retain native behavior independently per family;
+`kind: ralphworks` is explicit external execution opt-in and requires
+`runner.kind: agent-supervised` plus `execution.agent: true`.
+`src/core/loop/task-implementation.ts` owns family metadata;
+`src/core/loop/ralph-task.ts` exposes `hasRalphTask`, `executeRalphTask` and
+`readRalphTaskEvidence` for public CLI composition and receipt
+validation; `ralph-process.ts` owns bounded process stop with identity-checked
+descendants. The existing supervisor runner, admission, worktree, lease, review,
+GitHub and system acceptance paths remain owners. No provider client or copied
+method/skill is permitted in the bot.
+
+Configuration inspection/mutation uses `tcb loop architecture get|set`,
+`tcb loop bugfix get|set`, `tcb loop test-coverage get|set` or `tcb loop security-maintenance get|set`; params are redacted,
+credential-like names rejected, and runtime contents never read. Invalid family
+or selection writes are rejected without changing the file. Shared quarantine
+list/release commands are available under all four CLI prefixes.
+Chat, TUI, Observer MCP and installed operator skills intentionally use existing
+report/task views and the documented CLI fallback. All workspace tasks,
+harness-auto (including its selected subtasks), active delegation and other
+families remain native. Maintain this difference in the capability matrix.
+
+Default profiles are `builtin:architecture`, `builtin:bugfix`,
+`builtin:test-coverage` and `builtin:security-maintenance`. Builtin bug-fix policy supplies `mode: discover` and
+`maxFixes` from `maxBugsPerRound`; builtin coverage policy supplies
+`targetCoverage`, `includeIntegration` and `includeE2E`. Custom profiles remain
+opaque, while task prompts and required reports retain caller policy. Builtin
+security policy supplies `allowDependencyUpdates`, `allowConfigHardening` and
+`allowStaticAnalysisFixes`; tasks retain both risk thresholds, rounds, prompt and
+cleanup policy. Risk dispatch stays bot-owned; `maxFixes` stays profile-owned. Required
+family reports are `ARCHITECTURE_REPORT.md`, `BUGFIX_REPORT.md`,
+`COVERAGE_REPORT.md` and `SECURITY_REPORT.md`; none substitutes for native review or system acceptance.
+
+The generated task preserves the original goal, task-specific prompt and caller
+acceptance criteria while defining the external implementation phase explicitly.
+It requires bounded implementation, required local verification and the family
+report. Native review, final system acceptance, commits and PR delivery are
+bot-owned downstream work; their pending status alone does not prevent an
+external completion request. Local requirements, thresholds and limits remain
+binding, including when planning criteria mention downstream delivery. Missing
+or failed local verification and plan/report evidence still block completion;
+skipped assessments and null scores cannot become measured success. Scheduled
+checks and output validation retain their independent post-return gates.
+Captured task/CLI and receipt tests enforce this boundary for all four families;
+prompt tests do not establish live-model compliance.
+
+External receipt success is transport evidence. Native finalization may review,
+verify and perform existing policy-bound Git delivery but must not implement,
+resync/reset, rerun RalphWorks or fall back. Missing plan/score evidence blocks
+rather than becoming a synthetic `planReview` pass. The system gate checks
+durable receipt/task/archive/output identity before existing deterministic
+acceptance. External review has a review-only workflow and launches long checks
+early while inspecting the fixed source. Only an assessment command identical
+to an explicitly configured eval command is delegated to the production gate;
+distinct or assessment-only commands still run during review. Existing passing
+logs retain their implementation provenance, and a pending production gate is
+never reported as passed. This avoids redundant execution without changing
+acceptance, the native path, or the original deadline.
+For a supervisor readiness failure after accepted external execution, recovery
+retries only native review in the same runner invocation, at most once. Receipt
+integrity and process quarantine are checked before and after recovery. The
+service carries one absolute deadline through that recovery and system-gate
+review revisions; an expired deadline cannot start another review or recover a
+late success summary. Native readiness recovery retains its existing behavior.
+The deadline bounds admission, retries and acceptance, rather than forcibly
+interrupting every operation. A synchronous command adapter may finish after
+expiry, but its late result is rejected. Existing supervisor ensure/restart
+callbacks do not expose cancellation; if one is already running, it may finish,
+but no review retry is dispatched after cancellation or deadline expiry.
+Ralph review uses concise schema-valid summaries: omit optional planning review
+without a planning contract; required flags stay boolean and measured claims
+retain evidence. Exact commands and outputs remain in referenced artifacts rather
+than repeated large file lists. Strict parsing and production acceptance remain
+authoritative, including pending gate and failed-check behavior.
+Replays of a reserved external execution fail closed. Existing
+`.ralph` state is never deleted; newly owned state is archived only after child
+shutdown. Process-ownership uncertainty requires retaining execution ownership
+for reconciliation; it does not authorize cleanup or reuse.
+
+Contract coverage: `tests/loop/config.test.ts`, `architecture-command.test.ts`,
+`architecture-cli.test.ts`, external task adapter tests, `ralph-process.test.ts`,
+`supervised-runner.test.ts` and `work-order.test.ts` cover native defaults,
+configuration, work-order snapshots, process lifecycle, wrong/stale/tampered
+receipts, evidence provenance and review-only routing. Capability comparisons
+must retain existing system gates and report actual native versus composed
+quality, duration, cost and failures; fake transports are protocol tests only.
+
+
+External lifecycle quarantine is durable before launch, independent of retained
+worker lease TTL, and reserves both source and execution paths after restart.
+Missing/invalid receipts and typed process-proof failures keep the hold. Only a
+validated compatible terminal receipt with stopped observed children clears it
+automatically; explicit operator release additionally rechecks stored process
+identities. Preparation/admission and worktree cleanup consult the same registry.
+This cooperative host transport does not claim to contain arbitrary daemonization.
+Ownership snapshot errors distinguish process-probe failures from failures in the
+ownership-persistence callback. Preserve the first typed ownership failure through
+stop/finalization, including sanitized error name/code, killed flag, signal and
+stage elapsed milliseconds. Do not retain raw error messages, causes, commands,
+stdout/stderr or paths in these diagnostics. Execution monitoring may retry a
+confirmed identity-process timeout once consecutively, including recovery crossing
+successful CLI close. Confirmation requires the monitoring probe's own five-second
+timer's exact abort cause and helper close, represented
+by `ResourceProcessProbeTimeoutError` with `ETIMEDOUT`; an observed exit signal
+or elapsed/killed error shape alone never proves timeout ownership. The eight-MiB
+output cap and close-before-settlement boundary remain. A helper still live 250 ms
+after its timeout receives KILL through its original handle; an earlier maxBuffer
+failure retains its original cause. A fresh successful probe and required ownership persistence reset
+that budget; no stale snapshot proves recovery. The bounded process result keeps
+a retry count and last sanitized timeout diagnostic; an existing structured
+logger warning exposes each allowed retry with only those safe fields. Parser, non-timeout probe,
+persistence and stop-cleanup failures remain fail-closed. Final recovery retains
+the same single-flight probe and consecutive-timeout allowance.
+Retry respects cancellation, child exit and the original execution deadline; it
+does not extend probe timeouts, release quarantine or relax stop verification.
+`tests/loop/execution-quarantine.test.ts` covers permanent path reservation and
+cleanup refusal; the external fixture covers fast-detach with no receipt.
+
+
+Verified stop outcomes return lifecycle proof separately from process exit status.
+Cancellation receipt reconciliation is read-only: it preserves raw receipt
+status, archives the run and clears a hold only after matching terminal evidence
+and known child shutdown. Bot cancellation wins over a late completed receipt;
+no native finalization/delivery is permitted. Missing/foreign/invalid receipts or
+uncertain process proof remain quarantined. The artifact catalog owns the
+`architecture-execution` folder for architecture and `external-execution` for
+bug-fix and test-coverage, including accepted versus reconciled-stop records.
+
+
+## Optional External PR Review Passes
+
+Project `pullRequestReview.reviewer` and repository-review `reviewer` selectors
+independently opt immutable PR passes into the public RalphWorks CLI. Native is
+the default; workspace opt-in is rejected. `tcb loop pr-review get|set` provides
+redacted, validated project/repository configuration, and `tcb loop pr-review pass`
+executes one repository/number/base/head-bound pass within the stored deadline.
+The bot binds `CODE_REVIEW.json` and receipts to the diff and retains native
+candidate discovery, repair, consecutive-pass counting, CI, mergeability and
+GitHub delivery. Findings/incomplete results never approve. Revision changes
+invalidate old passes; external failures block without fallback. Every decision
+records `reviewedHeadSha`, and the independent bot gate validates clean passes
+before accepting approval or merge. External review does not authorize source
+mutation, provider integration, edited evidence or a new deadline. Existing
+native prompts remain unchanged when the reviewer selector is absent.
+
+Each external pass checks out a fresh detached candidate snapshot. A candidate
+that already contains `CODE_REVIEW.json`, including a symbolic link, is rejected
+before the reviewer starts. Remove the reserved report from the candidate or
+explicitly select native review; the adapter never overwrites it.
+
+Persist each immutable snapshot WorkOrder before cloning so preparation failures
+remain attributable. Review snapshots stay live until their parent has a durable
+terminal state and system gate; new passes on a terminal parent are rejected.
+Existing startup/tick resource reconciliation applies the parent's failure
+retention, archives verified Git history/index/file evidence, and removes only
+the exact owned `pr-reviews/<number>/<UUID>/worktree` leaf. The main execution
+checkout may already be absent. Keep pass/receipt/state artifacts and a verified
+report copy, with a cleanup receipt referencing shared recovery storage.
+The execution-worktree ownership allowlist remains unchanged. Active locks,
+worker turns, retained leases, quarantine, mismatched identities, live same-user
+open-file/cwd references and unavailable process proof all retain the snapshot.
+Archive or final identity verification failures retain it for a later normal
+reconciliation attempt; no independent age-based sweep owns review artifacts.
+
+Native system verification and external task preflight/host checks share the same explicit WorkOrder environment. The bot overlays task identity, the isolated project path, bot root, target score and round limit on the inherited subprocess environment without modifying global environment variables or rewriting configured checks.
+
+External task acceptance commands carry the remaining WorkOrder deadline. The synchronous shell boundary uses a separate watchdog to stop its shell process group on timeout or output overflow before returning; native invocations without an explicit budget retain their existing behavior.
+
+## Managed Codex Turn Evidence
+
+Startup update-menu handling uses only the current complete known menu: Escape
+when the footer offers skip, or a proven legacy selection of temporary Skip.
+Unknown selection/footer evidence cannot authorize Enter. After observing that
+gate, readiness requires a fresh current composer; stable boot text and historical
+chevrons cannot satisfy the fallback. Normal input waits do not auto-confirm
+update or trust gates. The existing pending-input and live-identity checks still
+authorize managed submission separately.
+
+Managed system prompts with a completion contract and active owned reserved
+loop-worker sends (regardless of origin or doneProbe) bind to the exact live rollout
+path, session identity, pre-submit byte cursor, fresh root task start, and exact
+USER text. Once the exact prompt binds an active root, subsequent USER context
+updates or steering within that same root preserve the binding and accumulated
+output. A new root task start resets it; a USER arriving after a terminal event
+still invalidates that earlier terminal. A root without the initial exact prompt
+match remains unbound. Only that root turn's typed completion can return its reply; a typed
+abort is failure. Child events, fuzzy reply matches, inherited history, pane
+stability, and final-looking prose cannot complete a managed turn. Incremental
+reads and startup readiness waits are bounded. Explicit fresh resolver calls bypass
+process/pane/transcript caches at submission, terminal acceptance and stop
+boundaries; normal polls reuse the bound file without repeated process probes.
+Incomplete or malformed records cannot establish idle readiness, and unread
+records cannot authorize an interrupt. Missing or changed live identity
+fails closed; ordinary sessions and other agent profiles retain their existing
+completion path.
+
+The real elapsed deadline cannot be extended by instant pane polls. Expiry never
+accepts a late reply; a scoped interrupt requires fresh proof of the owned turn,
+then a bounded terminal stop proof using the existing readiness budget. Foreign
+or unavailable identity is not signalled. An unresolved live root blocks another
+managed submission. Active worker ownership joins the unfinished WorkOrder and explicit worker/path
+to its active supervisor lease, and is revalidated before writes, terminal
+acceptance and interruption. A reserved prefix alone grants no ownership;
+retained, missing or foreign leases cannot authorize input or a scoped stop.
+Existing queued cancellation semantics remain unchanged.
+Automation reset checks the composer before any confirmation Enter and rejects
+transcript browsing, queued inputs, unreadable capture, or unrelated pending text.
+
+An active-owned Codex automation clear uses a fresh native lifecycle instead of
+`/clear`: verify the existing process and composer, stop it, observe exact absence,
+revalidate ownership, then start through the central dispatcher. Initial identity,
+exit confirmation and startup share the existing readiness deadline. Foreign or
+unavailable identity, a still-live old process and lost ownership fail closed.
+Owned stop pins the pane/server and revalidates exact native identity and
+ownership at each input boundary, including after the interrupt settle wait.
+Each tmux subprocess uses its remaining deadline as a cancelling timeout;
+read-only identity timeouts cannot continue into late writes. Verified absence
+after Ctrl-C skips `/exit`. Ordinary exit and terminal-mode cleanup are unchanged
+and are not used by the owned stop.
+The reset itself issues no bootstrap grant; the dispatcher retains its existing
+absent-to-fresh grant rule. Ordinary user clears, Claude resets and compaction
+keep their slash-command behavior. Dispatch seam tests cover reused supervisors
+and workers through fresh rollout binding, as well as input, ownership and exit
+failures.
+
+Fresh Codex startup can defer creating a rollout until the first prompt. Only a
+central dispatcher-confirmed absent-to-fresh direct interactive Codex start may
+issue an in-memory, single-use native-PID launch grant. Active managed ownership,
+clean input and unchanged fresh process identity are required before consuming
+it immediately before the first write. No-op starts issue no new grant; resume,
+adoption and unknown custom commands never grant bootstrap. Cancelled delivery claims do not consume
+it; an uncertain write does, without restoration. Any ordinary first submission
+or observed existing rollout discards an unused grant. Post-submit binding uses
+only the same native process's open file, fresh session metadata, root task start
+and exact USER record; no cwd fallback. Never-managed manual loop workers retain
+the ordinary completion path and gain no automatic interrupt authority.
+
+External task execution transitions the matching WorkOrder from dispatching to
+existing in-flight state at its durable reservation/quarantine boundary, before
+preflight. The start claim requires the current run/session/path, active
+supervisor lease, existing in-process supervisor reservation and original
+unexpired deadline. Reconciliation recognizes that live external ownership even
+when the native queue and UI are idle, using existing resource exclusions.
+Unconsumed dispatch retains its five-minute grace; restart loses the transient
+reservation and does not waive quarantine/no-replay checks. Native review is a
+continuation under the remaining original deadline. A late external result
+cannot enqueue native work or overwrite an already terminal WorkOrder.
+
+The original external execution deadline is persisted once as optional `deadlineAt` on the existing WorkOrder state and retained across native queue and revision transitions. Live external ownership requires matching durable run, project, scheduled time, supervisor session, active worker lease, and the current process reservation. Reconciliation retains that owner across legacy age partitions only until its original deadline; unconsumed dispatches still expire after five minutes. Native enqueue checks that authority after asynchronous readiness and context reset, at queue consumption, and before state writes. A terminal external failure is not revived by a late summary or restored queue entry. After a bot restart, an external continuation with lost process-local ownership is discarded while execution quarantine remains available for reconciliation; ordinary native queue restoration is unchanged.
+
+Fresh managed Codex startup registers its first-submission grant only after a proven absent process becomes an exact native PID under a trusted direct start command. Process discovery uses the existing startup readiness deadline, including identity probes; UI readiness alone is not process identity. An unused grant survives an idempotent start only while the same exact PID still has no rollout open. Prompt attempts and lifecycle replacement invalidate pending registration as well as issued grants, so delayed discovery cannot recreate first-submission authority. Registration diagnostics report only a stable reason, native PID, and elapsed time; unavailable or ambiguous identity never permits adoption or a cwd-based transcript fallback.
+
+Concurrent starts for the same trusted session and command share the original pending startup completion. A different command waits, then revalidates its own intent without extending its original deadline. The absolute readiness horizon also bounds routing and the owned launch readiness wait; deadline checks precede launch keys and reject late readiness observations or confirmation actions. Existing start callers without an explicit deadline retain their ordinary behavior.
+
+External process ownership uses one shared logical snapshot and one consecutive recovery attempt for a confirmed probe-owned timeout, including a timeout that crosses successful CLI close. Normal completion still requires a fresh successful probe and required ownership persistence within the original execution deadline; a completed external receipt alone cannot authorize native handoff. Stop/cancellation/deadline verification never retries and must finish before settlement, including when it begins during final recovery. Parser, persistence, untyped failures and a second consecutive timeout remain fail-closed; the five-second monitoring timeout, eight-MiB output limit, 100 ms polling delay and quarantine policy remain. Lifecycle snapshots contain only PID, PPID, PGID and start time; they reject any malformed or duplicate nonempty row. Resource Guardian keeps its existing full telemetry layout. Smaller identity output is not proof that intermittent host latency is cured.
+
+The first stop request starts a 3.25-second total proof budget. With healthy ownership it drains any existing scan, then captures and persists a fresh census before signalling observed children and the original live root handle. A 250 ms capture bound prevents a blocked scan from delaying TERM; failure or expiry permanently latches ownership uncertainty before requesting root shutdown. A late census cannot clear that failure or outrun an overdue timer callback. Initiating ownership failures request TERM immediately. One idempotent root-stop operation starts an independent 1.25-second force timer from actual TERM, allowing the compatible CLI's one-second detached-worker escalation without resetting or extending the total budget.
+
+Root exit and stream closure are distinct; an exited root cannot be adopted or signalled again by PID/group. Each successful table must remain in the same exit/close lifecycle phase from probe start to interpretation. A crossed table supplies neither positive ownership nor negative group evidence; the shared logical scan refreshes serially before final proof. There are at most two lifecycle transitions, and settlement/stop-deadline fences precede refresh. Errors are never refreshed by this rule, so typed failures and the existing consecutive-timeout retry allowance remain unchanged. Only a fresh exact identity match authorizes descendant signals, and persisted identities are never a signal cache. Fresh unknown rows in the launched root's group prevent successful stop proof, including children born after the census; this conservative group check never proves ownership or authorizes a signal, and group reuse may conservatively retain quarantine. New stop probes use the remaining stop budget; an already running helper retains its own timeout and close-before-retry boundary. Late completion after settlement cannot persist identities, restart tracking or establish successful stop proof. Cleanup failure keeps the first ownership error and quarantine even after cooperative root/worker closure; bounded structured warnings report root TERM/exit/close facts separately. Root closure or a completed receipt cannot authorize handoff or release without fresh descendant proof.
+
+Ralph task and external PR-review invocations use the public host `--state-dir` option with a fresh canonical `ralph-active-state` root under the caller-owned attempt directory, outside the worktree. The reservation binds that exact root; terminal state archives to the existing `ralph-state` destination without replacing it. Receipts retain their original paths and workspace/HEAD/output bindings. Historical reservations without the state-root field validate only the legacy worktree `.ralph` prefix, with no migration or change to generated task bytes/hashes. The worktree may contain only an absent or verified empty non-symlink `.ralph` before invocation; existing data, any lock entry, errors or other file types block without deletion. RalphWorks retains its same-worktree PID/UUID lock independently of the selected state root, including host staging. Target scanners and ignore rules remain unchanged; tiny coordination locks are distinct from path-bearing runtime metadata.
 
 Managed dev service startup on macOS and Linux restores missing tsx/tsc dependencies
 with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy

@@ -854,6 +854,13 @@ Loop Engineering supports these project and workspace task families:
   workspace, require configured clean review passes, and merge only after CI and
   mergeability are acceptable.
 
+The eight regular project WorkOrder kinds are `architecture`, `bug-fix`,
+`test-coverage`, `security-maintenance`, `harness-auto`, `opportunity-discovery`,
+`automation-governance-review` and `pull-request-review`. Together with
+`workspace-architecture`, `repository-pull-request-review` and
+`active-delegated-task`, the catalog contains eleven WorkOrder kinds.
+Configuration keys above use camel case where shown; they do not add task kinds.
+
 Workspace entries are generic multi-repository WorkOrders. They are not limited
 to architecture. The internal job kind `workspace-architecture` exists only for
 historical run-id compatibility.
@@ -1555,3 +1562,62 @@ Interrupted reservations, restored budgets, legacy-history migration, competing
 acceptance controllers and crashes during report publication remain requirements in the
 [delivery ledger](future/ralph-roadmap-progress.md).
 Configured `eval.command` checks now run as independent system verification after checkpoint acceptance. The command is bound to the WorkOrder contract and Git revision, requires a clean repository before and after execution, and writes an immutable verification artifact. Agent-reported evaluation text cannot substitute for this evidence.
+
+
+## Task Implementation Composition
+
+Native execution remains the default. A single project may independently opt in
+through `execution.architecture`, `execution.bugFix`, `execution.testCoverage` or `execution.securityMaintenance`
+to an installed RalphWorks CLI for the matching standalone architecture,
+bug-fix or test-coverage task. CLI prefixes are `architecture`, `bugfix` and
+`test-coverage`; each provides redacted `get` and validated `set` commands.
+Workspace tasks, harness-auto (including selected subtasks), active delegation
+and all other families remain native. These selectors change the implementation
+mechanism only; they do not add a scheduler, lease owner, worktree manager or
+acceptance authority.
+RalphWorks resolves its external method/skills/runtime and returns a bound
+machine receipt. The bot generates the concrete WorkOrder task and validates
+execution identity and outputs, then the existing active native supervisor
+reviews evidence, verifies and delivers under existing policies. Missing evidence
+or external failure blocks; native implementation is never an automatic fallback.
+An accepted implementation is not executed again when its native reviewer needs
+supervisor readiness recovery. The service permits one review-only recovery,
+revalidates receipt integrity and quarantine state, and retains the original
+absolute deadline for review retries and system-gate revisions. Deadline expiry
+blocks new review dispatches and late-summary recovery; it does not grant a new
+implementation or revision allowance.
+The service also refuses to start acceptance after expiry and rejects gate
+results returned too late. This is an admission and acceptance deadline: the
+current synchronous command adapter cannot forcibly interrupt an in-flight
+command, and supervisor readiness callbacks do not expose cancellation. Those
+operations may finish after expiry, without granting another review or accepting
+a late result.
+Default profiles are `builtin:architecture`, `builtin:bugfix`,
+`builtin:test-coverage` and `builtin:security-maintenance`. Bug-fix discovery derives its fix bound from
+`maxBugsPerRound`; coverage derives its target and integration/E2E scope from
+bot policy. Custom profiles remain opaque and must respect the generated task's
+caller policy and required report. Architecture retains `architecture-execution`
+artifacts; bug-fix, test-coverage and security-maintenance use `external-execution`. Required reports
+are `ARCHITECTURE_REPORT.md`, `BUGFIX_REPORT.md`, `COVERAGE_REPORT.md` and `SECURITY_REPORT.md`.
+This extends the optional implementation boundary; it adds no AI evaluation or
+new comparative study. Prior sealed composition evidence retains its original
+scope and limitations.
+See [the manual](manual.md#optional-ralphworks-task-execution) and
+[alignment contract](automation-alignment.md#optional-external-task-delegation).
+
+
+## Optional External PR Review Passes
+
+Project `pullRequestReview.reviewer` and repository-review `reviewer` selectors
+independently opt immutable PR passes into the public RalphWorks CLI. Native is
+the default; workspace opt-in is rejected. `tcb loop pr-review get|set` provides
+redacted, validated project/repository configuration, and `tcb loop pr-review pass`
+executes one repository/number/base/head-bound pass within the stored deadline.
+The bot binds `CODE_REVIEW.json` and receipts to the diff and retains native
+candidate discovery, repair, consecutive-pass counting, CI, mergeability and
+GitHub delivery. Findings/incomplete results never approve. Revision changes
+invalidate old passes; external failures block without fallback. Every decision
+records `reviewedHeadSha`, and the independent bot gate validates clean passes
+before accepting approval or merge. External review does not authorize source
+mutation, provider integration, edited evidence or a new deadline. Existing
+native prompts remain unchanged when the reviewer selector is absent.

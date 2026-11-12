@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupLoopExecutionWorktree,
   prepareLoopExecutionWorktrees,
@@ -10,6 +10,15 @@ import type { LoopGitInvocation, LoopRunCommandResult } from "../../src/core/loo
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
+
+// These tests isolate ownership/Git command sequencing; real archive and restore
+// behavior is exercised with real Git repositories in worktree-recovery.test.ts.
+vi.mock("../../src/core/loop/worktree-recovery.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/core/loop/worktree-recovery.js")>()),
+  archiveLoopWorktree: () => ({ path: "/verified-recovery", verify: () => true }),
+  archiveLoopCommit: () => true,
+  archiveMissingLoopWorktree: () => true,
+}));
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "tcb-exec-worktree-repo-"));

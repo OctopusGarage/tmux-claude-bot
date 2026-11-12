@@ -11,6 +11,8 @@ import {
   workspaceScheduledJobKinds,
 } from "./task-family.js";
 
+import { TASK_IMPLEMENTATIONS } from "./task-implementation.js";
+
 const agentSchema = skillAgentSchema;
 const worktreeIsolationSchema = z.enum(["isolated", "source", "auto"]);
 const cleanupPolicySchema = z.enum(["conservative", "balanced", "aggressive"]);
@@ -72,8 +74,34 @@ const runnerSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+export const taskImplementationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("native") }).strict(),
+  z
+    .object({
+      kind: z.literal("ralphworks"),
+      profile: z.string().min(1).optional(),
+      runtime: z.string().min(1).optional(),
+      params: z
+        .record(
+          z
+            .string()
+            .min(1)
+            .refine(
+              (key) => !/api.?key|secret|password|credential|access.?token/i.test(key),
+              "credentials belong in the external runtime",
+            ),
+          z.union([z.string(), z.number().finite(), z.boolean()]),
+        )
+        .optional(),
+    })
+    .strict(),
+]);
+
+export type TaskImplementation = z.infer<typeof taskImplementationSchema>;
+
 const pullRequestReviewSchema = z
   .object({
+    reviewer: taskImplementationSchema.optional(),
     enabled: z.boolean().default(false),
     schedule: z.string().min(1).optional(),
     scheduleJitterMinutes: z.number().int().min(0).max(240).optional(),
@@ -287,6 +315,7 @@ const automationGovernanceReviewSchema = z
 
 const repositoryPullRequestReviewSchema = z
   .object({
+    reviewer: taskImplementationSchema.optional(),
     id: z.string().min(1),
     name: z.string().min(1),
     path: z.string().min(1),
@@ -411,6 +440,10 @@ const projectSchema = z
     execution: z
       .object({
         agent: z.boolean().default(false),
+        architecture: taskImplementationSchema.optional(),
+        bugFix: taskImplementationSchema.optional(),
+        testCoverage: taskImplementationSchema.optional(),
+        securityMaintenance: taskImplementationSchema.optional(),
       })
       .strict()
       .default({ agent: false }),
@@ -629,6 +662,25 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
     }
   }
   for (const [index, project] of config.projects.entries()) {
+    for (const { configKey } of Object.values(TASK_IMPLEMENTATIONS)) {
+      if (project.execution[configKey]?.kind !== "ralphworks") continue;
+      if (project.runner.kind !== "agent-supervised") {
+        errors.push(
+          `projects.${index}.execution.${configKey} requires runner.kind=agent-supervised`,
+        );
+      }
+      if (!project.execution.agent) {
+        errors.push(`projects.${index}.execution.${configKey} requires execution.agent=true`);
+      }
+    }
+    if (project.pullRequestReview.reviewer?.kind === "ralphworks") {
+      if (project.runner.kind !== "agent-supervised")
+        errors.push(
+          `projects.${index}.pullRequestReview.reviewer requires runner.kind=agent-supervised`,
+        );
+      if (!project.execution.agent)
+        errors.push(`projects.${index}.pullRequestReview.reviewer requires execution.agent=true`);
+    }
     if (project.assessment.agent === true) {
       errors.push(`projects.${index}.assessment.agent is not implemented in phase one`);
     }
@@ -709,6 +761,9 @@ function ensurePhaseOneBoundaries(config: LoopConfig): void {
     }
   }
   for (const [index, workspace] of config.workspaces.entries()) {
+    if (workspace.pullRequestReview.reviewer?.kind === "ralphworks") {
+      errors.push(`workspaces.${index}.pullRequestReview.reviewer does not support RalphWorks`);
+    }
     if (workspace.architecture.enabled && workspace.architecture.schedule === undefined) {
       errors.push(`workspaces.${index}.architecture.schedule is required when enabled`);
     }

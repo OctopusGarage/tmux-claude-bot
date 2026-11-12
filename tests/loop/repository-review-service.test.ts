@@ -2,12 +2,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AutonomousWorkCoordinator } from "../../src/core/automation/coordinator.js";
 import { RepositoryReviewQueue } from "../../src/core/loop/repository-review-queue.js";
 import { LoopSchedulerStore } from "../../src/core/loop/scheduler.js";
 import {
   reconcileRepositoryReviewQueueLedgerClosures,
   runLoopServiceTickAsync as runLoopServiceTickAsyncProduction,
 } from "../../src/core/loop/service.js";
+import { readLoopSupervisorWorkerLeaseState } from "../../src/core/loop/supervisor-pool.js";
 import { DailyTaskLedger } from "../../src/core/tasks/task-ledger.js";
 
 const originalStateDir = process.env.TCB_STATE_DIR;
@@ -28,6 +30,147 @@ afterEach(() => {
 });
 
 describe("repository review service queue", () => {
+  it.each(["pending", "retry-wait"] as const)(
+    "preserves a queued %s review while disabled and resumes when re-enabled",
+    async (status) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
+      const root = mkdtempSync(join(tmpdir(), "tcb-pr-review-repo-"));
+      const configFile = join(root, "loop.yml");
+      const now = Date.parse("2026-08-07T00:10:00Z");
+      const config = (enabled: boolean) => `
+projects: []
+prReview:
+  repositories:
+    - id: paused-prs
+      name: Paused PRs
+      enabled: ${enabled}
+      path: ${root}
+      repo: example/repo
+      agent: codex
+      schedule: "0 0 1 1 *"
+      worktreeIsolation: source
+`;
+      writeFileSync(configFile, config(false));
+      const queue = new RepositoryReviewQueue();
+      const created = queue.enqueue({
+        repositoryId: "paused-prs",
+        scheduledAt: now,
+        priority: 1000,
+        now,
+      });
+      if (status === "retry-wait") {
+        expect(queue.lease(created.id, "previous-worker", now, 60_000)).not.toBeNull();
+        expect(queue.fail(created.id, "previous-worker", now, "review needs retry", now)).toBe(
+          true,
+        );
+      }
+      const before = queue.list({ all: true });
+      const coordinator = new AutonomousWorkCoordinator({ now: () => now });
+      const precheck = vi.spyOn(coordinator, "precheck");
+      const admit = vi.spyOn(coordinator, "admit");
+      const dispatch = vi.fn(async () => ({
+        status: 1,
+        stdout: "",
+        stderr: "review fixture failed",
+      }));
+      const input = {
+        configFile,
+        now,
+        schedulerStore: new LoopSchedulerStore(),
+        runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+        runSupervisorTask: dispatch,
+        supervisorSessionNames: ["test-supervisor"],
+        repositoryReviewOnly: true,
+        automationCoordinator: coordinator,
+        automationAgent: "codex" as const,
+        automationContext: () => ({
+          resourceAdmission: () => ({ allowed: true as const, reason: "test", incidentId: null }),
+        }),
+      };
+
+      expect(await runLoopServiceTickAsync(input)).toMatchObject({ ran: 0, failed: 0 });
+      expect(queue.list({ all: true })).toEqual(before);
+      expect(precheck).not.toHaveBeenCalled();
+      expect(admit).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(readLoopSupervisorWorkerLeaseState().leases).toEqual([]);
+      expect(new DailyTaskLedger().listAll()).toEqual([]);
+
+      writeFileSync(configFile, config(true));
+      await runLoopServiceTickAsync(input);
+      expect(admit).toHaveBeenCalledOnce();
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(queue.list({ all: true })).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          status: "retry-wait",
+          attempt: (before[0]?.attempt ?? 0) + 1,
+        }),
+      ]);
+    },
+  );
+
+  it("does not let a paused queue head starve an enabled repository", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
+    const root = mkdtempSync(join(tmpdir(), "tcb-pr-review-repo-"));
+    const configFile = join(root, "loop.yml");
+    const now = Date.parse("2026-08-07T00:10:00Z");
+    writeFileSync(
+      configFile,
+      `
+projects: []
+prReview:
+  repositories:
+${[false, true]
+  .map(
+    (enabled) => `
+    - id: ${enabled ? "enabled" : "paused"}-prs
+      name: Repository PRs
+      enabled: ${enabled}
+      path: ${root}
+      repo: example/repo
+      agent: codex
+      schedule: "0 0 1 1 *"
+      worktreeIsolation: source
+`,
+  )
+  .join("")}`,
+    );
+    const queue = new RepositoryReviewQueue();
+    const paused = queue.enqueue({
+      repositoryId: "paused-prs",
+      scheduledAt: now,
+      priority: 1000,
+      now: now - 1,
+    });
+    queue.enqueue({ repositoryId: "enabled-prs", scheduledAt: now, priority: 1000, now });
+    const dispatch = vi.fn(async () => ({
+      status: 1,
+      stdout: "",
+      stderr: "review fixture failed",
+    }));
+
+    await runLoopServiceTickAsync({
+      configFile,
+      now,
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runSupervisorTask: dispatch,
+      supervisorSessionNames: ["test-supervisor"],
+      repositoryReviewOnly: true,
+    });
+
+    expect(queue.list({ all: true }).find((item) => item.id === paused.id)).toEqual(paused);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(queue.list({ all: true })).toContainEqual(
+      expect.objectContaining({
+        repositoryId: "enabled-prs",
+        attempt: 1,
+        status: "retry-wait",
+      }),
+    );
+  });
+
   it("closes retryable repository review queue items from fixed daily ledger evidence", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-pr-review-service-"));
     const queue = new RepositoryReviewQueue();

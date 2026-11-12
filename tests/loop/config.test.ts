@@ -1132,3 +1132,139 @@ describe("validateLoopConfig", () => {
     ]);
   });
 });
+
+describe("optional architecture implementation", () => {
+  const configured = (architecture: string, runner = "agent-supervised") =>
+    validConfig.replace(
+      "    goal:",
+      `    runner: {kind: ${runner}}\n    execution:\n      agent: true\n      architecture: ${architecture}\n    goal:`,
+    );
+
+  it("keeps absent configuration native and accepts explicit native selection", () => {
+    expect(parseLoopConfigYaml(validConfig).projects[0]?.execution.architecture).toBeUndefined();
+    expect(
+      parseLoopConfigYaml(configured("{kind: native}")).projects[0]?.execution.architecture,
+    ).toEqual({ kind: "native" });
+  });
+
+  it("accepts optional profile/runtime references and primitive params for RalphWorks", () => {
+    expect(
+      parseLoopConfigYaml(
+        configured(
+          "{kind: ralphworks, profile: careful, runtime: /config/runtime.yaml, params: {maxFindings: 2, review: true, focus: coupling}}",
+        ),
+      ).projects[0]?.execution.architecture,
+    ).toEqual({
+      kind: "ralphworks",
+      profile: "careful",
+      runtime: "/config/runtime.yaml",
+      params: { maxFindings: 2, review: true, focus: "coupling" },
+    });
+    for (const selection of [
+      "{kind: ralphworks, apiKey: secret}",
+      "{kind: ralphworks, params: {nested: {unsafe: true}}}",
+      "{kind: native, profile: architecture}",
+      "{kind: unknown}",
+    ]) {
+      expect(() => parseLoopConfigYaml(configured(selection))).toThrow();
+    }
+  });
+
+  it("requires supervised agent execution for external architecture tasks", () => {
+    expect(() => parseLoopConfigYaml(configured("{kind: ralphworks}", "system"))).toThrow(
+      "agent-supervised",
+    );
+    expect(() =>
+      parseLoopConfigYaml(configured("{kind: ralphworks}").replace("agent: true", "agent: false")),
+    ).toThrow("execution.agent");
+  });
+});
+
+describe.each(["bugFix", "testCoverage", "securityMaintenance"] as const)(
+  "optional %s implementation",
+  (configKey) => {
+    const configured = (selection: string, runner = "agent-supervised") =>
+      validConfig.replace(
+        "    goal:",
+        `    runner: {kind: ${runner}}\n    execution:\n      agent: true\n      ${configKey}: ${selection}\n    goal:`,
+      );
+
+    it("accepts explicit external selection independently from architecture", () => {
+      const project = parseLoopConfigYaml(configured("{kind: ralphworks, params: {limit: 2}}"))
+        .projects[0];
+      expect(project?.execution[configKey]).toEqual({ kind: "ralphworks", params: { limit: 2 } });
+      expect(project?.execution.architecture).toBeUndefined();
+      expect(parseLoopConfigYaml(validConfig).projects[0]?.execution[configKey]).toBeUndefined();
+      expect(
+        parseLoopConfigYaml(configured("{kind: native}")).projects[0]?.execution[configKey],
+      ).toEqual({ kind: "native" });
+    });
+
+    it("requires supervised agent execution and rejects credentials or nonprimitive params", () => {
+      expect(() => parseLoopConfigYaml(configured("{kind: ralphworks}", "system"))).toThrow(
+        "agent-supervised",
+      );
+      expect(() =>
+        parseLoopConfigYaml(
+          configured("{kind: ralphworks}").replace("agent: true", "agent: false"),
+        ),
+      ).toThrow("execution.agent");
+      for (const selection of [
+        "{kind: ralphworks, apiKey: secret}",
+        "{kind: ralphworks, params: {apiKey: secret}}",
+        "{kind: ralphworks, params: {nested: {unsafe: true}}}",
+        "{kind: native, profile: extra}",
+      ]) {
+        expect(() => parseLoopConfigYaml(configured(selection))).toThrow();
+      }
+    });
+  },
+);
+
+describe("optional PR reviewer configuration", () => {
+  const configured = (reviewer: string) =>
+    validConfig.replace(
+      "    goal:",
+      `    runner: {kind: agent-supervised}\n    execution: {agent: true}\n    pullRequestReview: {reviewer: ${reviewer}}\n    goal:`,
+    );
+  it("accepts an explicit external reviewer without changing implementation selection", () => {
+    const project = parseLoopConfigYaml(configured("{kind: ralphworks, params: {strict: true}}"))
+      .projects[0];
+    expect(project?.pullRequestReview).toHaveProperty("reviewer", {
+      kind: "ralphworks",
+      params: { strict: true },
+    });
+    expect(project?.execution.architecture).toBeUndefined();
+  });
+  it("rejects external reviewer without supervised agent execution", () => {
+    expect(() =>
+      parseLoopConfigYaml(configured("{kind: ralphworks}").replace("agent: true", "agent: false")),
+    ).toThrow("execution.agent");
+    expect(() =>
+      parseLoopConfigYaml(
+        configured("{kind: ralphworks}").replace("kind: agent-supervised", "kind: system"),
+      ),
+    ).toThrow("agent-supervised");
+  });
+});
+
+it("rejects external reviewers on workspace policy rather than silently inheriting", () => {
+  const text = `workspaces:
+  - id: pair
+    name: Pair
+    root: /repo/pair
+    agent: codex
+    architecture: {goal: Improve boundaries.}
+    repositories:
+      - {id: app, name: App, path: /repo/pair/app, role: frontend}
+      - {id: api, name: API, path: /repo/pair/api, role: backend}
+    pullRequestReview: {reviewer: {kind: ralphworks}}
+`;
+  expect(() => parseLoopConfigYaml(text)).toThrow(
+    /workspaces.*reviewer.*does not support RalphWorks/,
+  );
+  expect(
+    parseLoopConfigYaml(text.replace("kind: ralphworks", "kind: native")).workspaces[0]
+      ?.pullRequestReview,
+  ).toHaveProperty("reviewer", { kind: "native" });
+});

@@ -394,7 +394,11 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
     ) {
       return null;
     }
-    if (outcome !== "approved" && reviewedHeadSha !== undefined) return null;
+    if (
+      reviewedHeadSha !== undefined &&
+      (typeof reviewedHeadSha !== "string" || !isValidHeadSha(reviewedHeadSha))
+    )
+      return null;
     const evidence = parseStringArrayOrSingleton(item.evidence);
     const nextStep = typeof item.nextStep === "string" ? item.nextStep.trim() : "";
     if (evidence === null || nextStep === "") return null;

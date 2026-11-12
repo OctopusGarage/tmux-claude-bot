@@ -1,15 +1,16 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { buildCodexResumeCommand } from "../resume-command.js";
-import type { AgentProfile, ReadResolver } from "../types.js";
+import type { AgentProfile, AgentTurnCompletion, ReadResolver } from "../types.js";
 import { parseCodexFlavorAliases } from "./codex-flavor-alias.js";
 import {
   getLatestCodexReply,
   getRecentCodexConversations,
   listCodexSessions,
+  readCodexTurnCompletion,
 } from "./codex-history.js";
 import { isCodexProcess } from "./codex-process.js";
-import { findRolloutForProject } from "./codex-rollout.js";
+import { findRolloutForProject, readFirstLine } from "./codex-rollout.js";
 import { buildCodexStatusReport } from "./codex-status.js";
 import { readCodexUsage } from "./codex-usage.js";
 
@@ -95,6 +96,65 @@ export const codexProfile: AgentProfile = {
   getLatestReply: async (resolver, session, projectPath, sentText) => {
     const { home, rolloutPath } = await codexSource(resolver, session);
     return home ? getLatestCodexReply(home, projectPath, sentText, rolloutPath) : null;
+  },
+  getTurnCompletion: async (resolver, session, sentText, sentAfter, cursor, options) => {
+    const unavailable = { status: "unavailable" as const, output: "" };
+    const freshLive = async (expected = cursor) => {
+      const live = await resolver.resolveLiveTranscript?.(session, { fresh: true });
+      if (!live?.sessionId || live.agentPid === undefined) return null;
+      if (
+        expected &&
+        (expected.agentPid !== live.agentPid ||
+          expected.path !== live.path ||
+          expected.sessionId !== live.sessionId)
+      )
+        return null;
+      return { ...live, agentPid: live.agentPid, sessionId: live.sessionId };
+    };
+    const revalidateTerminal = async (
+      result: AgentTurnCompletion,
+    ): Promise<AgentTurnCompletion> => {
+      if (result.status !== "completed" && result.status !== "aborted") return result;
+      const bound = result.cursor;
+      if (!bound || !(await freshLive(bound))) return unavailable;
+      return readCodexTurnCompletion(bound.path, bound.sessionId, sentText, sentAfter, bound);
+    };
+    if (cursor?.bootstrapIssuedAt !== undefined) {
+      const identity = await resolver.resolveLiveAgentIdentity?.(session);
+      if (identity?.kind !== "codex" || identity.agentPid !== cursor.agentPid) return unavailable;
+      const live = identity.transcript;
+      if (!live) return { status: "pending", output: "", cursor };
+      if (!live.sessionId) return unavailable;
+      try {
+        const header = JSON.parse(await readFirstLine(live.path)) as { timestamp?: string };
+        if (!(Date.parse(header.timestamp ?? "") >= cursor.bootstrapIssuedAt)) return unavailable;
+      } catch {
+        return unavailable;
+      }
+      const bound = await readCodexTurnCompletion(live.path, live.sessionId, sentText, sentAfter);
+      if (bound.cursor) bound.cursor.agentPid = cursor.agentPid;
+      return revalidateTerminal(bound);
+    }
+
+    if (!cursor) {
+      const live = await freshLive();
+      if (!live) return unavailable;
+      const result = await readCodexTurnCompletion(live.path, live.sessionId, sentText, sentAfter);
+      if (result.cursor) result.cursor.agentPid = live.agentPid;
+      return result;
+    }
+    if (cursor.agentPid === undefined || (options?.fresh && !(await freshLive())))
+      return unavailable;
+    let result = await readCodexTurnCompletion(
+      cursor.path,
+      cursor.sessionId,
+      sentText,
+      sentAfter,
+      cursor,
+    );
+    result = await revalidateTerminal(result);
+    if (result.cursor) result.cursor.agentPid = cursor.agentPid;
+    return result;
   },
   buildStatusReport: (deps, session, channel, running) =>
     buildCodexStatusReport(deps, session, channel, running),

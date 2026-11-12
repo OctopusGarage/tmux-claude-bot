@@ -83,6 +83,31 @@ Historical names such as `aiEval` are quality-gate/report labels, not permission
 to add model-provider clients. Do not add OpenAI/Anthropic/Gemini SDK clients, AI SDK provider packages, model API key env vars, or model HTTP helper scripts for bot-owned features. If a design seems to need direct provider access, redesign it around the current running Claude Code / Codex capability.
 When a feature needs AI judgment, reuse the active Claude Code / Codex session; `eval.command`, assessment/execution commands, smoke helpers, and scripts are not model-integration points.
 
+## Explicit External Task Delegation
+
+The active-agent-only rule remains the default for bot-owned AI judgment. A user
+may explicitly opt single-project architecture, bug-fix, test-coverage or security-maintenance tasks
+into RalphWorks through `execution.architecture`, `execution.bugFix` or
+`execution.testCoverage` or `execution.securityMaintenance` with `kind: ralphworks`. Each selector applies only to
+its matching standalone task family. Native remains the default. This is a
+delegated external task boundary: the bot invokes the installed public `ralph` CLI, generates only the
+concrete WorkOrder task, and validates its machine receipt. RalphWorks owns its
+method, skills, runtime, credentials and model transport. The bot must not import
+RalphWorks implementation modules, copy its prompts/skills, inspect runtime
+credentials, add provider clients, or silently fall back to native implementation.
+The bot owns the exclusive worktree, subprocess lifetime, native review, verified
+commits, PR policy and final system gates. Native review must attribute external
+plan evidence honestly and block missing evidence. Workspace tasks, harness-auto,
+active delegation and all other task families remain native.
+
+PR review can independently opt individual immutable passes into RalphWorks via
+`pullRequestReview.reviewer` on projects or `prReview.repositories[].reviewer`.
+This is not task implementation delegation: the native supervisor retains
+candidate discovery, bounded repair, consecutive-pass counts and GitHub policy.
+Require revision-bound `CODE_REVIEW.json` evidence and fresh clean passes after
+any change; external failures block without native reviewer fallback. Workspace
+reviewer opt-in is rejected. See the manual for `tcb loop pr-review get|set|pass`.
+
 ## Local Verification Before Push
 
 Before pushing or claiming CI readiness, run `pnpm verify:local`. The

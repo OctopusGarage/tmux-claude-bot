@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueueCancelledError } from "../../../src/core/command/queue.js";
 import { fakeDeps } from "../lark/_fakes.js";
@@ -74,7 +77,7 @@ function ctxWithoutMessage() {
 }
 
 function replyTarget() {
-  return createReplyTargetMap("/tmp/tcb-prompt-lifecycle-test");
+  return createReplyTargetMap(mkdtempSync(join(tmpdir(), "tcb-prompt-lifecycle-")));
 }
 
 beforeEach(() => {

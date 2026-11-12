@@ -111,7 +111,7 @@ describe("loop supervisor work order", () => {
         cleanup: {
           success: "release-worker",
           failure: "retain-for-ttl",
-          retainFailureForHours: 72,
+          retainFailureForHours: 0,
         },
       },
       agent: "codex",
@@ -201,7 +201,7 @@ describe("loop supervisor work order", () => {
       "Record what failed or was skipped, and say whether it should become a regression test, eval, monitor, trace, checklist, or doc update",
     );
     expect(prompt).toContain("release the worker after successful system acceptance");
-    expect(prompt).toContain("retain the worker for 72 hour(s) on failure");
+    expect(prompt).toContain("configured retention: 0 hour(s)");
     expect(prompt).toContain("git -C '/repo/datavibe' status --short must be clean");
     expect(prompt).toContain("git -C '/repo/datavibe' fetch origin main");
     expect(prompt).toContain("git -C '/repo/datavibe' switch main");
@@ -1053,6 +1053,98 @@ describe("loop supervisor work order", () => {
     expect(prompt).toContain("gh auth token --user 'example-maintainer'");
     expect(prompt).toContain("git -C '/repo/datavibe' switch dev");
     expect(prompt).toContain("git -C '/repo/datavibe' pull --rebase origin dev");
+  });
+
+  it.each([
+    { reviewer: "native", commitEnabled: false },
+    { reviewer: "native", commitEnabled: true },
+    { reviewer: "ralphworks", commitEnabled: false },
+    { reviewer: "ralphworks", commitEnabled: true },
+  ] as const)(
+    "limits $reviewer project-review repair to the existing PR head (commit enabled: $commitEnabled)",
+    ({ reviewer, commitEnabled }) => {
+      const project = structuredClone(firstProject());
+      project.pullRequestReview.enabled = true;
+      project.pullRequestReview.autoMerge = true;
+      project.pullRequestReview.reviewer = { kind: reviewer };
+      project.commit = commitEnabled
+        ? { enabled: true, perRound: true, branch: "loop/datavibe/architecture" }
+        : { enabled: false, perRound: false };
+      project.pullRequest = {
+        ...project.pullRequest,
+        enabled: true,
+        base: "dev",
+        switchBack: "dev",
+      };
+      const workOrder = buildLoopWorkOrder({
+        config,
+        project,
+        scheduledAt: 1752643800000,
+        runId: "project-review-repair",
+        jobKind: "pull-request-review",
+      });
+
+      const prompt = buildLoopSupervisorPrompt(workOrder);
+
+      expect(workOrder.commitPolicy.enabled).toBe(commitEnabled);
+      expect(prompt.includes("must not create a new PR branch or commit code changes")).toBe(false);
+      expect(prompt).toContain(
+        "must not create a new implementation branch or PR, regardless of commitPolicy",
+      );
+      expect(prompt).toContain(
+        "native supervisor may commit and push bounded repair only on an eligible PR's existing same-repository head branch under the review policy",
+      );
+      expect(prompt).toContain(
+        "sync the configured base, resolve the conflict when it is safe and bounded",
+      );
+      expect(prompt).toContain("push, and repeat the review/check gates");
+      expect(prompt).toContain("CI/status checks are successful");
+      expect(prompt).not.toContain("Use the WorkOrder commitPolicy.branch exactly");
+      if (reviewer === "ralphworks") {
+        expect(prompt).toContain("delegates each immutable PR review pass to RalphWorks");
+        expect(prompt).toContain("native supervisor still owns candidate discovery, repair");
+        expect(prompt).toContain("consecutive clean external passes on that exact revision");
+        expect(prompt).toContain("discard previous clean-pass counts");
+        expect(prompt).toContain("native repair never substitutes for a required external pass");
+        expect(prompt).toContain("never bypass required checks or branch policy");
+      } else {
+        expect(prompt).toContain("Run two independent review passes");
+        expect(prompt).toContain("gated by PR, CI, mergeability, and system evidence");
+      }
+    },
+  );
+
+  it.each([
+    { enabled: false, maxAttempts: 1 },
+    { enabled: true, maxAttempts: 0 },
+  ])("preserves repository-review commit bans for repair=$enabled/$maxAttempts", (repair) => {
+    const workOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config,
+      repository: {
+        id: "review",
+        name: "Review",
+        path: "/repo/review",
+        repo: "example/review",
+        agent: "codex",
+        enabled: true,
+        schedule: "0 2 * * *",
+        switchBack: "main",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: false,
+        mergeMethod: "squash",
+        repair,
+        runner: { kind: "agent-supervised", requireConfirmation: false },
+      },
+      scheduledAt: 1752643800000,
+      runId: "repository-review-read-only",
+    });
+
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+
+    expect(prompt).toContain("must not create a new PR branch or commit code changes");
+    expect(prompt).not.toContain("bounded repair may commit only on an eligible PR");
+    expect(prompt).not.toContain("native supervisor may commit and push bounded repair");
   });
 
   it("renders security-maintenance GitHub checks with the configured project account", () => {
@@ -2670,5 +2762,345 @@ prReview:
       ok: false,
       reason: "missing-final-marker",
     });
+  });
+});
+
+describe("architecture implementation snapshot", () => {
+  it("requires schema-safe planning evidence without inventing a pending target-score value", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: firstProject(),
+      scheduledAt: 1,
+      runId: "review-summary-contract",
+    });
+    workOrder.task = { kind: "architecture", implementation: { kind: "ralphworks" } };
+    expect(workOrder.planning).toBeUndefined();
+    const prompts = [
+      buildLoopSupervisorPrompt(workOrder),
+      buildLoopSupervisorFinalizationPrompt(workOrder, "prior output"),
+      buildLoopSupervisorRevisionPrompt({
+        workOrder,
+        failures: ["invalid-summary"],
+        attempt: 1,
+        maxAttempts: 2,
+        previousOutput: "prior output",
+      }),
+    ];
+    for (const prompt of prompts) {
+      expect(prompt).toContain("If WorkOrder.planning is absent, omit planReview entirely");
+      expect(prompt).toContain("must be JSON booleans true or false, never null or strings");
+      expect(prompt).toContain("Set targetScoreMet=true only when actual measured command logs");
+      expect(prompt).toContain("RalphWorks completion alone is not score evidence");
+      expect(prompt).toContain("Keep pending production verification separate");
+      expect(prompt).toContain("Do not claim the pending production gate passed");
+    }
+  });
+
+  it("keeps external delivery handoffs concise with exact verification evidence in artifacts", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: firstProject(),
+      scheduledAt: 1,
+      runId: "concise-review-handoff",
+    });
+    const nativePrompt = buildLoopSupervisorPrompt(workOrder);
+    expect(nativePrompt).not.toContain("If WorkOrder.planning is absent, omit planReview entirely");
+    expect(nativePrompt).not.toContain("Maintain a concise final summary incrementally");
+    workOrder.task = { kind: "architecture", implementation: { kind: "ralphworks" } };
+    for (const prompt of [
+      buildLoopSupervisorPrompt(workOrder),
+      buildLoopSupervisorFinalizationPrompt(workOrder, "prior output"),
+      buildLoopSupervisorRevisionPrompt({
+        workOrder,
+        failures: ["missing-final-marker"],
+        attempt: 1,
+        maxAttempts: 2,
+        previousOutput: "prior output",
+      }),
+    ]) {
+      expect(prompt).toContain("Maintain a concise final summary incrementally");
+      expect(prompt).toContain("preserve exact argv and exit results in artifacts");
+      expect(prompt).toContain("evidence must be one string, never an array");
+      expect(prompt).toContain("command is optional");
+      expect(prompt).toContain("Complete all required checks before final success");
+      expect(prompt).toContain("write the final JSON and print the marker promptly");
+      expect(prompt).toContain("do not start additional exploration");
+      expect(prompt).toContain("The JSON file must contain fields: status, projectId");
+    }
+  });
+
+  for (const scenario of [
+    { name: "identical assessment and eval", evalCommand: "pnpm assess", deduplicated: true },
+    { name: "distinct assessment and eval", evalCommand: "pnpm eval", deduplicated: false },
+    { name: "assessment without eval", evalCommand: undefined, deduplicated: false },
+  ]) {
+    it(`preserves verification ownership for ${scenario.name}`, () => {
+      const workOrder = buildLoopWorkOrder({
+        config,
+        project: firstProject(),
+        scheduledAt: 1,
+        runId: "review-ownership",
+      });
+      workOrder.task = { kind: "architecture", implementation: { kind: "ralphworks" } };
+      if (scenario.evalCommand !== undefined) workOrder.eval = { command: scenario.evalCommand };
+      const prompts = [
+        buildLoopSupervisorPrompt(workOrder),
+        buildLoopSupervisorFinalizationPrompt(workOrder, "prior output"),
+        buildLoopSupervisorRevisionPrompt({
+          workOrder,
+          failures: ["missing evidence"],
+          attempt: 1,
+          maxAttempts: 2,
+          previousOutput: "prior output",
+        }),
+      ];
+      for (const prompt of prompts) {
+        expect(prompt.includes("Do not manually rerun this identical assessment command")).toBe(
+          scenario.deduplicated,
+        );
+        if (scenario.deduplicated) {
+          expect(prompt).toContain("fresh production system gate remains pending");
+          expect(prompt).toContain("passing command logs bound to the hashed external evidence");
+          expect(prompt).toContain("independently run all other required checks");
+          expect(prompt).not.toContain("Independently run the configured checks and assessment");
+        } else {
+          expect(prompt).toContain("Independently run the configured checks and assessment");
+        }
+        expect(prompt).toContain("Reserve time within the original WorkOrder deadline");
+        expect(prompt).toContain("Do not claim the pending production gate passed");
+        expect(prompt).toContain("Do not retry failed assertions");
+      }
+      expect(prompts[0]).toContain("Inventory the required checks and existing evidence first");
+      expect(prompts[0]).toContain("Launch long required checks early");
+      expect(prompts[0]).toContain("Serialize CPU-heavy, browser, and build suites");
+      expect(prompts[0]).toContain("bound each tool's internal concurrency");
+      expect(prompts[0]).toContain("Overlap only cheap independent checks or source review");
+      expect(prompts[0]).not.toContain("Agentic coding loop: Explore -> Plan -> Code");
+      expect(prompts[0]).not.toContain("Code in minimal bounded changes");
+      expect(prompts[0]).not.toContain("including planning, broad exploration, self-review");
+    });
+  }
+
+  it("keeps native implementation and verification instructions unchanged", () => {
+    const workOrder = buildLoopWorkOrder({
+      config,
+      project: firstProject(),
+      scheduledAt: 1,
+      runId: "native-ownership",
+    });
+    workOrder.eval = { command: workOrder.assessment.command };
+    const prompt = buildLoopSupervisorPrompt(workOrder);
+    expect(prompt).toContain(
+      "Agentic coding loop: Explore -> Plan -> Code -> Verify -> Review -> Record.",
+    );
+    expect(prompt).toContain("Code in minimal bounded changes");
+    expect(prompt).toContain("including planning, broad exploration, self-review");
+    expect(prompt).not.toContain("Do not manually rerun this identical assessment command");
+    expect(prompt).not.toContain("Inventory the required checks and existing evidence first");
+    expect(prompt).not.toContain("Serialize CPU-heavy, browser, and build suites");
+  });
+
+  it("copies external configuration only into the architecture task", () => {
+    const project = {
+      ...firstProject(),
+      execution: {
+        agent: true,
+        architecture: {
+          kind: "ralphworks" as const,
+          profile: "builtin:architecture",
+          params: { focus: "coupling" },
+        },
+      },
+    };
+    const input = { config, project, scheduledAt: 1, runId: "architecture-external" };
+    expect(buildLoopWorkOrder(input).task).toEqual({
+      kind: "architecture",
+      implementation: project.execution.architecture,
+    });
+    expect(buildLoopWorkOrder({ ...input, jobKind: "bug-fix" }).task).not.toHaveProperty(
+      "implementation",
+    );
+  });
+});
+
+describe("maintenance implementation selectors", () => {
+  for (const [kind, key, report] of [
+    ["bug-fix", "bugFix", "BUGFIX_REPORT.md"],
+    ["test-coverage", "testCoverage", "COVERAGE_REPORT.md"],
+    ["security-maintenance", "securityMaintenance", "SECURITY_REPORT.md"],
+  ] as const) {
+    it(`snapshots only the matching ${kind} selector and routes review without native repair`, () => {
+      const project = structuredClone(firstProject());
+      project.execution = { agent: true, [key]: { kind: "ralphworks", params: { focus: "risk" } } };
+      const workOrder = buildLoopWorkOrder({
+        config,
+        project,
+        scheduledAt: 1,
+        runId: "maintenance",
+        jobKind: kind,
+      });
+      expect(workOrder.task).toHaveProperty("implementation", project.execution[key]);
+      expect(
+        workOrder.task && "implementation" in workOrder.task && workOrder.task.implementation,
+      ).not.toBe(project.execution[key]);
+      expect(
+        buildLoopWorkOrder({
+          config,
+          project,
+          scheduledAt: 1,
+          runId: "harness",
+          jobKind: "harness-auto",
+        }).task,
+      ).not.toHaveProperty("implementation");
+      for (const prompt of [
+        buildLoopSupervisorPrompt(workOrder),
+        buildLoopSupervisorFinalizationPrompt(workOrder, "prior output"),
+        buildLoopSupervisorRevisionPrompt({
+          workOrder,
+          failures: ["missing evidence"],
+          attempt: 1,
+          maxAttempts: 2,
+          previousOutput: "prior output",
+        }),
+      ]) {
+        expect(prompt).toContain("review and delivery only");
+        expect(prompt).toContain(report);
+        expect(prompt).toContain("external-execution");
+        expect(prompt).toContain("no automatic native fallback");
+        expect(prompt).toContain("Do not retry failed assertions");
+        expect(prompt).not.toContain("Agentic coding loop: Explore -> Plan -> Code");
+        expect(prompt).not.toContain("Before editing, prove the issue is real");
+        expect(prompt).not.toContain("Add tests only when they assert real behavior");
+      }
+    });
+  }
+});
+
+describe("security selector native parity", () => {
+  it.each([
+    "architecture",
+    "bug-fix",
+    "test-coverage",
+    "security-maintenance",
+    "harness-auto",
+  ] as const)(
+    "preserves native %s prompt policy bytes apart from explicit selector metadata",
+    (jobKind) => {
+      const project = structuredClone(firstProject());
+      const input = { config, project, scheduledAt: 1, runId: "native-parity", jobKind };
+      const absent = buildLoopWorkOrder(input);
+      project.execution.securityMaintenance = { kind: "native" };
+      const explicit = buildLoopWorkOrder(input);
+      if (explicit.task?.kind === "security-maintenance") delete explicit.task.implementation;
+      expect(buildLoopSupervisorPrompt(explicit)).toBe(buildLoopSupervisorPrompt(absent));
+    },
+  );
+  it("keeps other standalone and harness tasks native when security is external", () => {
+    const project = structuredClone(firstProject());
+    project.execution.securityMaintenance = { kind: "ralphworks" };
+    for (const jobKind of ["architecture", "bug-fix", "test-coverage", "harness-auto"] as const) {
+      const task = buildLoopWorkOrder({
+        config,
+        project,
+        scheduledAt: 1,
+        runId: "no-inheritance",
+        jobKind,
+      }).task;
+      expect(task).not.toHaveProperty("implementation");
+    }
+  });
+});
+
+describe("explicit external PR reviewer policy", () => {
+  it.each(["project", "repository"] as const)(
+    "snapshots a %s reviewer and composes immutable passes into native delivery",
+    (scope) => {
+      const project = structuredClone(firstProject());
+      project.pullRequestReview.reviewer = { kind: "ralphworks", params: { strict: true } };
+      const repository = {
+        id: "review",
+        name: "Review",
+        path: "/repo/review",
+        repo: "example/review",
+        agent: "codex" as const,
+        enabled: true,
+        schedule: "0 2 * * *",
+        switchBack: "main",
+        lookbackHours: 72,
+        consecutivePasses: 2,
+        autoMerge: false,
+        mergeMethod: "squash" as const,
+        repair: { enabled: true, maxAttempts: 1 },
+        runner: { kind: "agent-supervised" as const, requireConfirmation: false },
+        reviewer: { kind: "ralphworks" as const, params: { strict: true } },
+      };
+      const workOrder =
+        scope === "project"
+          ? buildLoopWorkOrder({
+              config,
+              project,
+              scheduledAt: 1,
+              runId: "external-review",
+              jobKind: "pull-request-review",
+            })
+          : buildRepositoryPullRequestReviewWorkOrder({
+              config,
+              repository,
+              scheduledAt: 1,
+              runId: "external-review",
+            });
+      expect(workOrder.task).toHaveProperty("reviewer", {
+        kind: "ralphworks",
+        params: { strict: true },
+      });
+      if (
+        workOrder.task?.kind !== "pull-request-review" &&
+        workOrder.task?.kind !== "repository-pull-request-review"
+      )
+        throw new Error("wrong task");
+      expect(workOrder.task.reviewer).not.toBe(
+        scope === "project" ? project.pullRequestReview.reviewer : repository.reviewer,
+      );
+      for (const prompt of [
+        buildLoopSupervisorPrompt(workOrder),
+        buildLoopSupervisorFinalizationPrompt(workOrder, "prior"),
+        buildLoopSupervisorRevisionPrompt({
+          workOrder,
+          failures: ["review missing"],
+          attempt: 1,
+          maxAttempts: 2,
+          previousOutput: "prior",
+        }),
+      ]) {
+        expect(prompt).toContain("loop pr-review pass");
+        expect(prompt).toContain("consecutive clean external passes on that exact revision");
+        expect(prompt).toContain("discard previous clean-pass counts");
+        expect(prompt).toContain("Findings or incomplete reports never count as approval");
+        expect(prompt).toContain("no automatic native reviewer fallback");
+        expect(prompt).toContain("CODE_REVIEW.json");
+        expect(prompt).toContain("reviewedHeadSha");
+        expect(prompt).toContain("--match-head-commit");
+        expect(prompt).not.toContain("Run two independent review passes");
+        expect(prompt).not.toContain("If both review passes pass");
+        expect(prompt).toContain("native supervisor still owns candidate discovery");
+      }
+    },
+  );
+  it("leaves native reviewer policy bytes unchanged apart from explicit selector metadata", () => {
+    const project = structuredClone(firstProject());
+    const args = {
+      config,
+      project,
+      scheduledAt: 1,
+      runId: "native-review",
+      jobKind: "pull-request-review" as const,
+    };
+    const absent = buildLoopWorkOrder(args);
+    project.pullRequestReview.reviewer = { kind: "native" };
+    const explicit = buildLoopWorkOrder(args);
+    if (explicit.task?.kind !== "pull-request-review") throw new Error("wrong task");
+    delete explicit.task.reviewer;
+    expect(buildLoopSupervisorPrompt(explicit)).toBe(buildLoopSupervisorPrompt(absent));
+    expect(buildLoopSupervisorPrompt(absent)).not.toContain("loop pr-review pass");
   });
 });

@@ -1,8 +1,6 @@
 import { resolve } from "node:path";
 import {
-  listRecoverableFailedLoopSupervisorWorkOrders,
-  listRecoverableFinalSummaryLoopSupervisorWorkOrders,
-  listUnfinishedLoopSupervisorWorkOrders,
+  readLoopSupervisorWorkOrderRegistry,
   type UnfinishedLoopSupervisorWorkOrder,
 } from "../loop/supervisor-state.js";
 import { getPathBySession } from "../projects/sessionPathMap.js";
@@ -19,11 +17,12 @@ export type ProjectAutomationConflict = {
 };
 
 export function listReservedLoopSupervisorWorkOrders(): UnfinishedLoopSupervisorWorkOrder[] {
+  const registry = readLoopSupervisorWorkOrderRegistry();
   const byRunDir = new Map<string, UnfinishedLoopSupervisorWorkOrder>();
   for (const record of [
-    ...listUnfinishedLoopSupervisorWorkOrders(),
-    ...listRecoverableFinalSummaryLoopSupervisorWorkOrders(),
-    ...listRecoverableFailedLoopSupervisorWorkOrders(),
+    ...registry.unfinished,
+    ...registry.recoverableFinalSummary,
+    ...registry.recoverableFailed,
   ]) {
     byRunDir.set(record.runDir, record);
   }

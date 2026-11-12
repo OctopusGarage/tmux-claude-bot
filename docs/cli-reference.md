@@ -103,6 +103,25 @@ approvals survive restarts with their original expiry. See [security.md](securit
 - `tcb task report`
 - `tcb loop validate <file>`
 - `tcb loop tick <file>`
+- `tcb loop architecture quarantine list`
+- `tcb loop architecture quarantine release <workOrderId> --processes-stopped`
+- `tcb loop architecture get <file> <projectId>`
+- `tcb loop architecture set <file> <projectId> <native|ralphworks> [--profile <reference>] [--runtime <reference>] [--param <key=value>]`
+- `tcb loop bugfix get <file> <projectId>`
+- `tcb loop bugfix set <file> <projectId> <native|ralphworks> [--profile <reference>] [--runtime <reference>] [--param <key=value>]`
+- `tcb loop bugfix quarantine list`
+- `tcb loop bugfix quarantine release <workOrderId> --processes-stopped`
+- `tcb loop test-coverage get <file> <projectId>`
+- `tcb loop test-coverage set <file> <projectId> <native|ralphworks> [--profile <reference>] [--runtime <reference>] [--param <key=value>]`
+- `tcb loop test-coverage quarantine list`
+- `tcb loop test-coverage quarantine release <workOrderId> --processes-stopped`
+- `tcb loop security-maintenance get <file> <projectId>`
+- `tcb loop security-maintenance set <file> <projectId> <native|ralphworks> [--profile <reference>] [--runtime <reference>] [--param <key=value>]`
+- `tcb loop security-maintenance quarantine list`
+- `tcb loop security-maintenance quarantine release <workOrderId> --processes-stopped`
+- `tcb loop pr-review get <file> <project|repository> <id>`
+- `tcb loop pr-review set <file> <project|repository> <id> <native|ralphworks> [--profile <reference>] [--runtime <reference>] [--param <key=value>]`
+- `tcb loop pr-review pass <workOrderFile> <number> --repository <owner/repo> --base <sha> --head <sha> [--timeout-minutes <minutes>]`
 - `tcb loop run <file> <projectId>`
 - `tcb loop reports list [--project <id>] [--status <passed|failed>] [--limit <1-100>]`
 - `tcb loop targets list <file>`
@@ -132,6 +151,14 @@ approvals survive restarts with their original expiry. See [security.md](securit
 - `tcb mcp install`
 
 ## Options
+
+- `--runtime`: opaque RalphWorks runtime reference.
+- `--param`: repeatable non-secret task parameter.
+- `--processes-stopped`: explicit quarantine reconciliation confirmation.
+- `--repository`: immutable PR candidate repository.
+- `--base`: reviewed PR base commit SHA.
+- `--head`: reviewed PR head commit SHA.
+- `--timeout-minutes`: shorten one external PR pass budget.
 
 - `--at`: scheduled message ISO timestamp with explicit offset or `Z`.
 - `--in`: scheduled message positive delay (`m`, `h`, `d`).
@@ -241,3 +268,17 @@ approvals survive restarts with their original expiry. See [security.md](securit
 - `tcb prompts governed ...` is for repo-owned system prompts and prompt
   governance. It is separate from chat `/prompts`, which browses an external MCP
   prompt library.
+
+
+Implementation configuration for architecture, bug-fix, test-coverage and security-maintenance is
+explicit, independent per family and single-project only. CLI prefixes are
+`architecture`, `bugfix`, `test-coverage` and `security-maintenance`; their configuration keys are
+`execution.architecture`, `execution.bugFix`, `execution.testCoverage` and `execution.securityMaintenance`.
+Quarantine subcommands inspect and reconcile the same shared ownership registry.
+`get` and `set` return JSON with all task parameter values redacted. `--param` is
+repeatable and accepts non-secret string, finite number or boolean values.
+`ralphworks` requires existing supervised agent execution; missing selection and
+`native` keep native execution. Workspace tasks, harness-auto, active delegation
+and all other task families remain native. See the manual's
+[optional RalphWorks task execution](manual.md#optional-ralphworks-task-execution)
+section for default profiles, receipt, ownership, failure and review requirements.
