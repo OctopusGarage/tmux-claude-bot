@@ -97,6 +97,12 @@ or autonomous admission bypass is added. `docs/scheduled-messages.md` owns usage
 and recovery semantics; schedule, adapter, dispatcher and control tests enforce
 the shared contract.
 
+Remote-branch reconciliation records sanitized repository/phase/branch failure
+reasons even before a deletion intent exists. Repeated failures use bounded
+warning coalescing; observation failure never creates deletion authority or
+suppresses the next normal reconciliation attempt. Remote-branch tests cover
+pre-intent diagnostics, secret redaction, retry, and absence of deletion.
+
 Terminal worktree cleanup preserves protected-branch and source-root refusals.
 Repeated identical refusals use the shared bounded warning coalescer: first and
 hourly aggregate warnings remain visible, repeats are DEBUG, and Git validation
