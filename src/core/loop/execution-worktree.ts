@@ -25,6 +25,10 @@ const logUnexpectedWorktreeRefusal = createWarningCoalescer(log, {
   maxKeys: 1,
 });
 
+const logCleanupRefusal = createWarningCoalescer(log, {
+  intervalMs: 60 * 60_000,
+});
+
 export function prepareLoopExecutionWorktrees(input: {
   workOrder: LoopWorkOrder;
   runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
@@ -187,9 +191,11 @@ function cleanupLoopExecutionWorktreeWithRegistrations(
     return "failed";
   }
   if (input.expectedBranch !== undefined && !isBotOwnedLoopBranch(input.expectedBranch)) {
-    log.warn("loop refused to remove an unexpected local branch", {
-      data: { worktree, branch: input.expectedBranch },
-    });
+    logCleanupRefusal(
+      `branch:${worktree}:${input.expectedBranch}`,
+      "loop refused to remove an unexpected local branch",
+      { data: { worktree, branch: input.expectedBranch } },
+    );
     return "failed";
   }
   if (!existsSync(worktree)) {
@@ -488,16 +494,20 @@ function readMissingWorktreeRegistrations(input: {
     sourceTopLevel.stdout.trim().length === 0 ||
     resolvePath(sourceTopLevel.stdout.trim()) !== input.sourceWorktree
   ) {
-    log.warn("loop refused to reconcile missing worktree from an unverified source repository", {
-      data: {
-        worktree: input.worktree,
-        sourceWorktree: input.sourceWorktree,
-        reason:
-          sourceTopLevel.stderr ||
-          sourceTopLevel.stdout ||
-          "source git toplevel verification failed",
+    logCleanupRefusal(
+      `source:${input.sourceWorktree}:${sourceTopLevel.status}:${sourceTopLevel.stderr}:${sourceTopLevel.stdout}`,
+      "loop refused to reconcile missing worktree from an unverified source repository",
+      {
+        data: {
+          worktree: input.worktree,
+          sourceWorktree: input.sourceWorktree,
+          reason:
+            sourceTopLevel.stderr ||
+            sourceTopLevel.stdout ||
+            "source git toplevel verification failed",
+        },
       },
-    });
+    );
     input.registrations.set(input.sourceWorktree, null);
     return null;
   }

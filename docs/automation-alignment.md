@@ -97,6 +97,17 @@ or autonomous admission bypass is added. `docs/scheduled-messages.md` owns usage
 and recovery semantics; schedule, adapter, dispatcher and control tests enforce
 the shared contract.
 
+Terminal worktree cleanup preserves protected-branch and source-root refusals.
+Repeated identical refusals use the shared bounded warning coalescer: first and
+hourly aggregate warnings remain visible, repeats are DEBUG, and Git validation
+still runs on later passes so a restored source can recover without restart.
+
+Historical recovery reads system-gate and outcome evidence before large prompts.
+A configured `targetScore` alone is not an assessment failure. Declared RalphWorks
+terminal execution blockers retain the external boundary even when old ledger
+classification text suggests a native retry. Project recovery tests enforce this
+precedence; these records still require an available configured target.
+
 Repair visibility and task-ledger alignment: Observer task sources derive from
 `SCHEDULED_TASK_SOURCES`; its output accepts completed repairs and unavailable
 dependency-audit evidence. Daily Audit's Runtime Overview domain requires

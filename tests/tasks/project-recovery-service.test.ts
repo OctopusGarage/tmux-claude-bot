@@ -20,6 +20,61 @@ afterEach(() => {
 });
 
 describe("project recovery service", () => {
+  it("preserves external terminal outcomes before a large WorkOrder prompt", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-external-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportPath = join(stateDir, "loop-runs", "suite", "run-1");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "work-order.json"),
+      JSON.stringify({
+        projectId: "suite",
+        targetScore: 95,
+        goal: "retry dispatch ".repeat(4000),
+      }),
+    );
+    await writeFile(
+      join(reportPath, "supervisor-summary.json"),
+      JSON.stringify({
+        result: { reason: "RalphWorks declared needs_input; no native fallback is allowed" },
+      }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const updateRepairStatus = vi.fn();
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "loop:suite:security-maintenance:1000",
+          source: "loop-engineering",
+          name: "suite security-maintenance",
+          status: "failed",
+          error: "dispatch-failed",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "pending",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "suite", name: "Suite", path: "/repo/suite" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ waitingExternal: 1, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:suite:security-maintenance:1000",
+      "blocked",
+      expect.stringContaining("waiting-external"),
+    );
+  });
+
   it.each([true, false])(
     "validates member repositories for workspace recovery: %s",
     async (valid) => {

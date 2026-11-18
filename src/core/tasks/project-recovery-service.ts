@@ -1080,11 +1080,11 @@ function readRecoveryArtifact(reportPath: string): string | undefined {
   const basePath =
     reportPath.endsWith(".md") || reportPath.endsWith(".json") ? dirname(reportPath) : reportPath;
   const paths = [
-    join(basePath, "work-order.json"),
-    reportPath,
+    join(basePath, "system-gate.json"),
     join(basePath, "supervisor-final-summary.json"),
     join(basePath, "supervisor-summary.json"),
-    join(basePath, "system-gate.json"),
+    join(basePath, "work-order.json"),
+    reportPath,
   ];
   const seen = new Set<string>();
   const evidence = paths

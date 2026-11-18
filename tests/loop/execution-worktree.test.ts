@@ -9,6 +9,14 @@ import {
 import type { LoopGitInvocation, LoopRunCommandResult } from "../../src/core/loop/run.js";
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 
+const cleanupLog = vi.hoisted(() => ({
+  warn: vi.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+}));
+vi.mock("../../src/shared/utils/logger.js", () => ({ createLogger: () => cleanupLog }));
+
 const originalStateDir = process.env.TCB_STATE_DIR;
 
 // These tests isolate ownership/Git command sequencing; real archive and restore
@@ -84,6 +92,39 @@ function workOrder(
 }
 
 describe("loop execution worktrees", () => {
+  it("coalesces repeated protected-branch refusals without authorizing cleanup", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-refusal-"));
+    const worktree = join(process.env.TCB_STATE_DIR, "loop-worktrees", "suite", "run");
+    const runGit = vi.fn();
+    cleanupLog.warn.mockClear();
+    cleanupLog.debug.mockClear();
+    for (let i = 0; i < 3; i++) {
+      expect(
+        cleanupLoopExecutionWorktree({ worktree, expectedBranch: "eval/protected", runGit }),
+      ).toBe(false);
+    }
+    expect(runGit).not.toHaveBeenCalled();
+    expect(cleanupLog.warn).toHaveBeenCalledTimes(1);
+    expect(cleanupLog.debug).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces missing-source refusals but rechecks source recovery on each pass", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-source-refusal-"));
+    const worktree = join(process.env.TCB_STATE_DIR, "loop-worktrees", "suite", "run");
+    const sourceWorktree = "/repo/missing";
+    const runGit = vi.fn(() => ({ status: 1, stdout: "", stderr: "source unavailable" }));
+    cleanupLog.warn.mockClear();
+    cleanupLog.debug.mockClear();
+    for (let i = 0; i < 3; i++) {
+      expect(cleanupLoopExecutionWorktree({ worktree, sourceWorktree, runGit })).toBe(false);
+    }
+    expect(runGit).toHaveBeenCalledTimes(3);
+    expect(cleanupLog.warn).toHaveBeenCalledTimes(1);
+    expect(cleanupLog.debug).toHaveBeenCalledTimes(2);
+    runGit.mockReturnValue({ status: 0, stdout: sourceWorktree, stderr: "" });
+    expect(cleanupLoopExecutionWorktree({ worktree, sourceWorktree, runGit })).toBe(true);
+  });
+
   it("removes only an expired bot-owned isolated worktree", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-loop-worktree-cleanup-state-"));
     process.env.TCB_STATE_DIR = stateDir;

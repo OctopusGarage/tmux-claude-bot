@@ -45,7 +45,7 @@ export type ConfiguredRecoveryConfig = {
 
 const MAX_RECOVERY_ATTEMPTS = 3;
 const ASSESSMENT_SCORING_CONTRACT_RE =
-  /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract|targetscore)/;
+  /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract)/;
 const CAPACITY_OR_LEASE_RE =
   /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy)/;
 const SOURCE_GIT_STATE_RE =
@@ -66,6 +66,17 @@ export function classifyHistoricalFailure(
     .filter((value): value is string => value !== undefined)
     .join(" ")
     .toLowerCase();
+  if (
+    /ralphworks declared (needs_input|max_iterations|failed); no native fallback is allowed/.test(
+      evidence,
+    )
+  ) {
+    return {
+      classification: "waiting-external",
+      reason:
+        "RalphWorks declared a terminal external execution blocker; native fallback is prohibited",
+    };
+  }
   if (CAPACITY_OR_LEASE_RE.test(evidence)) {
     return {
       classification: "retryable",
