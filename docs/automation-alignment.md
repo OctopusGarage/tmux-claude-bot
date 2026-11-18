@@ -108,7 +108,10 @@ Repeated identical refusals use the shared bounded warning coalescer: first and
 hourly aggregate warnings remain visible, repeats are DEBUG, and Git validation
 still runs on later passes so a restored source can recover without restart.
 
-Historical recovery reads system-gate and outcome evidence before large prompts.
+Historical recovery classifies system-gate and outcome evidence separately from
+WorkOrder requirement/goal instructions. WorkOrders supply only structured target
+IDs and explicitly labelled legacy routing IDs; their instruction text never
+enters diagnostic evidence or consumes its bounded text budget.
 A configured `targetScore` alone is not an assessment failure. Declared RalphWorks
 terminal execution blockers retain the external boundary even when old ledger
 classification text suggests a native retry. Project recovery tests enforce this

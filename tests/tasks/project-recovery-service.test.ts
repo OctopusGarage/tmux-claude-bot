@@ -75,6 +75,60 @@ describe("project recovery service", () => {
     );
   });
 
+  it.each([
+    "assessment scoring contract",
+    "control request timed out",
+    "RalphWorks declared needs_input; no native fallback is allowed",
+  ])("does not classify WorkOrder instructions as outcomes: %s", async (phrase) => {
+    const stateDir = join(tmpdir(), `project-recovery-instructions-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportPath = join(stateDir, "loop-runs", "suite", "run-1");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "work-order.json"),
+      JSON.stringify({
+        projectId: "suite",
+        task: { requirement: `Project: suite-repository\nInvestigate ${phrase}` },
+        goal: `${phrase} `.repeat(4000),
+        targetScore: 95,
+      }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const updateRepairStatus = vi.fn();
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "suite active delegated task",
+          status: "failed",
+          error: "network timeout",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "pending",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [],
+        repositories: [{ id: "suite-repository", path: "/repo/suite" }],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ waitingExternal: 1, dispatched: 0, unconfigured: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:run-1",
+      "blocked",
+      "Recovery classification: waiting-external; evidence points to an external service or execution dependency",
+    );
+  });
+
   it.each([true, false])(
     "validates member repositories for workspace recovery: %s",
     async (valid) => {

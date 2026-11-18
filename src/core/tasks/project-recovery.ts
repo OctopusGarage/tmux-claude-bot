@@ -15,6 +15,7 @@ export type HistoricalRecoveryInput = {
   summary?: string;
   reportPath?: string;
   artifactText?: string;
+  targetIds?: string[];
   attempt: number;
   laterSuccess?: boolean;
 };
@@ -161,7 +162,7 @@ export function isBotOwnedRetryableRecoveryEvidence(evidence: string): boolean {
 
 export function resolveConfiguredRecoveryTarget(
   config: ConfiguredRecoveryConfig,
-  input: Pick<HistoricalRecoveryInput, "taskId" | "name" | "artifactText">,
+  input: Pick<HistoricalRecoveryInput, "taskId" | "name" | "artifactText" | "targetIds">,
   canonicalize: (path: string) => string,
 ): ConfiguredRecoveryTarget | null {
   const candidates: ConfiguredRecoveryTarget[] = [
@@ -187,7 +188,10 @@ export function resolveConfiguredRecoveryTarget(
       ),
     })),
   ];
-  const explicitTargetIds = extractExplicitTargetIds(input.artifactText);
+  const explicitTargetIds = [
+    ...(input.targetIds ?? []),
+    ...extractExplicitTargetIds(input.artifactText),
+  ];
   const identity = `${input.taskId} ${input.name} ${explicitTargetIds.join(" ")}`.toLowerCase();
   const matches = candidates
     .filter((candidate) => identity.includes(candidate.id.toLowerCase()))
@@ -204,7 +208,7 @@ export function resolveConfiguredRecoveryTarget(
   return best;
 }
 
-function extractExplicitTargetIds(artifactText: string | undefined): string[] {
+export function extractExplicitTargetIds(artifactText: string | undefined): string[] {
   if (artifactText === undefined) return [];
   return [...artifactText.matchAll(/(?:Project|Workspace|Repository target):\s*([^\s,;"\\]+)/gim)]
     .map((match) => match[1]?.trim())
