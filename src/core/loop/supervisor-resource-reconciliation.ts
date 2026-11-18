@@ -21,6 +21,8 @@ import {
 } from "./supervisor-active-resources.js";
 import { settleSupervisorWorkOrderOutcome } from "./supervisor-outcome-settlement.js";
 import {
+  isLoopSupervisorWorkerLeaseExpired,
+  type LoopSupervisorWorkerLease,
   readLoopSupervisorWorkerLeaseState,
   releaseLoopSupervisorWorker,
   writeLoopSupervisorWorkerLeaseState,
@@ -74,7 +76,8 @@ export async function reconcileTerminalSupervisorResources(input: {
         (!preparedIsolatedExecutionWorktrees(record.workOrder).some((worktree) =>
           existsSync(worktree.path),
         ) &&
-          !hasPrReviewWorktrees(record.workOrder))
+          !hasPrReviewWorktrees(record.workOrder) &&
+          !isPreparedSourceExecutionWorktree(record.workOrder))
       )
         continue;
       try {
@@ -92,7 +95,7 @@ export async function reconcileTerminalSupervisorResources(input: {
   }
   const schedulerStore = new LoopSchedulerStore();
   const taskLedger = new DailyTaskLedger();
-  const removedStaleLeases = reconcileStaleLoopSupervisorWorkerLeases();
+  let removedStaleLeases = reconcileStaleLoopSupervisorWorkerLeases();
   const settledTerminalLeases = reconcileTerminalLoopSupervisorWorkerLeases(
     input.now,
     excludedWorkOrderIds,
@@ -128,14 +131,13 @@ export async function reconcileTerminalSupervisorResources(input: {
           runGit: input.runGit,
           excludedWorkOrderIds,
         });
-  const removedExpiredWorktrees =
-    input.runGit === undefined
-      ? 0
-      : reconcileExpiredLoopSupervisorWorkerWorktrees({
-          now: input.now,
-          runGit: input.runGit,
-          excludedWorkOrderIds,
-        });
+  const expiredResources = reconcileExpiredLoopSupervisorWorkerResources({
+    now: input.now,
+    ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
+    excludedWorkOrderIds,
+  });
+  const removedExpiredWorktrees = expiredResources.removedWorktrees;
+  removedStaleLeases += expiredResources.removedSourceLeases;
   const removedOrphanWorktrees =
     input.runGit === undefined
       ? 0
@@ -487,6 +489,13 @@ function isPreparedIsolatedExecutionWorktree(workOrder: LoopWorkOrder): boolean 
   );
 }
 
+function isPreparedSourceExecutionWorktree(workOrder: LoopWorkOrder): boolean {
+  return (
+    workOrder.executionIsolation?.preparedBy === "source-worktree" &&
+    workOrder.executionIsolation.worktreeIsolation === "source"
+  );
+}
+
 function reconcileTerminalLoopSupervisorWorktrees(input: {
   now: number;
   runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
@@ -590,27 +599,50 @@ function removeEmptyWorkspaceWorktreeContainer(workOrder: LoopWorkOrder): void {
   }
 }
 
-function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
+function reconcileExpiredLoopSupervisorWorkerResources(input: {
   now: number;
-  runGit: (invocation: LoopGitInvocation) => LoopRunCommandResult;
+  runGit?: (invocation: LoopGitInvocation) => LoopRunCommandResult;
   excludedWorkOrderIds: ReadonlySet<string>;
-}): number {
+}): { removedWorktrees: number; removedSourceLeases: number } {
   const state = readLoopSupervisorWorkerLeaseState();
-  const expired = state.leases.filter(
-    (lease) => lease.status === "retained" && (lease.retainUntil ?? Infinity) <= input.now,
+  const expired = state.leases.filter((lease) =>
+    isLoopSupervisorWorkerLeaseExpired(lease, input.now),
   );
-  if (expired.length === 0) return 0;
+  if (expired.length === 0) return { removedWorktrees: 0, removedSourceLeases: 0 };
 
-  const expiredIds = new Set(expired.map((lease) => lease.workOrderId));
   const protectedPaths = protectedWorktreePaths(input.now, input.excludedWorkOrderIds);
   const removedIds = new Set<string>();
+  const removedSourceLeases = new Set<LoopSupervisorWorkerLease>();
+  const terminalSourceOrders = new Map(
+    listTerminalLoopSupervisorWorkOrders()
+      .filter(({ workOrder }) => isPreparedSourceExecutionWorktree(workOrder))
+      .map((record) => [record.workOrder.id, record]),
+  );
   for (const lease of state.leases) {
     if (removedIds.size >= MAX_WORKTREE_CLEANUPS_PER_RECONCILIATION) break;
-    if (!expiredIds.has(lease.workOrderId) || !isBotOwnedLoopExecutionWorktree(lease.projectPath))
-      continue;
+    if (!isLoopSupervisorWorkerLeaseExpired(lease, input.now)) continue;
     if (
       input.excludedWorkOrderIds.has(lease.workOrderId) ||
       worktreePathProtected(lease.projectPath, protectedPaths)
+    )
+      continue;
+    const source = terminalSourceOrders.get(lease.workOrderId);
+    if (source !== undefined) {
+      // Source ownership expires independently of worktree removal. Never delete
+      // a caller-owned path or recycle its shared supervisor to release this lease.
+      if (
+        source.workOrder.projectId === lease.projectId &&
+        source.workOrder.projectPath === lease.projectPath &&
+        (source.state.supervisorSession === lease.workerSession ||
+          source.workOrder.workerSession === lease.workerSession)
+      )
+        removedSourceLeases.add(lease);
+      continue;
+    }
+    if (
+      input.runGit === undefined ||
+      !isBotOwnedLoopExecutionWorktree(lease.projectPath) ||
+      (lease.retainUntil ?? Infinity) > input.now
     )
       continue;
     if (
@@ -624,11 +656,13 @@ function reconcileExpiredLoopSupervisorWorkerWorktrees(input: {
     }
   }
   const removed = removedIds.size;
-  const remaining = state.leases.filter((lease) => !removedIds.has(lease.workOrderId));
+  const remaining = state.leases.filter(
+    (lease) => !removedIds.has(lease.workOrderId) && !removedSourceLeases.has(lease),
+  );
   if (remaining.length !== state.leases.length) {
     writeLoopSupervisorWorkerLeaseState({ leases: remaining });
   }
-  return removed;
+  return { removedWorktrees: removed, removedSourceLeases: removedSourceLeases.size };
 }
 
 function protectedWorktreePaths(now: number, excluded: ReadonlySet<string>): Set<string> {

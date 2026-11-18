@@ -1260,6 +1260,10 @@ retention; an explicit positive retention window or retained lease is respected.
 Live work, uncertain ownership and quarantine continue to block cleanup. Terminal
 handling and the existing startup/tick reconciliation perform cleanup; current
 project workspaces and evaluation copies outside the bot-owned root are excluded.
+For explicit source-worktree execution, startup/tick reconciliation releases an
+expired retained lease once the matching WorkOrder is terminal and no live owner
+or quarantine protects the source. This lease release preserves the source files
+and shared supervisor session; it does not require worktree deletion or new work.
 
 Recovery lives under `~/.tmux-claude-bot/state/loop-worktree-archives/` (or the configured
 state directory). Private compressed JSON records preserve the original path,

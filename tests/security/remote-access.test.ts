@@ -378,14 +378,19 @@ describe("remote access security", () => {
   it("serializes failed OTP updates from concurrent processes", async () => {
     const f = fixture();
     f.service.enroll(secret, f.code());
+    // Requests for the same chat supersede each other; all attempts must verify
+    // one pending request to exercise concurrent OTP failure updates.
+    const request = f.service.request(privateAlice);
     const modulePath = fileURLToPath(
       new URL("../../src/core/security/remote-access.ts", import.meta.url),
     );
     const script = `import { RemoteAccessService } from ${JSON.stringify(modulePath)};
       const service = new RemoteAccessService({directory:process.argv[1],now:()=>Number(process.argv[2])});
       const p={channel:'telegram',userId:'alice',chatId:'private'};
-      try { service.approve(p,service.request(p).id,'invalid'); } catch {}
-      if(service.status().enrolled!==true) process.exit(2);`;
+      let verified = false;
+      try { service.approve(p,process.argv[3],'invalid'); }
+      catch (error) { verified = error instanceof Error && error.message === 'Verification failed.'; }
+      if(!verified || service.status().enrolled!==true) process.exit(2);`;
     const exitCodes = await Promise.all(
       Array.from(
         { length: 5 },
@@ -401,6 +406,7 @@ describe("remote access security", () => {
                 script,
                 f.directory,
                 String(f.now()),
+                request.id,
               ],
               { stdio: "ignore" },
             );

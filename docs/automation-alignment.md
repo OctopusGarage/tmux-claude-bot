@@ -773,6 +773,12 @@ Worker leases whose bot-owned worktree disappeared are stale and must be
 released during reconciliation. Source worktrees are never removed. The
 invariant is enforced by coordinator/runtime/worktree tests rather than
 notification wording alone.
+Expired retained source-mode leases must also be released during startup/tick
+reconciliation, independently of Git cleanup. Require a matching terminal
+WorkOrder, project, path and worker/supervisor identity. Excluded work, live worker
+turns, active path ownership and quarantine retain the lease. Release only the
+matching record, preserving caller-owned source and the shared supervisor session;
+do not start another task or recycle a supervisor merely to clear expired state.
 When an isolated WorkOrder uses a bot-owned `loop/*` branch, successful or
 retention-expired cleanup must treat the worktree registration and its local
 branch ref as one lifecycle. Verify the source repository, expected branch, and
