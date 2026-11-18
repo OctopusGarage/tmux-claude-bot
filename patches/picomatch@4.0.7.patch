@@ -1,0 +1,21 @@
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -539,7 +539,17 @@
+   const extglobClose = token => {
+     const literal = input.slice(token.startIndex, state.index + 1);
+     const body = input.slice(token.startIndex + 2, state.index);
+-    const analysis = analyzeRepeatedExtglob(body, opts);
++    // A wildcard token inside a repeated extglob nests unbounded quantifiers.
++    // Use parsed tokens so escaped stars, quotes and character classes remain
++    // literals. Extglob openers are followed by an extglob paren, and nested
++    // groups already normalized by the guard have empty token values.
++    const wildcard = tokens.slice(token.tokensIndex).some((part, i, parts) => {
++      return part.value && (part.type === 'star' || part.type === 'globstar')
++        && !(parts[i + 1] && parts[i + 1].extglob === true);
++    });
++    const analysis = opts.maxExtglobRecursion !== false && wildcard
++      ? { risky: true }
++      : analyzeRepeatedExtglob(body, opts);
+ 
+     if ((token.type === 'plus' || token.type === 'star') && analysis.risky) {
+       const safeOutput = analysis.safeOutput

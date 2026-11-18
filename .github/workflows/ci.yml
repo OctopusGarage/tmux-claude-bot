@@ -27,6 +27,7 @@ jobs:
           node-version: 24
       - run: corepack enable pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test:security
       # Dependency vulnerability scan. Platform-independent, so ubuntu-only.
       - run: scripts/audit-high.sh
         if: matrix.os == 'ubuntu-latest'

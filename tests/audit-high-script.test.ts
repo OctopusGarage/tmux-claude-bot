@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,11 @@ import { describe, expect, it } from "vitest";
 
 const execFile = promisify(execFileCb);
 const root = process.cwd();
+const pnpm = execFileSync("which", ["pnpm"], { encoding: "utf8" }).trim();
+const cleanReport = JSON.stringify({
+  advisories: {},
+  metadata: { vulnerabilities: { low: 0, moderate: 0, high: 0, critical: 0 } },
+});
 
 function writeExecutable(path: string, content: string): void {
   writeFileSync(path, content, { mode: 0o755 });
@@ -23,7 +28,12 @@ async function runAuditScript(
   const dir = join(tmpdir(), `tcb-audit-${process.pid}-${Math.random().toString(16).slice(2)}`);
   mkdirSync(dir, { recursive: true });
   try {
-    writeExecutable(join(dir, "pnpm"), fakePnpm);
+    // Mock only the registry response; resolve and verify the real installed patch.
+    const quotedPnpm = `'${pnpm.replaceAll("'", "'\\''")}'`;
+    writeExecutable(
+      join(dir, "pnpm"),
+      `#!/bin/sh\nif [ "$1" = "list" ]; then exec ${quotedPnpm} "$@"; fi\n${fakePnpm}`,
+    );
     try {
       const result = await execFile("bash", [join(root, "scripts", "audit-high.sh")], {
         cwd: root,
@@ -50,26 +60,24 @@ async function runAuditScript(
 describe("scripts/audit-high.sh", () => {
   it("passes through a clean pnpm audit", async () => {
     const result = await runAuditScript(`#!/bin/sh
-echo "found 0 vulnerabilities"
+echo '${cleanReport}'
 exit 0
 `);
 
-    expect(result).toEqual({
-      code: 0,
-      stdout: "found 0 vulnerabilities\n",
-      stderr: "",
-    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("0 unremediated finding(s)");
+    expect(result.stderr).toBe("");
   });
 
-  it("does not fail local verification for invalid pnpm audit endpoint JSON", async () => {
+  it("fails closed when the audit registry returns invalid JSON", async () => {
     const result = await runAuditScript(`#!/bin/sh
 echo "pnpm warn audit invalid json response body at https://registry.npmjs.org/-/npm/v1/security/advisories/bulk reason: Unexpected token" >&2
 echo "pnpm error audit endpoint returned an error" >&2
 exit 1
 `);
 
-    expect(result.code).toBe(0);
-    expect(result.stderr).toContain("external audit service failure");
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Invalid pnpm audit response");
   });
 
   it("runs pnpm audit without unrelated inherited environment values", async () => {
@@ -79,17 +87,14 @@ if [ "\${TCB_AUDIT_SECRET_SHOULD_NOT_LEAK:-}" = "present" ]; then
   echo "secret leaked into pnpm audit environment" >&2
   exit 42
 fi
-echo "environment sanitized"
+echo '${cleanReport}'
 exit 0
 `,
       { TCB_AUDIT_SECRET_SHOULD_NOT_LEAK: "present" },
     );
 
-    expect(result).toEqual({
-      code: 0,
-      stdout: "environment sanitized\n",
-      stderr: "",
-    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
   it("tilde-collapses home paths from pnpm audit output", async () => {
@@ -99,18 +104,27 @@ exit 1
 `);
 
     expect(result.code).toBe(1);
-    expect(result.stdout).toContain("~/.local/share/pnpm/audit.log");
-    expect(result.stdout).not.toContain(`${process.env.HOME}/.local/share/pnpm`);
+    expect(result.stderr).toContain("~/.local/share/pnpm/audit.log");
+    expect(result.stderr).not.toContain(`${process.env.HOME}/.local/share/pnpm`);
   });
 
   it("still fails when pnpm audit reports a real vulnerability", async () => {
     const result = await runAuditScript(`#!/bin/sh
-echo "1 high severity vulnerability"
+echo '${JSON.stringify({
+      advisories: {
+        new: {
+          github_advisory_id: "GHSA-unrelated",
+          module_name: "another-package",
+          severity: "high",
+        },
+      },
+      metadata: { vulnerabilities: { low: 0, moderate: 0, high: 1, critical: 0 } },
+    })}'
 exit 1
 `);
 
     expect(result.code).toBe(1);
-    expect(result.stdout).toContain("1 high severity vulnerability");
-    expect(result.stderr).not.toContain("external audit service failure");
+    expect(result.stdout).toContain("1 unremediated finding(s)");
+    expect(result.stdout).toContain("GHSA-unrelated");
   });
 });
