@@ -733,6 +733,14 @@ Codex may retain an earlier `esc to interrupt` line after its footer reports
 `Context … Goal achieved` or its current UI renders `Worked for <duration>`;
 either later completion marker makes the composer ready again. A newer working
 marker still wins, so genuine active turns remain protected from queued input.
+Managed Codex pre-submit completion probes expand their initial history window
+from 1 MiB to at most 8 MiB when the latest root start lies outside the first tail.
+Idle still requires the existing paired root start/terminal lifecycle evidence;
+a child terminal, malformed/torn history, or a root beyond the bound never
+proves completion. Exact live PID/session/path, file identity, prompt binding,
+ownership and fresh terminal revalidation remain unchanged. Incremental managed
+turn reads keep their 1 MiB bound. Codex history tests cover long completed and
+aborted roots, active/child turns, follow-up prompt binding and the hard bound.
 Periodic WorkOrder reconciliation must defer a final summary while the owning
 supervisor queue is still processing or has queued work. The summary can appear
 before the live dispatch promise resolves; consuming it early can terminalize

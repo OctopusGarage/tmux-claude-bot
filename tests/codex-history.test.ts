@@ -372,6 +372,46 @@ describe("managed Codex turn evidence", () => {
       output: "actual final",
     });
   });
+  it.each(["task_complete", "turn_aborted"])(
+    "finds the root start before the initial tail for %s",
+    async (type) => {
+      const { path } = await fixture();
+      fs.appendFileSync(
+        path,
+        started() + assistant("x".repeat(2 * 1024 * 1024)) + terminal("root", "root", type),
+      );
+      const baseline = await readCodexTurnCompletion(path, "live", prompt, Infinity);
+      expect(baseline).toMatchObject({
+        status: "pending",
+        output: "",
+        cursor: { offset: fs.statSync(path).size },
+      });
+      fs.appendFileSync(
+        path,
+        started("fresh") + user() + assistant("fresh output") + terminal("fresh"),
+      );
+      expect(
+        await readCodexTurnCompletion(path, "live", prompt, sentAt, baseline.cursor),
+      ).toMatchObject({ status: "completed", output: "fresh output" });
+    },
+  );
+  it.each([terminal("child", "root"), terminal() + started("new-root")])(
+    "keeps a long history running without a matching latest root terminal: %s",
+    async (ending) => {
+      const { path } = await fixture();
+      fs.appendFileSync(path, started() + assistant("x".repeat(2 * 1024 * 1024)) + ending);
+      expect(await readCodexTurnCompletion(path, "live", prompt, Infinity)).toMatchObject({
+        status: "running",
+      });
+    },
+  );
+  it("fails closed when the root start exceeds the bounded initial history search", async () => {
+    const { path } = await fixture();
+    fs.appendFileSync(path, started() + assistant("x".repeat(9 * 1024 * 1024)) + terminal());
+    expect(await readCodexTurnCompletion(path, "live", prompt, Infinity)).toMatchObject({
+      status: "unavailable",
+    });
+  });
   it("does not establish idle preflight from a torn or malformed trailing record", async () => {
     const { path } = await fixture();
     fs.appendFileSync(path, started().slice(0, -8));
