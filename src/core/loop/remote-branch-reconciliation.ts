@@ -1,3 +1,10 @@
+import { createWarningCoalescer } from "../../shared/utils/log-coalescer.js";
+import { createLogger } from "../../shared/utils/logger.js";
+
+const logFailure = createWarningCoalescer(createLogger("loop.remote-branch-reconciliation"), {
+  intervalMs: 30 * 60_000,
+});
+
 export type LoopRemoteBranchCloseReason = "duplicate" | "obsolete" | "non-actionable" | "invalid";
 
 export type LoopRemoteBranchTarget = {
@@ -183,7 +190,8 @@ export function createLoopRemoteBranchReconciler(input: {
         let branches: Array<{ branch: string }>;
         try {
           ({ branches } = await input.github.discover(target, limit));
-        } catch {
+        } catch (error) {
+          recordReconciliationFailure(target, "discovery", error);
           summary.failed += 1;
           continue;
         }
@@ -282,6 +290,7 @@ export function createLoopRemoteBranchReconciler(input: {
             if (deletion.alreadyAbsent) summary.skipped += 1;
             else summary.deleted += 1;
           } catch (error) {
+            recordReconciliationFailure(target, "branch-reconciliation", error, branch);
             if (evidenceId !== undefined) {
               try {
                 input.evidence.finish(evidenceId, {
@@ -300,6 +309,27 @@ export function createLoopRemoteBranchReconciler(input: {
       return summary;
     },
   };
+}
+
+function recordReconciliationFailure(
+  target: LoopRemoteBranchTarget,
+  phase: "discovery" | "branch-reconciliation",
+  error: unknown,
+  branch?: string,
+): void {
+  const reason = safeReconciliationError(error);
+  logFailure(
+    `${target.repository}:${phase}:${branch ?? ""}:${reason}`,
+    "loop remote branch reconciliation failed",
+    {
+      data: {
+        repository: target.repository,
+        phase,
+        ...(branch === undefined ? {} : { branch }),
+        reason,
+      },
+    },
+  );
 }
 
 function safeReconciliationError(error: unknown): string {

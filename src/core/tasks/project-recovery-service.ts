@@ -10,6 +10,7 @@ import {
   type ConfiguredRecoveryConfig,
   type ConfiguredRecoveryTarget,
   classifyHistoricalFailure,
+  extractExplicitTargetIds,
   type HistoricalRecoveryInput,
   isRetryableSourceGitStateEvidence,
   type RecoveryClassification,
@@ -100,7 +101,7 @@ export async function runProjectRecoveryPass(input: {
       );
       continue;
     }
-    const artifactText =
+    const artifact =
       record.reportPath === undefined ? undefined : readRecoveryArtifact(record.reportPath);
     const recoveryInput: HistoricalRecoveryInput = {
       taskId: record.taskId,
@@ -111,7 +112,7 @@ export async function runProjectRecoveryPass(input: {
       ...(record.failureKind === undefined ? {} : { failureKind: record.failureKind }),
       ...(record.summary === undefined ? {} : { summary: record.summary }),
       ...(record.reportPath === undefined ? {} : { reportPath: record.reportPath }),
-      ...(artifactText === undefined ? {} : { artifactText }),
+      ...artifact,
       attempt:
         input.coordinator.list().find((queued) => queued.linkedTaskIds.includes(record.taskId))
           ?.attempt ?? 0,
@@ -1076,20 +1077,33 @@ function hasPreciseBotRetryableEvidence(evidence: string): boolean {
   );
 }
 
-function readRecoveryArtifact(reportPath: string): string | undefined {
+function readRecoveryArtifact(reportPath: string): { artifactText?: string; targetIds: string[] } {
   const basePath =
     reportPath.endsWith(".md") || reportPath.endsWith(".json") ? dirname(reportPath) : reportPath;
+  const workOrderPath = join(basePath, "work-order.json");
+  const targetIds: string[] = [];
+  try {
+    const workOrder = JSON.parse(readFileSync(workOrderPath, "utf8"));
+    for (const id of [workOrder.projectId, workOrder.workspace?.id]) {
+      if (typeof id === "string") targetIds.push(id);
+    }
+    // Legacy recovery prompts carry explicit routing labels, not diagnostic evidence.
+    for (const text of [workOrder.task?.requirement, workOrder.goal]) {
+      if (typeof text === "string") targetIds.push(...extractExplicitTargetIds(text));
+    }
+  } catch {
+    // Missing or invalid instructions cannot supply routing authority.
+  }
   const paths = [
-    join(basePath, "work-order.json"),
-    reportPath,
+    join(basePath, "system-gate.json"),
     join(basePath, "supervisor-final-summary.json"),
     join(basePath, "supervisor-summary.json"),
-    join(basePath, "system-gate.json"),
+    reportPath,
   ];
   const seen = new Set<string>();
   const evidence = paths
     .filter((path) => {
-      if (seen.has(path)) return false;
+      if (path === workOrderPath || seen.has(path)) return false;
       seen.add(path);
       return true;
     })
@@ -1100,5 +1114,8 @@ function readRecoveryArtifact(reportPath: string): string | undefined {
         return [];
       }
     });
-  return evidence.length === 0 ? undefined : evidence.join("\n").slice(0, 32_000);
+  return {
+    targetIds,
+    ...(evidence.length === 0 ? {} : { artifactText: evidence.join("\n").slice(0, 32_000) }),
+  };
 }

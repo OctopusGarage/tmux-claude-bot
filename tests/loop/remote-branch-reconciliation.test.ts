@@ -8,6 +8,9 @@ import {
   planLoopRemoteBranchCleanup,
 } from "../../src/core/loop/remote-branch-reconciliation.js";
 
+const diagnostics = vi.hoisted(() => ({ warn: vi.fn(), debug: vi.fn() }));
+vi.mock("../../src/shared/utils/logger.js", () => ({ createLogger: () => diagnostics }));
+
 const target: LoopRemoteBranchTarget = {
   repository: "OctopusGarage/tmux-claude-bot",
   projectId: "tmux-claude-bot",
@@ -224,6 +227,54 @@ function fakeEvidence(): LoopRemoteBranchEvidenceWriter & {
 }
 
 describe("Loop remote branch reconciliation", () => {
+  it.each(["discovery", "observation"] as const)(
+    "records sanitized %s failures before an intent and retries on the next pass",
+    async (phase) => {
+      const current = observation();
+      let failing = true;
+      const github: LoopRemoteBranchGitHub = {
+        discover: async () => {
+          if (failing && phase === "discovery") throw new Error("token=private-value unavailable");
+          return { defaultBranch: "main", branches: [{ branch: current.branch }] };
+        },
+        observe: async () => {
+          if (failing) throw new Error("token=private-value unavailable");
+          return null;
+        },
+        delete: vi.fn(),
+      };
+      const evidence = fakeEvidence();
+      const reconciler = createLoopRemoteBranchReconciler({ github, evidence });
+      const options = {
+        targets: [target],
+        liveBranches: new Set<string>(),
+        closedReasons: new Map(),
+        now: 1000,
+      };
+      diagnostics.warn.mockClear();
+      diagnostics.debug.mockClear();
+      for (let i = 0; i < 2; i++) {
+        expect(await reconciler.reconcile(options)).toMatchObject({ failed: 1, deleted: 0 });
+      }
+      expect(evidence.calls).toEqual([]);
+      expect(github.delete).not.toHaveBeenCalled();
+      expect(diagnostics.warn).toHaveBeenCalledTimes(1);
+      expect(diagnostics.debug).toHaveBeenCalledTimes(1);
+      expect(diagnostics.warn).toHaveBeenCalledWith(
+        "loop remote branch reconciliation failed",
+        expect.objectContaining({
+          data: expect.objectContaining({
+            repository: target.repository,
+            phase: phase === "discovery" ? "discovery" : "branch-reconciliation",
+            reason: "token=<redacted> unavailable",
+          }),
+        }),
+      );
+      failing = false;
+      expect(await reconciler.reconcile(options)).toMatchObject({ failed: 0, deleted: 0 });
+    },
+  );
+
   it("persists intent, revalidates exact facts, deletes, and persists outcome", async () => {
     const current = observation();
     const calls: string[] = [];

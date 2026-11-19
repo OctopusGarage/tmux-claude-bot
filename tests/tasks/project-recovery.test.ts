@@ -39,6 +39,30 @@ describe("project recovery", () => {
     },
   );
 
+  it("does not infer assessment failures from a configured targetScore", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        summary: "External service unavailable",
+        artifactText: '{"targetScore":95}',
+      }).classification,
+    ).toBe("waiting-external");
+  });
+
+  it("preserves declared external execution blockers over stale retry diagnostics", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "dispatch-failed",
+        summary:
+          "Recovery classification: assessment scoring contract evidence is retryable automation repair work",
+        artifactText: "RalphWorks declared needs_input; no native fallback is allowed",
+        attempt: 3,
+      }),
+    ).toMatchObject({ classification: "waiting-external" });
+  });
+
   it("classifies missing project tooling as retryable", () => {
     expect(
       classifyHistoricalFailure({

@@ -97,6 +97,26 @@ or autonomous admission bypass is added. `docs/scheduled-messages.md` owns usage
 and recovery semantics; schedule, adapter, dispatcher and control tests enforce
 the shared contract.
 
+Remote-branch reconciliation records sanitized repository/phase/branch failure
+reasons even before a deletion intent exists. Repeated failures use bounded
+warning coalescing; observation failure never creates deletion authority or
+suppresses the next normal reconciliation attempt. Remote-branch tests cover
+pre-intent diagnostics, secret redaction, retry, and absence of deletion.
+
+Terminal worktree cleanup preserves protected-branch and source-root refusals.
+Repeated identical refusals use the shared bounded warning coalescer: first and
+hourly aggregate warnings remain visible, repeats are DEBUG, and Git validation
+still runs on later passes so a restored source can recover without restart.
+
+Historical recovery classifies system-gate and outcome evidence separately from
+WorkOrder requirement/goal instructions. WorkOrders supply only structured target
+IDs and explicitly labelled legacy routing IDs; their instruction text never
+enters diagnostic evidence or consumes its bounded text budget.
+A configured `targetScore` alone is not an assessment failure. Declared RalphWorks
+terminal execution blockers retain the external boundary even when old ledger
+classification text suggests a native retry. Project recovery tests enforce this
+precedence; these records still require an available configured target.
+
 Repair visibility and task-ledger alignment: Observer task sources derive from
 `SCHEDULED_TASK_SOURCES`; its output accepts completed repairs and unavailable
 dependency-audit evidence. Daily Audit's Runtime Overview domain requires
@@ -713,6 +733,14 @@ Codex may retain an earlier `esc to interrupt` line after its footer reports
 `Context … Goal achieved` or its current UI renders `Worked for <duration>`;
 either later completion marker makes the composer ready again. A newer working
 marker still wins, so genuine active turns remain protected from queued input.
+Managed Codex pre-submit completion probes expand their initial history window
+from 1 MiB to at most 8 MiB when the latest root start lies outside the first tail.
+Idle still requires the existing paired root start/terminal lifecycle evidence;
+a child terminal, malformed/torn history, or a root beyond the bound never
+proves completion. Exact live PID/session/path, file identity, prompt binding,
+ownership and fresh terminal revalidation remain unchanged. Incremental managed
+turn reads keep their 1 MiB bound. Codex history tests cover long completed and
+aborted roots, active/child turns, follow-up prompt binding and the hard bound.
 Periodic WorkOrder reconciliation must defer a final summary while the owning
 supervisor queue is still processing or has queued work. The summary can appear
 before the live dispatch promise resolves; consuming it early can terminalize
