@@ -86,6 +86,9 @@ not typed planning fields; malformed summaries retain the existing rejection.
 Structured log queries automatically cover the local dates touched by `--since`
 (up to 30 daily files), unless `--days` explicitly limits the read. Prompt and
 log rollover regressions protect recovery delivery and operator visibility.
+The shared Telegram, Lark and Control/TUI last-hour reader uses the same date
+selection, so midnight cannot hide part of the existing time window. Session,
+severity, trace and result-count filters remain unchanged.
 
 
 Original task recovery evidence takes precedence over a generic accepted-blocked

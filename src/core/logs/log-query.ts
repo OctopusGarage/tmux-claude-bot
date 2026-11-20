@@ -129,8 +129,8 @@ export function readRecords(days = 1): LogRecord[] {
   return readLogReport(days).records;
 }
 
-export function queryLogs(filter: LogFilter, days = 1): LogRecord[] {
-  return filterRecords(readRecords(days), filter);
+export function queryLogs(filter: LogFilter, days?: number): LogRecord[] {
+  return filterRecords(readRecords(days ?? resolveLogDays(undefined, filter.since)), filter);
 }
 
 function parseLogRecord(value: unknown): LogRecord | null {
