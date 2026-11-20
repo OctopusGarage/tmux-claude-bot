@@ -40,7 +40,9 @@ export function classifyAgentTransientFailure(
   }
   if (
     normalized.includes("did not become ready") ||
-    normalized.includes("no live loop supervisor session")
+    normalized.includes("no live loop supervisor session") ||
+    normalized.includes("cannot verify live agent identity for managed context reset") ||
+    normalized.includes("codex live transcript unavailable and no fresh launch grant")
   ) {
     return { kind: "agent-readiness", domain: "agent-runtime", retryable: true };
   }

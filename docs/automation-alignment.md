@@ -70,6 +70,16 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Managed context-reset identity and Codex transcript readiness refusals use the
+shared agent-runtime transient classification. Scheduled dispatch remains due,
+and terminal dispatch failures remain visible to Runtime Guardian's existing
+repair path. Classification never grants identity, bypasses transcript evidence,
+replays uncertain input in place, or treats ownership/process replacement as a
+provider transient. Classifier, schedule-completion and Guardian tests cover the
+two exact pre-submission refusal diagnostics and preserve ownership failures.
+The older completion-evidence transcript diagnostic is ambiguous about submission
+and does not authorize automatic replay.
+
 The Take over entry, per-candidate confirmation and local `adopt` command share
 the same process-bound candidate discovery. Codex runtime helpers are excluded;
 the unique open parent rollout determines the resumable session. Child rollouts

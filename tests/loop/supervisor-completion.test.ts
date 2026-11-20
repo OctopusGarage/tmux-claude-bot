@@ -88,6 +88,19 @@ describe("completeLoopSupervisorRun", () => {
     });
   });
 
+  it.each([
+    "Cannot verify live agent identity for managed context reset",
+    "Codex live transcript unavailable and no fresh launch grant",
+  ])("keeps the schedule retryable after a managed readiness refusal: %s", (reason) => {
+    expect(
+      classifyLoopSupervisorScheduleRetry({
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+      }),
+    ).toEqual({ retrySchedule: true, kind: "agent-transient-failure" });
+  });
+
   it("classifies invalid final output as an output-contract retry", () => {
     const retry = classifyLoopSupervisorScheduleRetry({
       status: "invalid-output",
@@ -99,6 +112,17 @@ describe("completeLoopSupervisorRun", () => {
       retrySchedule: true,
       kind: "supervisor-output-contract",
     });
+  });
+
+  it("does not replay a turn whose submission/completion evidence is uncertain", () => {
+    const reason = "Codex live transcript unavailable for managed completion evidence";
+    expect(
+      classifyLoopSupervisorScheduleRetry({
+        status: "dispatch-failed",
+        reason,
+        output: reason,
+      }),
+    ).toEqual({ retrySchedule: false, kind: "not-retryable" });
   });
 
   it("does not retry non-delivery dispatch failures", () => {
