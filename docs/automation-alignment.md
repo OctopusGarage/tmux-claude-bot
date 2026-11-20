@@ -70,6 +70,28 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Original task recovery evidence takes precedence over a generic accepted-blocked
+aggregate label. Daily Audit, ledger preservation and artifact reconciliation
+reconsider only the qualifying original subset, preserve historical execution
+status, and retain true external and uncertain-submission boundaries. Original
+WorkOrder artifacts are checked even when a ledger report path is missing; the
+first linked recovery can carry the authoritative boundary. Active repair owners
+are never released by this migration. Same-original attempts cannot reset during
+queue migration, exhausted budgets cannot dispatch, and fresh occurrences keep
+separate budgets while another project recovery owns execution. Focused recovery
+regressions cover repeated ticks, mixed aggregates/budgets and original artifacts.
+
+
+Managed context-reset identity and Codex transcript readiness refusals use the
+shared agent-runtime transient classification. Scheduled dispatch remains due,
+and terminal dispatch failures remain visible to Runtime Guardian's existing
+repair path. Classification never grants identity, bypasses transcript evidence,
+replays uncertain input in place, or treats ownership/process replacement as a
+provider transient. Classifier, schedule-completion and Guardian tests cover the
+two exact pre-submission refusal diagnostics and preserve ownership failures.
+The older completion-evidence transcript diagnostic is ambiguous about submission
+and does not authorize automatic replay.
+
 The Take over entry, per-candidate confirmation and local `adopt` command share
 the same process-bound candidate discovery. Codex runtime helpers are excluded;
 the unique open parent rollout determines the resumable session. Child rollouts
@@ -130,7 +152,8 @@ Runtime Guardian readiness validates the configured Git root and retains source
 cleanliness and branch gates. Durable readiness evidence records the first
 blockage, reason/policy changes, and recovery; repeated refusals are DEBUG and do
 not consume finding handling or repair cooldown. Expected self-heal admission
-waits before WorkOrder creation are skipped/not-needed, not new repair failures.
+waits before WorkOrder creation, including exact active-project ownership conflicts,
+are skipped/not-needed, not new repair failures.
 Daily Audit normalizes only exact historical admission-only sweep failures and
 preserves active repair ownership and actual preparation failures. Resource repair
 queue settlement still runs under pressure, but incident-history scanning waits
@@ -375,8 +398,12 @@ Autopilot reconciliation must also terminalize open `system-self-heal` sweep
 deferral records so manually prompted recovery does not leave stale audit
 attention behind.
 When a System Self-Heal broad sweep changes this repository, the WorkOrder must
-verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
-after the successful push, and finish with a clean worktree. If commit, push, or
+verify locally and follow its exact `commitPolicy.branch` and `pullRequestPolicy`.
+When PRs are enabled, deliver one PR against the configured base and pass CI and
+mergeability gates instead of pushing directly to the base branch. After a
+successful push, pull/rebase the configured base only on the WorkOrder branch
+when safe. An isolated worker stays on that branch and leaves source adoption
+and switch-back to the bot system. Finish with a clean worktree. If commit, push, or
 rebase is blocked, the WorkOrder must record the exact blocker instead of
 leaving uncommitted edits behind.
 Loop execution worktree cleanup must remove terminal completed isolated

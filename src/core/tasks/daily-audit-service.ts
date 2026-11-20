@@ -24,7 +24,10 @@ import {
   reconcileDailyAuditRunState,
   reconcileStaleDailyAuditSelfChecks,
 } from "./daily-audit-run-state.js";
-import { isBotOwnedRetryableRecoveryEvidence } from "./project-recovery.js";
+import {
+  hasOriginalRecoveryRetryEvidence,
+  isBotOwnedRetryableRecoveryEvidence,
+} from "./project-recovery.js";
 import {
   createProjectRecoveryDelegator,
   dispatchProjectRecovery,
@@ -527,6 +530,7 @@ function verifyRecoveryProjectPath(path: string): boolean {
 function shouldReconsiderBlockedRecovery(record: ScheduledTaskRecord): boolean {
   if (record.repairStatus !== "blocked") return false;
   const summary = record.summary?.toLowerCase() ?? "";
+  if (hasOriginalRecoveryRetryEvidence(record)) return true;
   if (isBotOwnedRetryableRecoveryEvidence(summary)) return true;
   if (summary.includes("no retryable project repair remains")) return false;
   if (summary.includes("recovery classification: recovery attempt limit reached")) return false;

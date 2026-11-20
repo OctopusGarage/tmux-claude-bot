@@ -58,6 +58,40 @@ function terminalRecord(id: string, updatedAt: number) {
 }
 
 describe("discoverRuntimeGuardianFindings", () => {
+  it.each([
+    "Cannot verify live agent identity for managed context reset",
+    "Codex live transcript unavailable and no fresh launch grant",
+  ])("discovers a terminal managed readiness refusal: %s", (reason) => {
+    const now = Date.parse("2026-08-24T20:00:00Z");
+    const record = terminalRecord("readiness-run", now);
+    const failed = {
+      ...record,
+      state: {
+        ...record.state,
+        status: "failed" as const,
+        resultStatus: "dispatch-failed" as const,
+        revisionReasons: [reason],
+      },
+    };
+    mocks.readLoopSupervisorWorkOrderRegistry.mockReturnValue({
+      records: [failed],
+      unfinished: [],
+      recoverableFinalSummary: [],
+      recoverableFailed: [],
+      abandoned: [],
+      staleDispatching: [],
+      terminal: [failed],
+    });
+    mocks.listAll.mockReturnValue([]);
+    expect(discoverRuntimeGuardianFindings({ now, lookbackMs: 60_000 })).toEqual([
+      expect.objectContaining({
+        kind: "terminal-agent-transient-failure",
+        runId: "readiness-run",
+        evidence: expect.arrayContaining(["transient-kind: agent-readiness"]),
+      }),
+    ]);
+  });
+
   it("reuses one WorkOrder registry and one task-ledger snapshot per observation", () => {
     const now = Date.parse("2026-08-24T20:00:00Z");
     const registry: LoopSupervisorWorkOrderRegistry = {

@@ -347,94 +347,101 @@ describe("runDailyTaskAuditServiceTick", () => {
     });
   });
 
-  it("normalizes unowned admission-only sweep failures before audit queue repair while preserving active ownership and real failures", async () => {
-    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-admission-waits-"));
-    const ledger = new DailyTaskLedger();
-    const coordinator = new RepairCoordinator();
-    const reason = "automation admission deferred: capacity-unknown-active-lease";
-    for (const [index, error] of [
-      reason,
-      "automation admission deferred: quiet-hours",
-      "execution worktree isolation failed: source worktree is dirty",
-    ].entries()) {
-      const taskId = `system-self-heal:agent-sweep:${1_000 + index}`;
-      ledger.expect({
-        taskId,
-        source: "system-self-heal",
-        name: "tmux-claude-bot system self-heal agent sweep",
-        scheduledAt: 1_000 + index,
-      });
-      ledger.start(taskId, 1_000 + index);
-      ledger.fail(taskId, {
-        endedAt: 1_000 + index,
-        error,
-        summary: `System self-heal agent sweep deferred before WorkOrder creation: ${error}`,
-      });
-    }
-    for (const record of ledger.listAll())
-      coordinator.enqueue({
-        projectId: "tmux-claude-bot",
-        projectPath: "/repo/bot",
-        source: record.source,
-        taskFamily: record.name,
-        fingerprint: record.error ?? "unknown",
-        taskId: record.taskId,
-        now: 2_000,
-      });
-    const active = coordinator
-      .list()
-      .find((record) => record.linkedTaskIds.includes("system-self-heal:agent-sweep:1001"));
-    if (active === undefined) throw new Error("missing active repair fixture");
-    coordinator.claimIds([active.id], { now: 2_000, leaseId: "existing-worker", limit: 1 });
-    coordinator.markRunning(active.id, "existing-worker", 2_000);
-
-    const audit = () =>
-      runDailyTaskAuditServiceTick({
-        now: 3_000,
-        config: {
-          enabled: true,
-          schedule: "0 2 * * *",
-          tickMs: 300000,
-          channel: "lark",
-          autoRepair: false,
-          repairBranch: "dev",
-          repoPath: "/repo/bot",
-          repairWorktreeIsolation: "isolated",
-        },
-        notifications: new NotificationGateway(),
-        ledger,
-        coordinator,
-        skipScheduledAudit: true,
-      });
-    await audit();
-    const records = new Map(ledger.listAll().map((record) => [record.taskId, record]));
-    expect(records.get("system-self-heal:agent-sweep:1000")).toMatchObject({
-      status: "skipped",
-      repairStatus: "not-needed",
-    });
-    expect(records.get("system-self-heal:agent-sweep:1000")?.error).toBeUndefined();
-    expect(records.get("system-self-heal:agent-sweep:1001")).toMatchObject({
-      status: "failed",
-      repairStatus: "pending",
-    });
-    expect(records.get("system-self-heal:agent-sweep:1002")).toMatchObject({
-      status: "failed",
-      repairStatus: "pending",
-      failureKind: "dirty-worktree",
-    });
-    expect(
-      coordinator
+  it.each([
+    "automation admission deferred: capacity-unknown-active-lease",
+    "project already has active automation: bug-fix run-1 (in-flight)",
+  ])(
+    "normalizes unowned sweep waits while preserving active ownership and real failures: %s",
+    async (reason) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-admission-waits-"));
+      const ledger = new DailyTaskLedger();
+      const coordinator = new RepairCoordinator();
+      for (const [index, error] of [
+        reason,
+        reason.startsWith("project")
+          ? "project already has active automation: active delegated task is being started"
+          : "automation admission deferred: quiet-hours",
+        "execution worktree isolation failed: source worktree is dirty",
+      ].entries()) {
+        const taskId = `system-self-heal:agent-sweep:${1_000 + index}`;
+        ledger.expect({
+          taskId,
+          source: "system-self-heal",
+          name: "tmux-claude-bot system self-heal agent sweep",
+          scheduledAt: 1_000 + index,
+        });
+        ledger.start(taskId, 1_000 + index);
+        ledger.fail(taskId, {
+          endedAt: 1_000 + index,
+          error,
+          summary: `System self-heal agent sweep deferred before WorkOrder creation: ${error}`,
+        });
+      }
+      for (const record of ledger.listAll())
+        coordinator.enqueue({
+          projectId: "tmux-claude-bot",
+          projectPath: "/repo/bot",
+          source: record.source,
+          taskFamily: record.name,
+          fingerprint: record.error ?? "unknown",
+          taskId: record.taskId,
+          now: 2_000,
+        });
+      const active = coordinator
         .list()
-        .find((record) => record.linkedTaskIds.includes("system-self-heal:agent-sweep:1000"))
-        ?.status,
-    ).toBe("fixed");
-    expect(coordinator.list().find((record) => record.id === active.id)?.status).toBe("running");
-    await audit();
-    expect(
-      ledger.listAll().find((record) => record.taskId === "system-self-heal:agent-sweep:1000")
-        ?.status,
-    ).toBe("skipped");
-  });
+        .find((record) => record.linkedTaskIds.includes("system-self-heal:agent-sweep:1001"));
+      if (active === undefined) throw new Error("missing active repair fixture");
+      coordinator.claimIds([active.id], { now: 2_000, leaseId: "existing-worker", limit: 1 });
+      coordinator.markRunning(active.id, "existing-worker", 2_000);
+
+      const audit = () =>
+        runDailyTaskAuditServiceTick({
+          now: 3_000,
+          config: {
+            enabled: true,
+            schedule: "0 2 * * *",
+            tickMs: 300000,
+            channel: "lark",
+            autoRepair: false,
+            repairBranch: "dev",
+            repoPath: "/repo/bot",
+            repairWorktreeIsolation: "isolated",
+          },
+          notifications: new NotificationGateway(),
+          ledger,
+          coordinator,
+          skipScheduledAudit: true,
+        });
+      await audit();
+      const records = new Map(ledger.listAll().map((record) => [record.taskId, record]));
+      expect(records.get("system-self-heal:agent-sweep:1000")).toMatchObject({
+        status: "skipped",
+        repairStatus: "not-needed",
+      });
+      expect(records.get("system-self-heal:agent-sweep:1000")?.error).toBeUndefined();
+      expect(records.get("system-self-heal:agent-sweep:1001")).toMatchObject({
+        status: "failed",
+        repairStatus: "pending",
+      });
+      expect(records.get("system-self-heal:agent-sweep:1002")).toMatchObject({
+        status: "failed",
+        repairStatus: "pending",
+        failureKind: "dirty-worktree",
+      });
+      expect(
+        coordinator
+          .list()
+          .find((record) => record.linkedTaskIds.includes("system-self-heal:agent-sweep:1000"))
+          ?.status,
+      ).toBe("fixed");
+      expect(coordinator.list().find((record) => record.id === active.id)?.status).toBe("running");
+      await audit();
+      expect(
+        ledger.listAll().find((record) => record.taskId === "system-self-heal:agent-sweep:1000")
+          ?.status,
+      ).toBe("skipped");
+    },
+  );
 
   it("catches the latest missed audit when first started after the schedule window", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-service-"));
@@ -892,17 +899,19 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "pending" });
   });
 
-  it("reconsiders blocked retryable loop failures for project recovery", async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));
-    process.env.TCB_STATE_DIR = stateDir;
-    const projectPath = join(stateDir, "projects", "tmux-claude-bot");
-    mkdirSync(projectPath, { recursive: true });
-    execFileSync("git", ["init", projectPath], { stdio: "ignore" });
-    const canonicalProjectPath = realpathSync(projectPath);
-    const loopConfigFile = join(stateDir, "loop.yaml");
-    writeFileSync(
-      loopConfigFile,
-      `
+  it.each(["configured-target", "generic-closure-missing", "generic-closure-prelaunch"])(
+    "reconsiders blocked retryable loop failures for project recovery: %s",
+    async (kind) => {
+      const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));
+      process.env.TCB_STATE_DIR = stateDir;
+      const projectPath = join(stateDir, "projects", "tmux-claude-bot");
+      mkdirSync(projectPath, { recursive: true });
+      execFileSync("git", ["init", projectPath], { stdio: "ignore" });
+      const canonicalProjectPath = realpathSync(projectPath);
+      const loopConfigFile = join(stateDir, "loop.yaml");
+      writeFileSync(
+        loopConfigFile,
+        `
 projects:
   - id: tmux-claude-bot
     name: tmux-claude-bot
@@ -915,63 +924,70 @@ projects:
     assessment:
       command: "true"
 `,
-      "utf8",
-    );
-    const ledger = new DailyTaskLedger();
-    const taskId = "loop:tmux-claude-bot:bug-fix:1786629000000";
-    ledger.expect({
-      taskId,
-      source: "loop-engineering",
-      name: "tmux-claude-bot bug-fix",
-      scheduledAt: 1_786_629_000_000,
-    });
-    ledger.fail(taskId, {
-      endedAt: 1_786_629_010_000,
-      error: "blocked",
-      summary:
-        "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
-    });
-    ledger.markRepairStatus(taskId, {
-      repairStatus: "blocked",
-      updatedAt: 1_786_629_020_000,
-      summary:
-        "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
-    });
-    const dispatchProjectRecovery = vi.fn(async () => ({
-      status: "queued" as const,
-      runId: "1786690000000-tmux-claude-bot-active-delegate",
-    }));
+        "utf8",
+      );
+      const ledger = new DailyTaskLedger();
+      const taskId = "loop:tmux-claude-bot:bug-fix:1786629000000";
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "tmux-claude-bot bug-fix",
+        scheduledAt: 1_786_629_000_000,
+      });
+      if (kind === "generic-closure-missing") ledger.reconcileExpectedMissing(1_786_629_010_000);
+      else
+        ledger.fail(taskId, {
+          endedAt: 1_786_629_010_000,
+          error:
+            kind === "generic-closure-prelaunch"
+              ? "Cannot verify live agent identity for managed context reset"
+              : "blocked",
+          summary:
+            "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
+        });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "blocked",
+        updatedAt: 1_786_629_020_000,
+        summary: kind.startsWith("generic-closure")
+          ? "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains."
+          : "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
+      });
+      const dispatchProjectRecovery = vi.fn(async () => ({
+        status: "queued" as const,
+        runId: "1786690000000-tmux-claude-bot-active-delegate",
+      }));
 
-    await runDailyTaskAuditServiceTick({
-      now: 1_786_690_000_000,
-      config: {
-        enabled: true,
-        schedule: "0 2 * * *",
-        tickMs: 300000,
-        channel: "lark",
-        autoRepair: true,
-        repairBranch: "dev",
-        repoPath: "/repo/tmux-claude-bot",
-        repairWorktreeIsolation: "isolated",
-      },
-      notifications: new NotificationGateway(),
-      ledger,
-      loopConfigFile,
-      dispatchProjectRecovery,
-      force: true,
-    });
+      await runDailyTaskAuditServiceTick({
+        now: 1_786_690_000_000,
+        config: {
+          enabled: true,
+          schedule: "0 2 * * *",
+          tickMs: 300000,
+          channel: "lark",
+          autoRepair: true,
+          repairBranch: "dev",
+          repoPath: "/repo/tmux-claude-bot",
+          repairWorktreeIsolation: "isolated",
+        },
+        notifications: new NotificationGateway(),
+        ledger,
+        loopConfigFile,
+        dispatchProjectRecovery,
+        force: true,
+      });
 
-    expect(dispatchProjectRecovery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskFamily: "tmux-claude-bot bug-fix",
-        taskIds: [taskId],
-        classification: expect.objectContaining({ classification: "retryable" }),
-      }),
-    );
-    expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
-      repairStatus: "running",
-    });
-  });
+      expect(dispatchProjectRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskFamily: "tmux-claude-bot bug-fix",
+          taskIds: [taskId],
+          classification: expect.objectContaining({ classification: "retryable" }),
+        }),
+      );
+      expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
+        repairStatus: "running",
+      });
+    },
+  );
 
   it("reconsiders missing runs after their configured target becomes available", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));

@@ -13,7 +13,7 @@ import {
   dispatchProjectRecovery,
 } from "./project-recovery-dispatch.js";
 import { RepairCoordinator } from "./repair-coordinator.js";
-import { DailyTaskLedger } from "./task-ledger.js";
+import { DailyTaskLedger, isSystemSelfHealAdmissionWait } from "./task-ledger.js";
 import { reconcileAutopilotDelegatedTasks } from "./task-reconciliation.js";
 
 const log = createLogger("tasks.system-self-heal");
@@ -194,7 +194,7 @@ function recordBlockedAgentSweep(now: number, reason: string): void {
     summary: "System self-heal attempted to queue the broad active-agent sweep.",
   });
   ledger.start(taskId, now);
-  if (reason.startsWith("automation admission deferred:")) {
+  if (isSystemSelfHealAdmissionWait(reason)) {
     ledger.skip(taskId, {
       endedAt: now,
       summary: `System self-heal agent sweep admission wait before WorkOrder creation: ${reason}`,
@@ -213,7 +213,7 @@ function buildAgentSelfHealRequirement(): string {
     "Run an operator-equivalent investigation: check whether every tmux-claude-bot automation task from the last 24 hours is healthy, and fix everything that is safe to fix without waiting for another manual prompt.",
     "Do not narrow the investigation to a fixed checklist. Use any relevant local evidence needed to reach the same practical outcome as an operator asking in chat: task ledger state, Repair Coordinator queues, Loop Supervisor WorkOrders, active worker leases, Runtime Guardian findings, Resource Guardian/admission state, Agent Capacity state, service logs, git state, open PR/CI state when relevant, notification output, maintained docs/config drift, and source code.",
     "For every abnormality, also investigate why existing automation did not detect, retry, or repair it without a manual prompt. If the missing automation is bot-owned, fix that automation gap too instead of only repairing the current artifact.",
-    "If a problem is bot-owned and evidence is sufficient, repair it in this repository, add or update focused regression coverage, run the required local verification, commit the change on the dev branch, and push it to origin/dev according to the repository policy. Then run git pull --rebase after a successful push to update the local dev branch to the latest remote state. The run must not leave this repository with a dirty worktree; if commit, push, or rebase is blocked, record the exact blocker and stop instead of leaving uncommitted edits behind.",
+    "If a problem is bot-owned and evidence is sufficient, repair it in this repository, add or update focused regression coverage, run the required local verification, commit only on the exact WorkOrder commitPolicy.branch, and follow its pullRequestPolicy. When PRs are enabled, use one coherent PR against the configured base, inspect its diff and body, wait for required CI and mergeability gates, and merge only according to that policy; never push directly to the base branch. After a successful push, run git pull --rebase origin <configured-base> only on the exact WorkOrder branch when safe. For isolated execution, leave the worker on that branch, never switch or rebase the base/switch-back branch, and never mutate the original source worktree. The bot system owns source switch-back and adoption. The run must not leave this repository with a dirty worktree; if commit, push, or rebase is blocked, record the exact blocker and stop instead of leaving uncommitted edits behind.",
     "If a problem is target-project-owned, external, blocked on credentials, blocked on owner/product decision, or unsafe to auto-edit, record the exact blocker with durable evidence. Do not use vague owner-decision, capacity, or retry-limit wording when the evidence supports a retryable bot-owned repair.",
     "Avoid broad rewrites. Prefer small fixes that remove the reason this issue needed manual operator prompting, but do not stop at a known-failure example if the evidence points somewhere else.",
     "Before finalizing, summarize what was checked, what was fixed or queued, why any remaining item could not be fixed automatically, verification results, commit/PR/push state, and whether the working tree is clean.",

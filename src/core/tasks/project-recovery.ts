@@ -54,6 +54,54 @@ const SOURCE_GIT_STATE_RE =
 const GENERIC_RETRYABLE_RE =
   /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried|missing|preflight|dependency|worktree|branch|handoff|dispatch|supervisor-failed|not-found|no pull requests|worker)/;
 
+export function hasGenericProjectRecoveryClosure(summary: string | undefined): boolean {
+  const text = summary?.toLowerCase() ?? "";
+  return (
+    text.includes("closed from the authoritative accepted blocked project recovery") &&
+    text.includes("no retryable project repair remains")
+  );
+}
+
+export function hasUnsafeRecoveryEvidence(text: string): boolean {
+  return /live transcript unavailable for managed completion evidence|stop unverified|ownership changed|process changed|unresolved active turn|ralphworks declared (?:needs_input|max_iterations|failed); no native fallback|"retry"\s*:\s*"manual"/i.test(
+    text,
+  );
+}
+
+/** Original execution evidence takes precedence over an aggregate closure label.
+ * Missing scheduled occurrences re-enter investigation, not blind input replay. */
+export function hasOriginalRecoveryRetryEvidence(
+  record: Pick<
+    HistoricalRecoveryInput,
+    "taskId" | "source" | "status" | "error" | "failureKind" | "summary" | "reportPath"
+  >,
+  artifactText = "",
+): boolean {
+  if (hasUnsafeRecoveryEvidence([record.error, record.summary, artifactText].join(" ")))
+    return false;
+  if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") return false;
+  if (!["missing", "failed", "running-timeout"].includes(record.status)) return false;
+  const error = record.error?.toLowerCase() ?? "";
+  if (
+    error.includes("cannot verify live agent identity for managed context reset") ||
+    error.includes("codex live transcript unavailable and no fresh launch grant") ||
+    /assessment (?:result|score|scoring).*numeric score|assessment scor(?:e|ing) contract|score:null/.test(
+      error,
+    ) ||
+    isRetryableSourceGitStateEvidence(error) ||
+    record.failureKind === "dirty-worktree" ||
+    record.failureKind === "dependency-audit-unavailable"
+  )
+    return true;
+  return (
+    record.source === "loop-engineering" &&
+    record.status === "missing" &&
+    !record.taskId.includes(":active-delegated-task:") &&
+    record.error === undefined &&
+    record.reportPath === undefined
+  );
+}
+
 export function classifyHistoricalFailure(
   input: HistoricalRecoveryInput,
 ): HistoricalRecoveryClassification {
@@ -76,6 +124,13 @@ export function classifyHistoricalFailure(
       classification: "waiting-external",
       reason:
         "RalphWorks declared a terminal external execution blocker; native fallback is prohibited",
+    };
+  }
+  if (hasUnsafeRecoveryEvidence(evidence)) {
+    return {
+      classification: "needs-owner-decision",
+      reason:
+        "original execution or ownership evidence is uncertain; automatic replay is prohibited",
     };
   }
   if (CAPACITY_OR_LEASE_RE.test(evidence)) {
@@ -125,6 +180,12 @@ export function classifyHistoricalFailure(
     return {
       classification: "dead-letter",
       reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
+    };
+  }
+  if (hasOriginalRecoveryRetryEvidence(input, input.artifactText)) {
+    return {
+      classification: "retryable",
+      reason: "preserved original execution evidence permits bounded recovery investigation",
     };
   }
   if (input.status === "missing" || GENERIC_RETRYABLE_RE.test(evidence)) {

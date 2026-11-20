@@ -207,21 +207,25 @@ describe("system self-heal service", () => {
     expect(request?.requirement).toContain(
       "If the missing automation is bot-owned, fix that automation gap too",
     );
-    expect(request?.requirement).toContain("commit the change on the dev branch");
-    expect(request?.requirement).toContain("push it to origin/dev");
-    expect(request?.requirement).toContain("run git pull --rebase after a successful push");
+    expect(request?.requirement).toContain("commitPolicy.branch");
+    expect(request?.requirement).toContain("pullRequestPolicy");
+    expect(request?.requirement).not.toContain("push it to origin/dev");
+    expect(request?.requirement).toContain("bot system owns source switch-back and adoption");
+    expect(request?.requirement).toContain("git pull --rebase origin <configured-base>");
     expect(request?.requirement).toContain("must not leave this repository with a dirty worktree");
   });
 
   it.each([
-    "capacity-unknown-active-lease",
-    "quiet-hours",
-    "emergency resource pressure; background-closed admission protection is active",
+    "automation admission deferred: capacity-unknown-active-lease",
+    "automation admission deferred: quiet-hours",
+    "automation admission deferred: emergency resource pressure; background-closed admission protection is active",
+    "project already has active automation: bug-fix run-1 (in-flight)",
+    "project already has active automation: active delegated task is being started",
   ])("records agent sweep admission wait %s without creating repair failures", async (reason) => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-system-self-heal-blocked-"));
     vi.mocked(startActiveDelegatedTask).mockResolvedValueOnce({
       status: "blocked",
-      reason: `automation admission deferred: ${reason}`,
+      reason,
       showQueue: false,
     });
     const deps = {
@@ -273,7 +277,7 @@ describe("system self-heal service", () => {
           status: "skipped",
           repairStatus: "not-needed",
           summary: expect.stringContaining(
-            `System self-heal agent sweep admission wait before WorkOrder creation: automation admission deferred: ${reason}`,
+            `System self-heal agent sweep admission wait before WorkOrder creation: ${reason}`,
           ),
         }),
       ]);
@@ -298,9 +302,9 @@ describe("system self-heal service", () => {
     ledger.start("system-self-heal:agent-sweep:1000", 1_000);
     ledger.fail("system-self-heal:agent-sweep:1000", {
       endedAt: 1_000,
-      error: "project already has active automation: bug-fix 1 (in-flight)",
+      error: "execution worktree isolation failed: configured root unavailable",
       summary:
-        "System self-heal agent sweep deferred before WorkOrder creation: project already has active automation: bug-fix 1 (in-flight)",
+        "System self-heal agent sweep deferred before WorkOrder creation: execution worktree isolation failed: configured root unavailable",
     });
 
     const deps = {

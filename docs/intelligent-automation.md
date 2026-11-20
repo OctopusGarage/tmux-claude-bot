@@ -1093,15 +1093,30 @@ limited to a hard-coded checklist. The sweep must also ask why each abnormality
 was not already detected, retried, or repaired by existing automation; when that
 reason is a bot-owned automation gap, the same repair slice should fix the gap
 instead of waiting for an operator to rediscover it. When the sweep changes this
-repository, it must verify locally, commit on `dev`, push to `origin/dev`, run
-`git pull --rebase` after the successful push, and leave the worktree clean. It
-must still reuse Daily Task Audit repair dispatch, Project Recovery dispatch,
+repository, it must verify locally and follow the WorkOrder
+`commitPolicy.branch` and `pullRequestPolicy`. When PRs are enabled, use one PR
+against the configured base, pass CI and mergeability gates, and merge only under
+that policy; do not push directly to the base branch. After a successful push,
+pull/rebase the configured base only on the exact WorkOrder branch when safe.
+An isolated worker stays on that branch and leaves original source adoption and
+switch-back to the bot system. Leave the worktree clean. It must still reuse Daily Task Audit repair dispatch, Project Recovery dispatch,
 Repair Coordinator leases, Resource Guardian admission, and the normal WorkOrder
 gates. It is not permission to bypass owner-decision, external-wait, official
 exhausted-capacity, resource-pressure, clean-worktree, or verification blockers;
-it also does not count as an interactive notification flow. A blocked broad
-sweep is durable evidence: the tick records a `system-self-heal` ledger failure
-with the admission reason when no WorkOrder is created.
+it also does not count as an interactive notification flow. Expected admission
+waits, including a project already owned by active automation,
+are recorded as skipped/not-needed before WorkOrder creation. Actual preparation
+failures remain durable `system-self-heal` failures for repair. Historical
+normalization requires exact admission-only evidence and preserves active repair
+ownership and appended recovery evidence.
+
+A generic accepted-blocked investigation does not prove that every original task
+has a non-retryable execution boundary. Preserved pre-submission or environment
+failure evidence, and ordinary missing scheduled occurrences without execution
+artifacts, re-enter the existing bounded investigation path. The bot checks
+original and linked recovery artifacts before dispatch, preserves uncertain
+submissions and active owners, and retains each original's consumed retry budget.
+Fresh occurrences do not inherit an older original's exhausted budget.
 
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,
