@@ -64,7 +64,7 @@ TUI is open, the TUI auto-reconnects.
 | `e` | send `Esc` to the session |
 | `x` | send `Enter` to the session |
 | `r` | restart the session's agent (resumes the conversation); asks for `y/N` confirmation |
-| `l` | **logs** — recent WARN/ERROR for the selected session (any key to close) |
+| `l` | **logs** — WARN/ERROR from the last hour for the selected session, including across local midnight (any key to close) |
 | `m` | **system load** — machine load / thermal / top CPU / runaway shells / current Resource Guardian state (any key to close) |
 | `o` | **Runtime Overview** — Attention, Active Work, Automation Families, Operator and AI Interfaces, Runtime Domains, and recent outcomes; `j`/`k` scroll, `Esc` closes |
 | `u` | **inputs** — recent inputs you sent to the selected session; `Enter` **re-runs** the selected one, `Esc` to close |

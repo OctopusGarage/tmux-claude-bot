@@ -222,6 +222,8 @@ approvals survive restarts with their original expiry. See [security.md](securit
 
 - `tcb autopilot <project>` means supervisor-backed delegation only.
 - `tcb logs` returns at most the newest 200 matches unless `-n` is supplied.
+  With `--since`, the default read includes every local date in the requested
+  window, capped at 30 daily files; explicit `--days` overrides that limit.
   `--summary` provides bounded volume, integrity, component, and repeated
   WARN/ERROR triage; combine it with `--since`, `--component`, or `--run-id`.
   `--days` accepts 1 through 30.

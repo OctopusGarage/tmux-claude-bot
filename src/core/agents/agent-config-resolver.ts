@@ -273,10 +273,10 @@ export function createConfigResolver(
     const { entry, paneQueryable } = await resolveAgent(session);
     if (!entry) return paneQueryable ? { kind: null, agentPid: null, transcript: null } : null;
     const files = await probe.listOpenFiles(entry.agentPid);
-    const candidates = files.filter((path) =>
-      /(?:\/projects\/.*\.jsonl$|\/rollout-.*\.jsonl$)/.test(path),
+    const candidates = new Set(
+      files.filter((path) => /(?:\/projects\/.*\.jsonl$|\/rollout-.*\.jsonl$)/.test(path)),
     );
-    if (candidates.length > 1) return null;
+    if (candidates.size > 1) return null;
     const transcript =
       matchOpenClaudeTranscript(files) ?? (await matchNewestOpenCodexRollout(files));
     entry.transcript = transcript;

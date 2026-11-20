@@ -70,6 +70,27 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Project recovery completion requires an explicit durable repair link or an exact
+successful delegated counterpart. Unrelated investigation task/run/timestamp
+mentions are diagnostic evidence, never authority to close a task or repair
+group. Recovery regressions preserve linked success and reject prose closure.
+
+Managed reset identity counts unique exact transcript paths, so repeated file
+descriptors for one transcript cannot manufacture ambiguity. Distinct transcript
+paths still fail closed before any reset, native write, restart or prompt.
+Resolver and managed-reset integration regressions enforce both outcomes.
+
+Every supervisor summary prompt specifies planning JSON field types, including
+boolean or `"not-applicable"` score applicability. Score prose belongs in evidence,
+not typed planning fields; malformed summaries retain the existing rejection.
+Structured log queries automatically cover the local dates touched by `--since`
+(up to 30 daily files), unless `--days` explicitly limits the read. Prompt and
+log rollover regressions protect recovery delivery and operator visibility.
+The shared Telegram, Lark and Control/TUI last-hour reader uses the same date
+selection, so midnight cannot hide part of the existing time window. Session,
+severity, trace and result-count filters remain unchanged.
+
+
 Original task recovery evidence takes precedence over a generic accepted-blocked
 aggregate label. Daily Audit, ledger preservation and artifact reconciliation
 reconsider only the qualifying original subset, preserve historical execution

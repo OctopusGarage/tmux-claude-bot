@@ -1,14 +1,18 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   filterRecords,
   formatLogSummary,
   type LogRecord,
+  queryLogs,
   readLogReport,
+  resolveLogDays,
   summarizeLogs,
 } from "../src/core/logs/log-query.js";
+
+import { logsArgToFilter } from "../src/core/logs/logs-view.js";
 
 const recs: LogRecord[] = [
   {
@@ -110,6 +114,60 @@ describe("readLogReport", () => {
   afterEach(() => {
     if (originalLogDir === undefined) delete process.env.TCB_LOG_DIR;
     else process.env.TCB_LOG_DIR = originalLogDir;
+  });
+
+  it("reads both rollover files for --since while respecting an explicit day cap", () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "tcb-log-rollover-"));
+    process.env.TCB_LOG_DIR = dir;
+    const now = new Date(2026, 5, 18, 2).getTime();
+    const since = now - 86_400_000;
+    try {
+      for (const [date, at] of [
+        ["20260617", since + 1000],
+        ["20260618", now],
+      ] as const) {
+        fs.writeFileSync(
+          join(dir, `tcb-${date}.jsonl`),
+          `${JSON.stringify({ ts: new Date(at).toISOString(), level: "WARN", msg: date })}\n`,
+        );
+      }
+      const report = readLogReport(resolveLogDays(undefined, since, now));
+      expect(filterRecords(report.records, { since }).map((record) => record.msg)).toEqual([
+        "20260617",
+        "20260618",
+      ]);
+      expect(report.files).toBe(2);
+      expect(
+        readLogReport(resolveLogDays("1", since, now)).records.map((record) => record.msg),
+      ).toEqual(["20260618"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the shared chat and TUI last-hour window across local midnight", () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "tcb-chat-log-rollover-"));
+    process.env.TCB_LOG_DIR = dir;
+    const now = new Date(2026, 5, 18, 0, 30).getTime();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      for (const [date, at] of [
+        ["20260617", now - 45 * 60_000],
+        ["20260618", now],
+      ] as const) {
+        fs.writeFileSync(
+          join(dir, `tcb-${date}.jsonl`),
+          `${JSON.stringify({ ts: new Date(at).toISOString(), level: "WARN", session: "synthetic", msg: date })}\n`,
+        );
+      }
+      const filter = logsArgToFilter(undefined, "synthetic", now);
+      if (!filter) throw new Error("missing shared log filter");
+      expect(queryLogs(filter).map((record) => record.msg)).toEqual(["20260617", "20260618"]);
+      expect(queryLogs(filter, 1).map((record) => record.msg)).toEqual(["20260618"]);
+    } finally {
+      clock.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports malformed complete records but ignores a torn live tail", () => {

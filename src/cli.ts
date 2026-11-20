@@ -638,7 +638,7 @@ program
   .option("--grep <text>")
   .option("--run-id <id>", "match a loop run id anywhere in the structured record")
   .option("--since <time>", "ISO time, epoch ms, or relative duration such as 30m, 2h, 1d")
-  .option("--days <n>", "how many daily files back to read", "1")
+  .option("--days <n>", "daily file limit (default: cover --since, otherwise 1; maximum 30)")
   .option("-n, --n <count>", "keep the last N")
   .option("--summary", "summarize volume, integrity, components, and repeated WARN/ERROR issues")
   .option("--json", "output JSON lines")
@@ -647,12 +647,13 @@ program
       argsToFilter,
       filterRecords,
       formatLogSummary,
-      parseLogDays,
+      resolveLogDays,
       readLogReport,
       summarizeLogs,
     } = await import("./core/logs/log-query.js");
-    const days = parseLogDays(o.days);
-    const filter = argsToFilter({ ...o, n: o.n ?? (o.summary ? undefined : "200") });
+    const now = Date.now();
+    const filter = argsToFilter({ ...o, n: o.n ?? (o.summary ? undefined : "200") }, now);
+    const days = resolveLogDays(o.days, filter.since, now);
     const read = readLogReport(days);
     const recs = filterRecords(read.records, filter);
     if (o.summary) {

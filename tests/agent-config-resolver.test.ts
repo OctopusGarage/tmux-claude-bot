@@ -370,6 +370,51 @@ describe("createExecProbe (real ps / tmux / kill smoke tests)", () => {
 });
 
 describe("managed fresh transcript identity", () => {
+  it.each(["claude", "codex"])(
+    "resolves one %s transcript held by duplicate descriptors",
+    async (kind) => {
+      const id = "12345678-1234-1234-1234-123456789abc";
+      const path =
+        kind === "claude"
+          ? `/synthetic/projects/-tmp/${id}.jsonl`
+          : `/synthetic/sessions/rollout-test-${id}.jsonl`;
+      const r = createConfigResolver(
+        fakeProbe({
+          snapshot: async () => [{ pid: 200, ppid: 100, command: `/bin/${kind}` }],
+          listOpenFiles: async () => [path, path],
+        }),
+        OPTS,
+      );
+      expect(await r.resolveLiveAgentIdentity?.("s")).toEqual({
+        kind,
+        agentPid: 200,
+        transcript: { path, sessionId: id, agentPid: 200 },
+      });
+    },
+  );
+
+  it.each(["claude", "codex"])(
+    "rejects distinct %s transcript paths even when descriptors repeat",
+    async (kind) => {
+      const paths = [
+        "12345678-1234-1234-1234-123456789abc",
+        "87654321-1234-1234-1234-123456789abc",
+      ].map((id) =>
+        kind === "claude"
+          ? `/synthetic/projects/-tmp/${id}.jsonl`
+          : `/synthetic/sessions/rollout-test-${id}.jsonl`,
+      );
+      const r = createConfigResolver(
+        fakeProbe({
+          snapshot: async () => [{ pid: 200, ppid: 100, command: `/bin/${kind}` }],
+          listOpenFiles: async () => [...paths, ...paths],
+        }),
+        OPTS,
+      );
+      expect(await r.resolveLiveAgentIdentity?.("s")).toBeNull();
+    },
+  );
+
   it("bypasses cached null, process TTL and pane/snapshot coalescing only when requested", async () => {
     let pid = 200;
     let files: string[] = [];

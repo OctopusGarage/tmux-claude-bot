@@ -39,6 +39,14 @@ not create repeated notifications.
 
 ## Recovery state-machine guarantees
 
+Project recovery completion requires an explicit durable repair link or an exact
+successful delegated counterpart. A task ID, run ID or occurrence timestamp
+mentioned in an unrelated successful investigation summary is diagnostic context,
+not proof that the task was repaired. It must never close that task or its repair
+group. Summary text and final-summary artifacts follow the same rule; focused
+regressions cover cross-project timestamp collisions and retain linked success.
+
+
 Supervisor delivery has a bounded worker-consumption watchdog. A prompt that
 remains queued because the worker never becomes ready is cancelled with an
 explicit retryable delivery failure; it is not left indefinitely in an

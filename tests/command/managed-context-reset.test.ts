@@ -2,7 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LiveAgentIdentity } from "../../src/core/agents/agent-config-resolver.js";
+import {
+  createConfigResolver,
+  type LiveAgentIdentity,
+} from "../../src/core/agents/agent-config-resolver.js";
 import { setAgentKind } from "../../src/core/agents/agentKindMap.js";
 import { AgentRunnerDispatcher } from "../../src/core/agents/runner-dispatcher.js";
 import { executeMessage } from "../../src/core/command/dispatch.js";
@@ -229,6 +232,49 @@ async function settle<T>(operation: Promise<T>) {
 }
 
 describe("owned Codex context reset", () => {
+  it.each(["duplicate", "distinct"] as const)(
+    "uses unique transcript paths for an owned reset with %s descriptors",
+    async (descriptors) => {
+      const f = fixture();
+      const path = "/synthetic/sessions/rollout-test-12345678-1234-1234-1234-123456789abc.jsonl";
+      const other = "/synthetic/sessions/rollout-test-87654321-1234-1234-1234-123456789abc.jsonl";
+      const resolver = createConfigResolver(
+        {
+          panePid: async () => 100,
+          snapshot: async () => {
+            const identity = await f.identity();
+            return identity.agentPid === null
+              ? []
+              : [{ pid: identity.agentPid, ppid: 100, command: "/bin/codex" }];
+          },
+          readProcEnv: async () => "",
+          listOpenFiles: async () =>
+            (await f.identity()).transcript
+              ? [path, descriptors === "duplicate" ? path : other]
+              : [],
+          isAlive: async () => true,
+          now: Date.now,
+        },
+        { defaultRoot: "/synthetic", claudeBin: "/bin/claude", ttlMs: 1000 },
+      );
+      f.d.configResolver.resolveLiveAgentIdentity = (session) =>
+        resolver.resolveLiveAgentIdentity?.(session) ?? Promise.resolve(null);
+      if (descriptors === "distinct") {
+        await expect(executeMessage(f.message("clear"), f.d)).rejects.toThrow(
+          "Cannot verify live agent identity for managed context reset",
+        );
+        expect(f.nativeWrites).toEqual([]);
+        expect(f.codex.start).not.toHaveBeenCalled();
+        expect(f.d.bridge.sendKeys).not.toHaveBeenCalled();
+      } else {
+        await executeMessage(f.message("clear"), f.d);
+        expect(f.nativeWrites).toEqual(["C-c", "/exit"]);
+        expect(f.codex.start).toHaveBeenCalledOnce();
+        expect(f.d.agent.consumeFreshLaunch?.(f.session, 456)).toMatchObject({ agentPid: 456 });
+      }
+    },
+  );
+
   it.each([
     ["supervisor", "needs-revision"],
     ["supervisor", "in-flight"],
