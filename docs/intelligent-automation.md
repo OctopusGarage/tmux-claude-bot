@@ -1036,6 +1036,14 @@ human boundary and the PR remains open, the repository-review consumer may
 reopen it once as `retry-wait`. Reopening increments a retry epoch, resets only
 that epoch's bounded attempt counter, retains migration evidence, and yields to
 any newer or active occurrence for the same repository.
+
+Repository PR-review queue reconciliation follows later corrections to a block
+that it originally derived from the daily task ledger. Only newer evidence for
+the exact repository occurrence may restore pending work or acknowledge a
+successful repair. Restoring work preserves its attempt budget and retry epoch;
+this correction does not reset exhausted budgets, and normal admission still applies. Explicit
+review decisions and unrelated terminal outcomes are not reopened by this path.
+
 An isolated repository-review WorkOrder synchronizes to a detached remote base
 when it does not own an execution branch. It never checks out or pulls the base
 branch already owned by the source worktree.

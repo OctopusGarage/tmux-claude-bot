@@ -222,6 +222,40 @@ export class RepositoryReviewQueue {
     return true;
   }
 
+  /** Reconsider only a block derived from older evidence in the daily ledger. */
+  reconcileLedgerBlock(
+    id: string,
+    input: {
+      now: number;
+      ledgerUpdatedAt: number;
+      status: "completed" | "retry-wait";
+      reason: string;
+    },
+  ): boolean {
+    const item = this.items.get(id);
+    if (
+      item?.status !== "blocked" ||
+      item.lastError !== "reconciled from daily task ledger repairStatus=blocked" ||
+      !(input.ledgerUpdatedAt > item.updatedAt)
+    )
+      return false;
+    const status =
+      input.status === "retry-wait" && item.attempt >= REPOSITORY_REVIEW_MAX_ATTEMPTS
+        ? "dead-letter"
+        : input.status;
+    const corrected: RepositoryReviewQueueItem = {
+      ...item,
+      status,
+      updatedAt: input.now,
+      nextAttemptAt: Math.max(input.now, item.nextAttemptAt),
+      lastError: input.reason,
+    };
+    delete corrected.leaseOwner;
+    delete corrected.leaseUntil;
+    this.items.set(id, corrected);
+    return true;
+  }
+
   markRunning(id: string, owner: string, now: number): RepositoryReviewQueueItem | null {
     const item = this.items.get(id);
     if (item?.status !== "leased" || item.leaseOwner !== owner) return null;

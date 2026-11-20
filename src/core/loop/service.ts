@@ -2044,11 +2044,31 @@ export function reconcileRepositoryReviewQueueLedgerClosures(
   const recordsByTaskId = new Map(ledger.listAll().map((record) => [record.taskId, record]));
 
   for (const item of queue.list({ all: true })) {
-    if (isTerminalRepositoryReviewQueueStatus(item.status)) continue;
     const taskId = `loop:pr-review:${item.repositoryId}:${item.scheduledAt}`;
     const record = recordsByTaskId.get(taskId);
     if (record === undefined) continue;
     const closure = repositoryReviewQueueClosureFromLedger(record);
+    if (isTerminalRepositoryReviewQueueStatus(item.status)) {
+      const correction =
+        closure?.status === "completed"
+          ? { status: "completed" as const, reason: closure.reason }
+          : record.source === "loop-engineering" && record.repairStatus === "pending"
+            ? {
+                status: "retry-wait" as const,
+                reason: "reconciled from newer daily task ledger repairStatus=pending",
+              }
+            : null;
+      if (
+        correction !== null &&
+        queue.reconcileLedgerBlock(item.id, {
+          ...correction,
+          ledgerUpdatedAt: record.updatedAt,
+          now,
+        })
+      )
+        reconciled++;
+      continue;
+    }
     if (closure === null) continue;
     if (
       queue.completeOccurrence(

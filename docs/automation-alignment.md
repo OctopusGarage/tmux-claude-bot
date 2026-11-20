@@ -70,6 +70,14 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Repository-review blocks derived from the daily task ledger are reconsidered only
+when the exact matching ledger occurrence has newer repair evidence. A pending
+correction restores bounded retry eligibility; a successful repair closes the
+queue occurrence. Attempts, retry epochs and admission deferrals are preserved.
+Independent blocked decisions, manual review, dead letters and completed work
+remain terminal. `tests/loop/repository-review-ledger-correction.test.ts` covers
+restart recovery, stale evidence, repeated ticks and exhausted budgets.
+
 Project recovery completion requires an explicit durable repair link or an exact
 successful delegated counterpart. Unrelated investigation task/run/timestamp
 mentions are diagnostic evidence, never authority to close a task or repair
