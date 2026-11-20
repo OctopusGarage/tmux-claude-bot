@@ -100,6 +100,7 @@ export type RepairEnqueueInput = {
   taskId: string;
   summary?: string;
   priority?: number;
+  originalAttempt?: number;
   now: number;
 };
 
@@ -156,6 +157,30 @@ export class RepairCoordinator {
   constructor(private readonly store: RepairQueueStore = new PersistentRepairQueueStore()) {}
 
   enqueue(input: RepairEnqueueInput): RepairQueueRecord {
+    const originalAttempt =
+      input.source === "project-recovery"
+        ? Math.max(
+            0,
+            input.originalAttempt ?? 0,
+            ...this.list()
+              .filter(
+                (record) =>
+                  record.source === "project-recovery" &&
+                  record.linkedTaskIds.includes(input.taskId),
+              )
+              .map((record) => record.attempt),
+          )
+        : 0;
+    if (originalAttempt >= REPAIR_MAX_ATTEMPTS) {
+      const exhausted = this.list().find(
+        (record) =>
+          record.source === "project-recovery" &&
+          record.linkedTaskIds.includes(input.taskId) &&
+          isTerminal(record.status) &&
+          record.attempt >= REPAIR_MAX_ATTEMPTS,
+      );
+      if (exhausted !== undefined) return exhausted;
+    }
     const dedupeKey = createRepairDedupeKey(input);
     let existing = this.list().find(
       (record) => record.dedupeKey === dedupeKey && !isTerminal(record.status),
@@ -195,7 +220,10 @@ export class RepairCoordinator {
           !hasNonRetryableProjectRecoveryEvidence(record, input),
       );
       if (stale !== undefined) {
-        existing = reopenTerminalRepairRecord(stale, input.now);
+        existing = {
+          ...reopenTerminalRepairRecord(stale, input.now),
+          attempt: Math.max(stale.attempt, originalAttempt),
+        };
         this.store.set(existing.id, existing);
       }
     }
@@ -204,7 +232,10 @@ export class RepairCoordinator {
         .filter((record) => isRecoverableProjectRecoveryTerminal(record, input))
         .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
       if (stale !== undefined) {
-        existing = reopenTerminalRepairRecord(stale, input.now);
+        existing = {
+          ...reopenTerminalRepairRecord(stale, input.now),
+          attempt: Math.max(stale.attempt, originalAttempt),
+        };
         this.store.set(existing.id, existing);
       }
     }
@@ -234,6 +265,14 @@ export class RepairCoordinator {
       const updated = {
         ...current,
         source: input.source === "project-recovery" ? input.source : current.source,
+        attempt:
+          input.source === "project-recovery" &&
+          (current.status === "pending" || current.status === "retry-wait") &&
+          current.linkedTaskIds.every(
+            (id, index) => id === input.taskId || (index > 0 && id.startsWith("autopilot:")),
+          )
+            ? Math.max(current.attempt, originalAttempt)
+            : current.attempt,
         linkedTaskIds,
         summaries,
         priority: Math.max(current.priority, input.priority ?? 0),
@@ -253,9 +292,9 @@ export class RepairCoordinator {
       fingerprint: input.fingerprint,
       linkedTaskIds: [input.taskId],
       summaries: input.summary === undefined ? [] : [input.summary],
-      status: "pending",
+      status: originalAttempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "pending",
       priority: input.priority ?? 0,
-      attempt: 0,
+      attempt: originalAttempt,
       createdAt: input.now,
       updatedAt: input.now,
       nextAttemptAt: input.now,

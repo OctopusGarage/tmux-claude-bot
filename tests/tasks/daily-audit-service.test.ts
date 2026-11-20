@@ -899,17 +899,19 @@ describe("runDailyTaskAuditServiceTick", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "pending" });
   });
 
-  it("reconsiders blocked retryable loop failures for project recovery", async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));
-    process.env.TCB_STATE_DIR = stateDir;
-    const projectPath = join(stateDir, "projects", "tmux-claude-bot");
-    mkdirSync(projectPath, { recursive: true });
-    execFileSync("git", ["init", projectPath], { stdio: "ignore" });
-    const canonicalProjectPath = realpathSync(projectPath);
-    const loopConfigFile = join(stateDir, "loop.yaml");
-    writeFileSync(
-      loopConfigFile,
-      `
+  it.each(["configured-target", "generic-closure-missing", "generic-closure-prelaunch"])(
+    "reconsiders blocked retryable loop failures for project recovery: %s",
+    async (kind) => {
+      const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));
+      process.env.TCB_STATE_DIR = stateDir;
+      const projectPath = join(stateDir, "projects", "tmux-claude-bot");
+      mkdirSync(projectPath, { recursive: true });
+      execFileSync("git", ["init", projectPath], { stdio: "ignore" });
+      const canonicalProjectPath = realpathSync(projectPath);
+      const loopConfigFile = join(stateDir, "loop.yaml");
+      writeFileSync(
+        loopConfigFile,
+        `
 projects:
   - id: tmux-claude-bot
     name: tmux-claude-bot
@@ -922,63 +924,70 @@ projects:
     assessment:
       command: "true"
 `,
-      "utf8",
-    );
-    const ledger = new DailyTaskLedger();
-    const taskId = "loop:tmux-claude-bot:bug-fix:1786629000000";
-    ledger.expect({
-      taskId,
-      source: "loop-engineering",
-      name: "tmux-claude-bot bug-fix",
-      scheduledAt: 1_786_629_000_000,
-    });
-    ledger.fail(taskId, {
-      endedAt: 1_786_629_010_000,
-      error: "blocked",
-      summary:
-        "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
-    });
-    ledger.markRepairStatus(taskId, {
-      repairStatus: "blocked",
-      updatedAt: 1_786_629_020_000,
-      summary:
-        "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
-    });
-    const dispatchProjectRecovery = vi.fn(async () => ({
-      status: "queued" as const,
-      runId: "1786690000000-tmux-claude-bot-active-delegate",
-    }));
+        "utf8",
+      );
+      const ledger = new DailyTaskLedger();
+      const taskId = "loop:tmux-claude-bot:bug-fix:1786629000000";
+      ledger.expect({
+        taskId,
+        source: "loop-engineering",
+        name: "tmux-claude-bot bug-fix",
+        scheduledAt: 1_786_629_000_000,
+      });
+      if (kind === "generic-closure-missing") ledger.reconcileExpectedMissing(1_786_629_010_000);
+      else
+        ledger.fail(taskId, {
+          endedAt: 1_786_629_010_000,
+          error:
+            kind === "generic-closure-prelaunch"
+              ? "Cannot verify live agent identity for managed context reset"
+              : "blocked",
+          summary:
+            "Authoritative supervisor final summary reports incomplete recovery (status=blocked).",
+        });
+      ledger.markRepairStatus(taskId, {
+        repairStatus: "blocked",
+        updatedAt: 1_786_629_020_000,
+        summary: kind.startsWith("generic-closure")
+          ? "Closed from the authoritative accepted blocked project recovery; no retryable project repair remains."
+          : "Recovery classification: needs-owner-decision; configured project is unavailable or ambiguous. supervisor completion evidence is invalid or incomplete and can be retried",
+      });
+      const dispatchProjectRecovery = vi.fn(async () => ({
+        status: "queued" as const,
+        runId: "1786690000000-tmux-claude-bot-active-delegate",
+      }));
 
-    await runDailyTaskAuditServiceTick({
-      now: 1_786_690_000_000,
-      config: {
-        enabled: true,
-        schedule: "0 2 * * *",
-        tickMs: 300000,
-        channel: "lark",
-        autoRepair: true,
-        repairBranch: "dev",
-        repoPath: "/repo/tmux-claude-bot",
-        repairWorktreeIsolation: "isolated",
-      },
-      notifications: new NotificationGateway(),
-      ledger,
-      loopConfigFile,
-      dispatchProjectRecovery,
-      force: true,
-    });
+      await runDailyTaskAuditServiceTick({
+        now: 1_786_690_000_000,
+        config: {
+          enabled: true,
+          schedule: "0 2 * * *",
+          tickMs: 300000,
+          channel: "lark",
+          autoRepair: true,
+          repairBranch: "dev",
+          repoPath: "/repo/tmux-claude-bot",
+          repairWorktreeIsolation: "isolated",
+        },
+        notifications: new NotificationGateway(),
+        ledger,
+        loopConfigFile,
+        dispatchProjectRecovery,
+        force: true,
+      });
 
-    expect(dispatchProjectRecovery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskFamily: "tmux-claude-bot bug-fix",
-        taskIds: [taskId],
-        classification: expect.objectContaining({ classification: "retryable" }),
-      }),
-    );
-    expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
-      repairStatus: "running",
-    });
-  });
+      expect(dispatchProjectRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskFamily: "tmux-claude-bot bug-fix",
+          taskIds: [taskId],
+          classification: expect.objectContaining({ classification: "retryable" }),
+        }),
+      );
+      expect(ledger.listAll().find((record) => record.taskId === taskId)).toMatchObject({
+        repairStatus: "running",
+      });
+    },
+  );
 
   it("reconsiders missing runs after their configured target becomes available", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "tcb-daily-audit-blocked-recovery-"));

@@ -70,6 +70,18 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Original task recovery evidence takes precedence over a generic accepted-blocked
+aggregate label. Daily Audit, ledger preservation and artifact reconciliation
+reconsider only the qualifying original subset, preserve historical execution
+status, and retain true external and uncertain-submission boundaries. Original
+WorkOrder artifacts are checked even when a ledger report path is missing; the
+first linked recovery can carry the authoritative boundary. Active repair owners
+are never released by this migration. Same-original attempts cannot reset during
+queue migration, exhausted budgets cannot dispatch, and fresh occurrences keep
+separate budgets while another project recovery owns execution. Focused recovery
+regressions cover repeated ticks, mixed aggregates/budgets and original artifacts.
+
+
 Managed context-reset identity and Codex transcript readiness refusals use the
 shared agent-runtime transient classification. Scheduled dispatch remains due,
 and terminal dispatch failures remain visible to Runtime Guardian's existing

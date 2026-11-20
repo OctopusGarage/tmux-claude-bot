@@ -1110,6 +1110,14 @@ failures remain durable `system-self-heal` failures for repair. Historical
 normalization requires exact admission-only evidence and preserves active repair
 ownership and appended recovery evidence.
 
+A generic accepted-blocked investigation does not prove that every original task
+has a non-retryable execution boundary. Preserved pre-submission or environment
+failure evidence, and ordinary missing scheduled occurrences without execution
+artifacts, re-enter the existing bounded investigation path. The bot checks
+original and linked recovery artifacts before dispatch, preserves uncertain
+submissions and active owners, and retains each original's consumed retry budget.
+Fresh occurrences do not inherit an older original's exhausted budget.
+
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,
 repository-review targets, and workspaces present in the active Loop config, and
