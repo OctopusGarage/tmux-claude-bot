@@ -691,7 +691,10 @@ task
   .requiredOption("--source <source>", `task source: ${SCHEDULED_TASK_SOURCES.join(", ")}`)
   .requiredOption("--name <name>", "human readable task name")
   .requiredOption("--scheduled-at <time>", "scheduled time, epoch ms or ISO")
-  .requiredOption("--status <status>", "running, success, failed, or skipped")
+  .requiredOption(
+    "--status <status>",
+    "running, success, failed, skipped, or unchanged (repair only)",
+  )
   .option("--started-at <time>", "start time, epoch ms or ISO")
   .option("--ended-at <time>", "end time, epoch ms or ISO")
   .option("--summary <text>", "short result summary")
@@ -705,7 +708,7 @@ task
   .action(async (o) => {
     const { recordExternalTaskReport } = await import("./core/tasks/task-report.js");
     const sources = new Set(SCHEDULED_TASK_SOURCES);
-    const statuses = new Set(["running", "success", "failed", "skipped"]);
+    const statuses = new Set(["running", "success", "failed", "skipped", "unchanged"]);
     const repairStatuses = new Set([
       "not-needed",
       "pending",

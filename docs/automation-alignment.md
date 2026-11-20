@@ -1082,6 +1082,13 @@ operation fails. Prompt and artifact text must keep token lookup as a literal
 shell command; the resolved token value must never be pasted into a worker pane,
 summary, log, or chat message.
 
+Task reporting supports repair-only `--status unchanged` for existing records.
+The CLI and task-report boundary require matching source/name/schedule identity
+and a repair status, reject execution metadata overrides, and preserve historical
+execution outcomes (including missing/timeouts). The task-report regression suite
+checks preservation and rejects unknown/mismatched records. This does not replace
+the supervisor's final system acceptance gate.
+
 ## Module Alignment Matrix
 
 Use this matrix when a change touches a whole module rather than one command or

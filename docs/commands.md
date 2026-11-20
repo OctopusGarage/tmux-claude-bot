@@ -137,6 +137,13 @@ Repair agents should update the same task id after verification with
 `--repair-status fixed`, `--repair-status superseded`,
 `--repair-status not-reproducible`, or `--repair-status blocked`.
 
+Repair-only ledger updates use `tcb task report --status unchanged --repair-status blocked` (or another verified repair status), with the existing `--id`, `--source`,
+`--name`, and `--scheduled-at`. This requires a matching existing record and
+preserves its execution status, timestamps, error, failure kind, and report path.
+Only the repair status, optional summary, and update time change; execution-field
+overrides are rejected. This supports missing and timed-out historical tasks
+without inventing a new execution outcome.
+
 Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
 `compact`. Known typed slash commands are treated as explicit bot intent and run
 directly. Unknown slash-prefixed text is forwarded to the running agent, so agent

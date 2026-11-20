@@ -17,6 +17,112 @@ afterEach(() => {
 });
 
 describe("recordExternalTaskReport", () => {
+  it.each(["missing", "failed", "running-timeout"])(
+    "updates repair status without rewriting %s task execution metadata",
+    (status) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-unchanged-"));
+      const ledger = new DailyTaskLedger();
+      const original = {
+        taskId: "loop:sample:missing",
+        source: "loop-engineering" as const,
+        name: "sample architecture",
+        scheduledAt: 1_000,
+      };
+      ledger.expect(original);
+      if (status === "missing") ledger.reconcileExpectedMissing(2_000);
+      else if (status === "failed")
+        ledger.fail(original.taskId, {
+          endedAt: 2_000,
+          error: "original error",
+          failureKind: "system-gate",
+          reportPath: "/tmp/original-report.json",
+        });
+      else {
+        ledger.start(original.taskId, 1_000);
+        ledger.reconcileStaleRunning(2_000, { timeoutMs: 1 });
+      }
+      const before = ledger.listAll().find((task) => task.taskId === original.taskId);
+
+      recordExternalTaskReport({
+        ...original,
+        status: "unchanged",
+        repairStatus: "blocked",
+        summary: "Historical completion evidence unavailable",
+      });
+
+      expect(ledger.listAll().find((task) => task.taskId === original.taskId)).toEqual({
+        ...before,
+        repairStatus: "blocked",
+        summary: "Historical completion evidence unavailable",
+        updatedAt: expect.any(Number),
+      });
+    },
+  );
+
+  it("rejects repair-only reports for unknown tasks", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-unknown-"));
+    expect(() =>
+      recordExternalTaskReport({
+        taskId: "unknown",
+        source: "loop-engineering",
+        name: "unknown",
+        scheduledAt: 1_000,
+        status: "unchanged",
+        repairStatus: "blocked",
+      }),
+    ).toThrow("requires an existing task");
+    expect(new DailyTaskLedger().listAll()).toEqual([]);
+  });
+
+  it("rejects repair-only reports that change identity or execution fields", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-identity-"));
+    const ledger = new DailyTaskLedger();
+    const identity = {
+      taskId: "sample",
+      source: "loop-engineering" as const,
+      name: "sample",
+      scheduledAt: 1_000,
+    };
+    ledger.expect(identity);
+    const before = ledger.listAll();
+    for (const patch of [
+      { name: "different" },
+      { scheduledAt: 2_000 },
+      { source: "launchd" as const },
+      { startedAt: 2_000 },
+      { endedAt: 2_000 },
+      { error: "different" },
+      { reportPath: "/tmp/different" },
+    ]) {
+      expect(() =>
+        recordExternalTaskReport({
+          ...identity,
+          status: "unchanged",
+          repairStatus: "blocked",
+          ...patch,
+        }),
+      ).toThrow();
+      expect(ledger.listAll()).toEqual(before);
+    }
+  });
+
+  it("requires a repair status for unchanged reports", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-repair-required-"));
+    const ledger = new DailyTaskLedger();
+    const identity = {
+      taskId: "sample",
+      source: "loop-engineering" as const,
+      name: "sample",
+      scheduledAt: 1_000,
+    };
+    ledger.expect(identity);
+    const before = ledger.listAll();
+    expect(() => recordExternalTaskReport({ ...identity, status: "unchanged" })).toThrow(
+      "requires a repair status",
+    );
+    expect(ledger.listAll()).toEqual(before);
+  });
+
   it("records an autopilot delegation repair status in the shared task ledger", () => {
     expect(SCHEDULED_TASK_SOURCES).toContain("autopilot-delegate");
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-report-autopilot-"));

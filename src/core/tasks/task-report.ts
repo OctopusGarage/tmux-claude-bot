@@ -4,7 +4,7 @@ import {
   type ScheduledTaskSource,
 } from "./task-ledger.js";
 
-export type ExternalTaskReportStatus = "running" | "success" | "failed" | "skipped";
+export type ExternalTaskReportStatus = "running" | "success" | "failed" | "skipped" | "unchanged";
 
 export function recordExternalTaskReport(input: {
   taskId: string;
@@ -23,6 +23,35 @@ export function recordExternalTaskReport(input: {
   if (input.startedAt !== undefined) assertFiniteTime("startedAt", input.startedAt);
   if (input.endedAt !== undefined) assertFiniteTime("endedAt", input.endedAt);
   const ledger = new DailyTaskLedger();
+  if (input.status === "unchanged") {
+    const existing = ledger.listAll().find((record) => record.taskId === input.taskId);
+    if (existing === undefined) throw new Error("unchanged report requires an existing task");
+    if (
+      existing.source !== input.source ||
+      existing.name !== input.name ||
+      existing.scheduledAt !== input.scheduledAt
+    ) {
+      throw new Error("unchanged report task identity does not match the ledger");
+    }
+    if (input.repairStatus === undefined) {
+      throw new Error("unchanged report requires a repair status");
+    }
+    if (
+      input.startedAt !== undefined ||
+      input.endedAt !== undefined ||
+      input.error !== undefined ||
+      input.reportPath !== undefined
+    ) {
+      throw new Error("unchanged report cannot replace execution metadata");
+    }
+    ledger.markRepairStatus(input.taskId, {
+      repairStatus: input.repairStatus,
+      updatedAt: Date.now(),
+      inferFailureKind: false,
+      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+    });
+    return;
+  }
   ledger.expect({
     taskId: input.taskId,
     source: input.source,

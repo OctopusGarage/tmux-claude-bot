@@ -207,6 +207,7 @@ export class DailyTaskLedger {
       summary?: string;
       error?: string;
       failureKind?: ScheduledTaskFailureKind;
+      inferFailureKind?: boolean;
     },
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
@@ -224,7 +225,8 @@ export class DailyTaskLedger {
       ...(input.error !== undefined ? { error: input.error } : {}),
       ...(input.failureKind !== undefined
         ? { failureKind: input.failureKind }
-        : existing.failureKind === undefined &&
+        : input.inferFailureKind !== false &&
+            existing.failureKind === undefined &&
             (input.error !== undefined || input.summary !== undefined)
           ? {
               failureKind: classifyTaskFailure(
