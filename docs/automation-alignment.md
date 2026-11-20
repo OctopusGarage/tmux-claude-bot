@@ -1731,3 +1731,16 @@ with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy
 installations skip this step. Installation failures prevent startup and remain
 visible in service logs; the service manager retries. This recovery runs outside
 the bot, so it also works when the bot cannot boot.
+
+
+## Resource and capacity notification preference
+
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED false` to mute all
+Resource Guardian alerts (including pressure, recovery, sampling and action failures)
+and Claude/Codex capacity transition alerts on Telegram and Feishu/Lark.
+Monitoring, resource protection, admission gates, status/history commands and other
+notifications remain active. The preference is checked at delivery time; no restart
+is needed once this version is running. Omitted or `true` preserves alert delivery.
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
+The generic config command validates this setting as a non-secret boolean; the
+notification gateway enforces the same preference for both channels and all callers.

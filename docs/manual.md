@@ -1584,3 +1584,16 @@ Cleanup checks same-user open files and working directories before removal;
 No additional schedule or retention setting is needed.
 
 External PR review binds every clean pass to one complete frozen base/head/diff identity. Immediately before delivery, re-read the current PR state and merge with `--match-head-commit` set to the reviewed head. Post-merge API state cannot independently reconstruct whether the base moved immediately before the merge; native CI, mergeability and branch policy remain required.
+
+
+## Resource and capacity notification preference
+
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED false` to mute all
+Resource Guardian alerts (including pressure, recovery, sampling and action failures)
+and Claude/Codex capacity transition alerts on Telegram and Feishu/Lark.
+Monitoring, resource protection, admission gates, status/history commands and other
+notifications remain active. The preference is checked at delivery time; no restart
+is needed once this version is running. Omitted or `true` preserves alert delivery.
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
+The generic config command validates this setting as a non-secret boolean; the
+notification gateway enforces the same preference for both channels and all callers.
