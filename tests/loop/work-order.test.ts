@@ -3104,3 +3104,18 @@ describe("explicit external PR reviewer policy", () => {
     expect(buildLoopSupervisorPrompt(absent)).not.toContain("loop pr-review pass");
   });
 });
+
+it("specifies planning field types in every supervisor summary prompt", () => {
+  const workOrder = buildLoopWorkOrder({
+    config,
+    project: firstProject(),
+    scheduledAt: 1,
+    runId: "planning-types",
+  });
+  const prompt = buildLoopSupervisorPrompt(workOrder);
+  expect(prompt).toContain(
+    "checklistCompleted, stopConditionReached, overOptimizationAvoided and verificationCompleted must be JSON booleans",
+  );
+  expect(prompt).toContain('targetScoreMet must be a JSON boolean or "not-applicable"');
+  expect(prompt).toContain("Put score explanations in remainingRisks or actionsTaken");
+});

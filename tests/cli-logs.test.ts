@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { argsToFilter, parseLogDays } from "../src/core/logs/log-query.js";
+import { argsToFilter, parseLogDays, resolveLogDays } from "../src/core/logs/log-query.js";
 
 describe("argsToFilter", () => {
   it("maps CLI options to a LogFilter", () => {
@@ -58,5 +58,26 @@ describe("argsToFilter", () => {
     expect(() => parseLogDays("0")).toThrow(/invalid --days/);
     expect(() => parseLogDays("31")).toThrow(/invalid --days/);
     expect(() => parseLogDays("many")).toThrow(/invalid --days/);
+  });
+});
+
+describe("resolveLogDays", () => {
+  const now = new Date(2026, 5, 18, 2).getTime();
+  it("includes both local daily files for a rolling 24-hour query", () => {
+    expect(resolveLogDays(undefined, now - 86_400_000, now)).toBe(2);
+  });
+  it("includes yesterday for a short query crossing local midnight", () => {
+    expect(resolveLogDays(undefined, now - 3 * 3_600_000, now)).toBe(2);
+    expect(resolveLogDays(undefined, now - 3_600_000, now)).toBe(1);
+  });
+  it("rejects out-of-range timestamps rather than removing the file cap", () => {
+    expect(() => resolveLogDays(undefined, Number.MAX_VALUE, now)).toThrow(/invalid --since/);
+  });
+  it("preserves explicit file limits and bounds automatic lookback", () => {
+    expect(resolveLogDays("1", now - 86_400_000, now)).toBe(1);
+    expect(resolveLogDays(undefined, now - 90 * 86_400_000, now)).toBe(30);
+    expect(resolveLogDays(undefined, undefined, now)).toBe(1);
+    expect(resolveLogDays(undefined, now + 86_400_000, now)).toBe(1);
+    expect(() => resolveLogDays("31", undefined, now)).toThrow(/invalid --days/);
   });
 });

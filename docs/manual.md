@@ -260,6 +260,9 @@ For the complete maintained CLI command and option surface, see
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
 
+Log queries with `--since` automatically include all local dates in the window
+(up to 30 daily files); an explicit `--days` keeps its selected file limit.
+
 Dashboard filters apply to both text and JSON. `--project` narrows Project
 Sessions and project-owned attention/work/outcomes while retaining global health
 evidence; `--problems` suppresses nonproblem collections (the stable JSON schema

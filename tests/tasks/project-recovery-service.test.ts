@@ -1129,7 +1129,7 @@ describe("project recovery service", () => {
     });
   });
 
-  it("closes pending project recovery when successful recovery mentions the WorkOrder run id", async () => {
+  it("keeps failed linked recovery pending despite an unlinked successful run-id mention", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({
       projectId: "tmux-claude-bot",
@@ -1187,14 +1187,14 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 0 });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:tmux-claude-bot:automation-governance-review:1789785300000",
-      "fixed",
-      "Closed from the authoritative successful project recovery delegation.",
+      "pending",
+      "Delegated recovery failed; returned to the repair queue for another worker.",
     );
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "fixed",
+      status: "pending",
     });
   });
 
@@ -3277,7 +3277,7 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
-  it("closes pending originals when an unlinked successful recovery final summary names them", async () => {
+  it("keeps originals pending when an unlinked successful final summary names them", async () => {
     const stateDir = join(tmpdir(), `project-recovery-summary-match-${Date.now()}`);
     process.env.TCB_STATE_DIR = stateDir;
     const runDir = join(stateDir, "loop-runs", "fluent-frame", "recovery-run");
@@ -3337,13 +3337,9 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "autopilot:stale-fluent-frame",
-      "fixed",
-      expect.stringContaining("project recovery delegation"),
-    );
-    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+    expect(result).toMatchObject({ checked: 0, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "pending", attempt: 0 });
   });
 
   it("closes a terminal blocked project recovery record when a linked recovery later succeeds", async () => {
@@ -3556,10 +3552,10 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
-  it("closes a pending project recovery when an unlinked successful recovery summary names the original task", async () => {
+  it("keeps project recovery pending when an unlinked successful summary names the original task", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
-    const queueRecord = coordinator.enqueue({
+    coordinator.enqueue({
       projectId: "knowledge-engine",
       projectPath: "/repo/knowledge-engine",
       source: "project-recovery",
@@ -3597,15 +3593,9 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "loop:knowledge-engine:security-maintenance:1786636200000",
-      "fixed",
-      expect.stringContaining("project recovery delegation"),
-    );
-    expect(coordinator.list().find((record) => record.id === queueRecord.id)).toMatchObject({
-      status: "fixed",
-    });
+    expect(result).toMatchObject({ checked: 0, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "pending", attempt: 0 });
   });
 
   it("blocks external waits without dispatching them", async () => {

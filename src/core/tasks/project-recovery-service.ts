@@ -686,13 +686,9 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         record.taskId !== queueRecord.linkedTaskIds[0] &&
         record.status === "success",
     );
-    const summaryMatchedRecoverySucceeded = input.records.some(
-      (record) =>
-        record.source === "autopilot-delegate" &&
-        record.status === "success" &&
-        originals.some((original) => recoveryRecordMentionsTask(record, original.taskId)),
-    );
-    const recoverySucceeded = linkedRecoverySucceeded || summaryMatchedRecoverySucceeded;
+    // Investigation prose may mention unresolved tasks, even across projects.
+    // Only an explicitly linked recovery can settle this repair group.
+    const recoverySucceeded = linkedRecoverySucceeded;
     const recoveryFailed = linked.some(
       (record) =>
         record.source === "autopilot-delegate" &&
@@ -967,30 +963,6 @@ function linkedOriginalsFixedBySuccessfulCounterpart(
         record.repairStatus === "running" ||
         record.repairStatus === "blocked") &&
       taskIdRunAliases(record.taskId).some((runId) => successfulDelegatedRunIds.has(runId)),
-  );
-}
-
-function recoveryRecordMentionsTask(record: ScheduledTaskRecord, taskId: string): boolean {
-  const needles = taskMentionNeedles(taskId);
-  if (record.summary !== undefined && needles.some((needle) => record.summary?.includes(needle)))
-    return true;
-  if (record.reportPath === undefined) return false;
-  const summaryPath = readFinalSummaryPath(record.reportPath);
-  if (summaryPath === undefined) return false;
-  try {
-    const text = readFileSync(summaryPath, "utf8");
-    return needles.some((needle) => text.includes(needle));
-  } catch {
-    return false;
-  }
-}
-
-function taskMentionNeedles(taskId: string): string[] {
-  const occurrenceId = taskId.split(":").at(-1);
-  const occurrenceAliases =
-    occurrenceId !== undefined && /^\d{10,}$/.test(occurrenceId) ? [occurrenceId] : [];
-  return [...new Set([taskId, ...taskIdRunAliases(taskId), ...occurrenceAliases])].filter(
-    (needle) => needle.length > 0,
   );
 }
 

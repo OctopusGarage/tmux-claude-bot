@@ -159,6 +159,25 @@ export function parseLogDays(value: string): number {
   return days;
 }
 
+/** Include every local date touched by --since unless --days explicitly limits it. */
+export function resolveLogDays(
+  days: string | undefined,
+  since: number | undefined,
+  now = Date.now(),
+): number {
+  if (days !== undefined) return parseLogDays(days);
+  if (since === undefined) return 1;
+  if (!Number.isFinite(new Date(since).getTime())) {
+    throw new Error("invalid --since (timestamp is outside the supported date range)");
+  }
+  const dayMs = 86_400_000;
+  const localDay = (time: number): number => {
+    const date = new Date(time);
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / dayMs;
+  };
+  return Math.max(1, Math.min(MAX_LOG_DAYS, localDay(now) - localDay(since) + 1));
+}
+
 export function summarizeLogs(
   records: readonly LogRecord[],
   read: Pick<LogReadReport, "files" | "bytes" | "malformedLines"> = {
