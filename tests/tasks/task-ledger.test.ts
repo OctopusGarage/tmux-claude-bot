@@ -17,6 +17,25 @@ afterEach(() => {
 });
 
 describe("DailyTaskLedger", () => {
+  it("preserves appended recovery evidence when normalizing an active-project sweep wait", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-sweep-evidence-"));
+    const ledger = new DailyTaskLedger();
+    const taskId = "system-self-heal:agent-sweep:1000";
+    const reason = "project already has active automation: bug-fix run-1 (in-flight)";
+    ledger.expect({ taskId, source: "system-self-heal", name: "Sweep", scheduledAt: 1000 });
+    ledger.fail(taskId, {
+      endedAt: 1001,
+      error: reason,
+      summary: `System self-heal agent sweep deferred before WorkOrder creation: ${reason}; additional repair evidence`,
+    });
+    expect(ledger.reconcileSystemSelfHealAdmissionWaits(2000, new Set())).toBe(0);
+    expect(ledger.listAll()[0]).toMatchObject({
+      status: "failed",
+      repairStatus: "pending",
+      error: reason,
+    });
+  });
+
   it("summarizes completed, failed, and missing scheduled tasks for a Singapore day", () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-task-ledger-"));
     const ledger = new DailyTaskLedger();

@@ -93,6 +93,13 @@ const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const SYSTEM_SELF_HEAL_DEFERRED_PREFIX =
   "System self-heal agent sweep deferred before WorkOrder creation: ";
 
+export function isSystemSelfHealAdmissionWait(reason: string): boolean {
+  return (
+    reason.startsWith("automation admission deferred:") ||
+    reason.startsWith("project already has active automation:")
+  );
+}
+
 export class DailyTaskLedger {
   private readonly store = new JsonMapStore<ScheduledTaskRecord>("scheduled_task_ledger.json");
 
@@ -306,7 +313,7 @@ export class DailyTaskLedger {
         if (protectedTaskIds.has(taskId)) continue;
         if (record.status !== "failed" || record.repairStatus !== "pending") continue;
         const reason = record.error;
-        if (reason === undefined || !reason.startsWith("automation admission deferred:")) continue;
+        if (reason === undefined || !isSystemSelfHealAdmissionWait(reason)) continue;
         // Only direct pre-WorkOrder evidence can be reclassified. Appended repair
         // evidence and existing ownership decisions remain authoritative.
         if (record.summary !== `${SYSTEM_SELF_HEAL_DEFERRED_PREFIX}${reason}`) continue;
