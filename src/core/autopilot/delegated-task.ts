@@ -375,7 +375,7 @@ export async function startActiveDelegatedTask(
   ) {
     return {
       status: "blocked",
-      reason: `repository PR review queue has ready work (${readyRepositoryReviewCount}); deferring background active delegation so PR auto-merge can run first`,
+      reason: `automation admission deferred: repository PR review queue has ready work (${readyRepositoryReviewCount}); deferring background active delegation so PR auto-merge can run first`,
       showQueue: true,
     };
   }
