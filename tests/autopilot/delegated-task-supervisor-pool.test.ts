@@ -34,6 +34,15 @@ import {
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
+import {
+  RuntimeGuardianStore,
+  runRuntimeGuardianTick,
+} from "../../src/core/runtime-guardian/service.js";
+import { admitRecoveryFindings } from "../../src/core/tasks/recovery-admission.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
 import type { AppConfig } from "../../src/shared/types.js";
 
 const startLoopSupervisor = vi.fn();
@@ -187,6 +196,71 @@ describe("active delegated task supervisor pool", () => {
       showQueue: true,
     });
     expect(startLoopSupervisor).not.toHaveBeenCalled();
+
+    if (result.status !== "blocked") throw new Error("expected priority deferral");
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const admission = await admitRecoveryFindings({
+      findings: [
+        {
+          projectId: "app",
+          projectPath: "/fixture/app",
+          source: "runtime-guardian",
+          taskFamily: "missing-system-gate",
+          fingerprint: "missing-gate",
+          taskId: "run-1",
+          priority: 100,
+        },
+      ],
+      coordinator,
+      now,
+      leaseId: "priority-check",
+      dispatch: async () => ({ status: "blocked", detail: result.reason }),
+    });
+    expect(admission.disposition).toBe("deferred");
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0 }),
+    ]);
+
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: result.reason,
+    }));
+    const guardianConfig = {
+      enabled: true,
+      mode: "fast-heal" as const,
+      worktreeIsolation: "isolated" as const,
+      tickMs: 120_000,
+      lookbackMs: 86_400_000,
+      cooldownMs: 1_800_000,
+      repoPath: "/fixture/bot",
+      repairBranch: "dev",
+      maxFindingsPerTick: 3,
+    };
+    for (const tickAt of [now, now + guardianConfig.tickMs]) {
+      const tick = await runRuntimeGuardianTick({
+        now: tickAt,
+        config: guardianConfig,
+        store,
+        coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+        discover: () => [
+          {
+            kind: "missing-system-gate",
+            severity: "high",
+            runId: "run-1",
+            projectId: "app",
+            projectPath: "/fixture/app",
+            evidence: ["missing gate"],
+          },
+        ],
+        checkRepairReadiness: () => ({ ok: true }),
+        dispatchRepair,
+      });
+      expect(tick).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    }
+    expect(dispatchRepair).toHaveBeenCalledTimes(2);
+    expect(store.lastRepairAttemptAt("/fixture/bot")).toBeUndefined();
+    expect(store.lastHandledAt("missing-system-gate:app:run-1")).toBeUndefined();
   });
 
   it("rejects a recovery workspace identity absent from configuration", async () => {

@@ -70,6 +70,13 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Repository PR review priority refusals use the shared `automation admission
+deferred:` contract. Repair Coordinator preserves the execution retry budget and
+Runtime Guardian leaves findings unhandled without starting a repair cooldown
+when ready reviews defer background delegation before WorkOrder creation. The
+delegation regression passes the real refusal through both consumers and checks
+that the next Guardian tick remains eligible; review priority is unchanged.
+
 Repository-review blocks derived from the daily task ledger are reconsidered only
 when the exact matching ledger occurrence has newer repair evidence. A pending
 correction restores bounded retry eligibility; a successful repair closes the
