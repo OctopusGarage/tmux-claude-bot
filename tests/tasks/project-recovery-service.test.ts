@@ -1938,7 +1938,10 @@ describe("project recovery service", () => {
     coordinator.linkTaskIds(queue.id, ["autopilot:stale-runtime-recovery"], 1_000);
     coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
     coordinator.markRunning(queue.id, "recovery", 1_001);
-    const updateRepairStatus = vi.fn();
+    const updateRepairStatus = vi.fn((taskId, repairStatus, summary) => {
+      const record = records.find((entry) => entry.taskId === taskId);
+      if (record !== undefined) Object.assign(record, { repairStatus, summary });
+    });
 
     const records = [
       {
@@ -1986,41 +1989,66 @@ describe("project recovery service", () => {
       expect.stringContaining("returned to the repair queue"),
     );
 
+    const settled = coordinator.list().find((record) => record.id === queue.id);
+    for (const now of [2_100, 2_200, 40_000]) {
+      updateRepairStatus.mockClear();
+      await reconcileProjectRecoveryArtifacts({
+        now,
+        records,
+        coordinator: new RepairCoordinator(store),
+        updateRepairStatus,
+      });
+      expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(settled);
+      expect(updateRepairStatus).not.toHaveBeenCalled();
+    }
+
     const retrying = coordinator.list().find((record) => record.id === queue.id);
     if (retrying === undefined) throw new Error("expected retrying repair queue record");
     store.set(queue.id, {
       ...retrying,
       status: "running",
-      attempt: 2,
-      workOrderId: "stale-runtime-third-attempt",
-      leaseId: "recovery-third-attempt",
-      leaseExpiresAt: 4_000,
+      workOrderId: "newer-live-recovery",
+      leaseId: "newer-live-recovery",
+      leaseExpiresAt: 90_000,
     });
-    updateRepairStatus.mockClear();
-
-    const exhausted = await reconcileProjectRecoveryArtifacts({
-      now: 3_000,
+    const newerOwner = coordinator.list().find((record) => record.id === queue.id);
+    await reconcileProjectRecoveryArtifacts({
+      now: 41_000,
       records,
       coordinator,
       updateRepairStatus,
     });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(newerOwner);
 
-    expect(exhausted).toMatchObject({ fixed: 0, blocked: 1 });
-    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "dead-letter",
-      attempt: 3,
+    const newerRecovery = {
+      ...records[1],
+      taskId: "autopilot:newer-live-recovery",
+      source: "autopilot-delegate" as const,
+      name: "tmux-claude-bot active delegated task",
+      status: "failed" as const,
+      repairStatus: "pending" as const,
+      scheduledAt: 40_000,
+      updatedAt: 41_000,
+    };
+    coordinator.linkTaskIds(queue.id, [newerRecovery.taskId], 41_000);
+    await reconcileProjectRecoveryArtifacts({
+      now: 42_000,
+      records: [...records, newerRecovery],
+      coordinator,
+      updateRepairStatus,
     });
-    expect(
-      coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
-    ).toBeUndefined();
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "autopilot:original-stale-runtime",
-      "blocked",
-      expect.stringContaining("attempt limit"),
-    );
+    const second = coordinator.list().find((record) => record.id === queue.id);
+    expect(second).toMatchObject({ status: "retry-wait", attempt: 2 });
+    await reconcileProjectRecoveryArtifacts({
+      now: 43_000,
+      records: [...records, newerRecovery],
+      coordinator,
+      updateRepairStatus,
+    });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(second);
   });
 
-  it("dead-letters a standalone retryable artifact on its third consumed attempt", async () => {
+  it.each([0, 2])("settles standalone retryable artifacts once at attempt %s", async (attempt) => {
     const runDir = join(tmpdir(), `project-recovery-standalone-exhausted-${Date.now()}`);
     await mkdir(runDir, { recursive: true });
     await writeFile(
@@ -2061,25 +2089,25 @@ describe("project recovery service", () => {
       source: "project-recovery",
       taskFamily: "tmux-claude-bot active delegated task",
       fingerprint: "standalone-stale-runtime-source-adoption",
-      taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
+      taskId: "autopilot:standalone-third-attempt",
       now: 1_000,
     });
     store.set(queue.id, {
       ...queue,
       status: "running",
-      attempt: 2,
+      attempt,
       workOrderId: "standalone-third-attempt",
       leaseId: "standalone-third-attempt",
       leaseExpiresAt: 4_000,
     });
     const updateRepairStatus = vi.fn();
 
-    const result = await reconcileProjectRecoveryArtifacts({
+    const input = {
       now: 3_000,
       records: [
         {
-          taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
-          source: "loop-engineering",
+          taskId: "autopilot:standalone-third-attempt",
+          source: "autopilot-delegate",
           name: "tmux-claude-bot active delegated task",
           status: "failed",
           repairStatus: "running",
@@ -2090,21 +2118,41 @@ describe("project recovery service", () => {
       ],
       coordinator,
       updateRepairStatus,
-    });
+    } as const;
+    const result = await reconcileProjectRecoveryArtifacts(input);
 
-    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: attempt === 2 ? 1 : 0 });
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "dead-letter",
-      attempt: 3,
+      status: attempt === 2 ? "dead-letter" : "retry-wait",
+      attempt: attempt + 1,
     });
     expect(
       coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
     ).toBeUndefined();
     expect(updateRepairStatus).toHaveBeenCalledWith(
-      "loop:tmux-claude-bot:active-delegated-task:standalone",
-      "blocked",
-      expect.stringContaining("attempt limit"),
+      "autopilot:standalone-third-attempt",
+      attempt === 2 ? "blocked" : "pending",
+      expect.stringContaining(attempt === 2 ? "attempt limit" : "returned to the repair queue"),
     );
+    // Model a process stopping after queue persistence but before ledger updates.
+    if (attempt === 0) {
+      updateRepairStatus.mockClear();
+      await reconcileProjectRecoveryArtifacts({ ...input, now: 3_050 });
+      expect(updateRepairStatus).toHaveBeenCalledWith(
+        "autopilot:standalone-third-attempt",
+        "pending",
+        expect.any(String),
+      );
+    }
+    const settled = coordinator.list();
+    for (const now of [3_100, 90_000]) {
+      await reconcileProjectRecoveryArtifacts({
+        ...input,
+        now,
+        coordinator: new RepairCoordinator(store),
+      });
+      expect(coordinator.list()).toEqual(settled);
+    }
   });
 
   it.each([

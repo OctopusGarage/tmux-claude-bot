@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   reconcileDailyAuditRepairQueue,
   reconcileDailyAuditRunState,
+  reconcilePendingLedgerFromTerminalRepairQueue,
 } from "../../src/core/tasks/daily-audit-run-state.js";
+import { runProjectRecoveryPass } from "../../src/core/tasks/project-recovery-service.js";
 import {
   InMemoryRepairQueueStore,
   RepairCoordinator,
@@ -146,6 +148,149 @@ describe("daily audit run state", () => {
       expect(coordinator.list()).toEqual([owner]);
       expect(ledger.listAll()).toEqual(ledgerBefore);
     }
+  });
+
+  it.each([3_999, 4_000, 5_000])(
+    "preserves only a newer pending correction over fixed queue evidence at ledger time %s",
+    (updatedAt) => {
+      const ledger = new DailyTaskLedger();
+      ledger.expect({
+        taskId: "original",
+        source: "loop-engineering",
+        name: "suite bug-fix",
+        scheduledAt: 1_000,
+      });
+      ledger.fail("original", { endedAt: 2_000, error: "dispatch-timeout" });
+      const coordinator = new RepairCoordinator();
+      const queue = coordinator.enqueue({
+        projectId: "suite",
+        projectPath: "/repo/suite",
+        source: "project-recovery",
+        taskFamily: "suite bug-fix",
+        fingerprint: "unknown",
+        taskId: "original",
+        now: 3_000,
+      });
+      coordinator.markTerminal(queue.id, "fixed", 4_000);
+      ledger.markRepairStatus("original", {
+        repairStatus: "pending",
+        updatedAt,
+        summary: "Verified repair correction",
+      });
+      const before = ledger.listAll();
+      for (const now of [6_000, 7_000]) {
+        reconcilePendingLedgerFromTerminalRepairQueue({
+          ledger: new DailyTaskLedger(),
+          coordinator: new RepairCoordinator(),
+          now,
+        });
+      }
+      if (updatedAt > 4_000) expect(ledger.listAll()).toEqual(before);
+      else expect(ledger.listAll()[0]?.repairStatus).toBe("fixed");
+      expect(coordinator.list()[0]).toMatchObject({
+        status: "fixed",
+        attempt: 0,
+        updatedAt: 4_000,
+      });
+    },
+  );
+
+  it("keeps a corrected original eligible for guarded recovery across audit ticks", async () => {
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "loop:suite:bug-fix:1000",
+      source: "loop-engineering",
+      name: "suite bug-fix",
+      scheduledAt: 1_000,
+    });
+    const coordinator = new RepairCoordinator();
+    const queue = coordinator.enqueue({
+      projectId: "suite",
+      projectPath: "/repo/suite",
+      source: "project-recovery",
+      taskFamily: "suite bug-fix",
+      fingerprint: "missing-run-record",
+      taskId: "loop:suite:bug-fix:1000",
+      now: 3_000,
+    });
+    coordinator.releaseForRetry(queue.id, 3_001);
+    coordinator.markTerminal(queue.id, "fixed", 4_000);
+    ledger.markRepairStatus("loop:suite:bug-fix:1000", {
+      repairStatus: "pending",
+      updatedAt: 5_000,
+    });
+    const dispatch = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: "automation admission deferred: active worker lease",
+      retryAt: 8_000,
+    }));
+    for (const now of [6_000, 7_000]) {
+      reconcileDailyAuditRunState({
+        ledger,
+        coordinator: new RepairCoordinator(),
+        now,
+        repoPath: "/repo/bot",
+        reconcileRepairState: () => {},
+      });
+      await runProjectRecoveryPass({
+        now,
+        records: ledger
+          .listAll()
+          .flatMap((record) =>
+            record.repairStatus === "pending"
+              ? [{ ...record, repairStatus: "pending" as const }]
+              : [],
+          ),
+        coordinator,
+        config: {
+          projects: [{ id: "suite", name: "Suite", path: "/repo/suite" }],
+          repositories: [],
+          workspaces: [],
+        },
+        updateRepairStatus: (taskId, repairStatus, summary) =>
+          ledger.markRepairStatus(taskId, { repairStatus, summary, updatedAt: now }),
+        dispatch,
+        canonicalize: (path) => path,
+      });
+      expect(ledger.listAll()).toEqual([expect.objectContaining({ repairStatus: "pending" })]);
+      expect(
+        coordinator.list().some((record) => record.status === "pending" && record.attempt === 1),
+      ).toBe(true);
+    }
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the newest terminal evidence for an exact task across duplicate queues", () => {
+    const ledger = new DailyTaskLedger();
+    ledger.expect({
+      taskId: "original",
+      source: "loop-engineering",
+      name: "suite bug-fix",
+      scheduledAt: 1_000,
+    });
+    ledger.fail("original", { endedAt: 2_000, error: "dispatch-timeout" });
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const newest = coordinator.enqueue({
+      projectId: "suite",
+      projectPath: "/repo/suite",
+      source: "project-recovery",
+      taskFamily: "suite bug-fix",
+      fingerprint: "new",
+      taskId: "original",
+      now: 3_000,
+    });
+    coordinator.markTerminal(newest.id, "fixed", 8_000);
+    store.set("older", {
+      ...newest,
+      id: "older",
+      createdAt: 4_000,
+      updatedAt: 4_500,
+      status: "blocked",
+    });
+    ledger.markRepairStatus("original", { repairStatus: "pending", updatedAt: 5_000 });
+    reconcilePendingLedgerFromTerminalRepairQueue({ ledger, coordinator, now: 9_000 });
+    expect(ledger.listAll()[0]?.repairStatus).toBe("fixed");
   });
 
   it("terminalizes pending ledger repairs when no open repair queue owner remains", () => {

@@ -750,10 +750,14 @@ export async function reconcileProjectRecoveryArtifacts(input: {
           ["failed", "missing", "running-timeout"].includes(record.status) &&
           retryableBlockedRecoveryArtifact(record.reportPath),
       );
-      if (retryableBlockedRecoveries.length > 0) {
+      const terminalRecord = [...retryableBlockedRecoveries].sort(
+        (a, b) => b.scheduledAt - a.scheduledAt || b.taskId.localeCompare(a.taskId),
+      )[0];
+      if (terminalRecord !== undefined) {
         const transitionedTaskIds = transitionRetryableArtifact({
           coordinator: input.coordinator,
           queueRecordId: queueRecord.id,
+          terminalRecord,
           now: input.now,
           records: [...originals, ...retryableBlockedRecoveries],
           updateRepairStatus: input.updateRepairStatus,
@@ -882,6 +886,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         transitionRetryableArtifact({
           coordinator: input.coordinator,
           queueRecordId: queueRecord.id,
+          terminalRecord: record,
           now: input.now,
           records: [record],
           updateRepairStatus: input.updateRepairStatus,
@@ -903,6 +908,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
 }
 
 function transitionRetryableArtifact(input: {
+  terminalRecord: ScheduledTaskRecord;
   coordinator: RepairCoordinator;
   queueRecordId: string;
   now: number;
@@ -914,20 +920,45 @@ function transitionRetryableArtifact(input: {
   ) => void;
   result: ProjectRecoveryArtifactReconciliationResult;
 }): string[] {
+  const records = [...new Map(input.records.map((record) => [record.taskId, record])).values()];
+  const taskIds = records.map((record) => record.taskId);
+  const summaryPath =
+    input.terminalRecord.reportPath === undefined
+      ? undefined
+      : readFinalSummaryPath(input.terminalRecord.reportPath);
+  const gate =
+    summaryPath === undefined
+      ? undefined
+      : readJson(join(dirname(summaryPath), "system-gate.json"));
   const released = input.coordinator.releaseForRetry(input.queueRecordId, input.now, {
     detachWorkOrder: true,
+    settledTaskId: input.terminalRecord.taskId,
+    ...(typeof gate?.workOrderId === "string" ? { expectedWorkOrderId: gate.workOrderId } : {}),
   });
-  const exhausted = released?.status === "dead-letter";
+  const settled =
+    released ??
+    input.coordinator
+      .list()
+      .find(
+        (record) =>
+          record.id === input.queueRecordId &&
+          record.workOrderId === undefined &&
+          ["pending", "retry-wait", "dead-letter"].includes(record.status) &&
+          record.settledRecoveryTaskIds?.includes(input.terminalRecord.taskId),
+      );
+  if (settled === undefined) return taskIds;
+  const exhausted = settled.status === "dead-letter";
   const repairStatus = exhausted ? "blocked" : "pending";
   const summary = exhausted
     ? "Recovery classification: recovery attempt limit reached; repair moved to dead-letter."
     : "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.";
-  const records = [...new Map(input.records.map((record) => [record.taskId, record])).values()];
+  // Recover a crash after queue settlement but before the ledger projection.
   for (const record of records) {
-    input.updateRepairStatus(record.taskId, repairStatus, summary);
+    if (released !== undefined || record.repairStatus !== repairStatus)
+      input.updateRepairStatus(record.taskId, repairStatus, summary);
   }
-  if (exhausted) input.result.blocked++;
-  return records.map((record) => record.taskId);
+  if (exhausted && released !== undefined) input.result.blocked++;
+  return taskIds;
 }
 
 function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {

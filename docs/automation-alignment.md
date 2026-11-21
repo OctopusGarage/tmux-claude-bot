@@ -70,6 +70,29 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+The registry read regression retains 240 terminal history records with unread
+journal sentinels; its current recoverable journal still uses the full public
+lifecycle. This isolates read-count assertions from unrelated historical setup
+I/O while preserving the same history volume, assertions and timeout.
+
+Daily Audit terminal queue projection selects the newest evidence for each exact
+ledger task. A newer pending ledger correction survives an older fixed queue
+record and reaches the existing guarded project recovery path. Equal or older
+corrections still take the terminal result; blocked, uncertain and exhausted
+boundaries remain unchanged. Restart and duplicate-queue tests prevent a supported
+repair-only correction from being silently reclosed by a stale fixed projection.
+
+Terminal recovery artifact settlement persists the consumed ledger execution ID
+with the retry counter in one locked queue update. Repeated ticks and store
+restarts cannot spend another attempt or move its retry time. A terminal queue
+record stays terminal, and an older artifact cannot detach a different current
+WorkOrder. Grouped reconciliation selects the newest scheduled recovery identity,
+not the ledger update time that reconciliation itself changes. Standalone and
+grouped regressions cover replay, fresh ownership and historical exhausted counts.
+A crash after queue persistence replays only missing ledger status updates without
+spending another retry. Legacy counters are preserved; a large counter alone cannot prove actual dispatches
+or authorize a reset without retained execution evidence.
+
 Repository PR review priority refusals use the shared `automation admission
 deferred:` contract. Repair Coordinator preserves the execution retry budget and
 Runtime Guardian leaves findings unhandled without starting a repair cooldown

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createRepairDedupeKey,
@@ -13,6 +16,80 @@ afterEach(() => {
 });
 
 describe("RepairCoordinator", () => {
+  it("persists terminal execution consumption across coordinator and store restart", () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "repair-consumption-"));
+    const coordinator = new RepairCoordinator();
+    const queue = coordinator.enqueue({
+      projectId: "suite",
+      projectPath: "/repo/suite",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "readiness",
+      taskId: "original",
+      now: 1_000,
+    });
+    coordinator.linkTaskIds(queue.id, ["autopilot:recovery-1"], 1_000);
+    coordinator.claimIds([queue.id], { now: 1_001, leaseId: "lease-1", limit: 1 });
+    coordinator.markRunning(queue.id, "lease-1", 1_001);
+    coordinator.attachWorkOrder(queue.id, "recovery-1", 1_001);
+    const first = coordinator.releaseForRetry(queue.id, 2_000, {
+      detachWorkOrder: true,
+      settledTaskId: "autopilot:recovery-1",
+    });
+    expect(first).toMatchObject({ attempt: 1, status: "retry-wait", nextAttemptAt: 32_000 });
+    for (const now of [2_100, 40_000]) {
+      const restored = new RepairCoordinator();
+      expect(
+        restored.releaseForRetry(queue.id, now, {
+          detachWorkOrder: true,
+          settledTaskId: "autopilot:recovery-1",
+        }),
+      ).toBeUndefined();
+      expect(restored.list().find((item) => item.id === queue.id)).toEqual(first);
+    }
+    const restored = new RepairCoordinator();
+    restored.claimIds([queue.id], { now: 40_000, leaseId: "lease-2", limit: 1 });
+    restored.markRunning(queue.id, "lease-2", 40_000);
+    restored.attachWorkOrder(queue.id, "recovery-2", 40_000);
+    const owner = restored.list().find((item) => item.id === queue.id);
+    expect(
+      restored.releaseForRetry(queue.id, 41_000, {
+        detachWorkOrder: true,
+        settledTaskId: "autopilot:unconsumed-old-run",
+      }),
+    ).toBeUndefined();
+    expect(restored.list().find((item) => item.id === queue.id)).toEqual(owner);
+    expect(
+      restored.releaseForRetry(queue.id, 42_000, {
+        detachWorkOrder: true,
+        settledTaskId: "autopilot:recovery-2",
+      }),
+    ).toMatchObject({ attempt: 2, status: "retry-wait", nextAttemptAt: 102_000 });
+  });
+
+  it.each([3, 47, 78])("preserves historical terminal retry budget %s", (attempt) => {
+    const store = new InMemoryRepairQueueStore();
+    const coordinator = new RepairCoordinator(store);
+    const queue = coordinator.enqueue({
+      projectId: "suite",
+      projectPath: "/repo/suite",
+      source: "project-recovery",
+      taskFamily: "bug-fix",
+      fingerprint: "readiness",
+      taskId: "original",
+      now: 1_000,
+    });
+    store.set(queue.id, { ...queue, status: "dead-letter", attempt });
+    const before = coordinator.list();
+    expect(
+      coordinator.releaseForRetry(queue.id, 2_000, {
+        detachWorkOrder: true,
+        settledTaskId: "autopilot:old-recovery",
+      }),
+    ).toBeUndefined();
+    expect(coordinator.list()).toEqual(before);
+  });
+
   it("deduplicates equivalent failures while preserving linked task IDs", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const first = coordinator.enqueue({
