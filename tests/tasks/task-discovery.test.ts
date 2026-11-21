@@ -655,6 +655,87 @@ describe("mergeDiscoveredTaskRecords", () => {
     ]);
   });
 
+  it.each([
+    ["matching", "success"],
+    ["normalized", "success"],
+    ["foreign-run", "failed"],
+    ["foreign-project", "failed"],
+    ["different-review", "failed"],
+    ["missing-review", "failed"],
+    ["rejected", "failed"],
+    ["failed-verification", "failed"],
+    ["foreign-summary-project", "failed"],
+    ["incomplete-gate", "failed"],
+    ["rejected-result", "failed"],
+    ["contradictory-failures", "failed"],
+    ["invalid-review", "failed"],
+  ])("keeps %s system-gate authority when rediscovering follow-up notes", (variant, status) => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-loop-accepted-followup-"));
+    const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
+    const runId = `${scheduledAt}-suite-pr-review`;
+    const runDir = join(root, "loop-runs", "suite", runId);
+    mkdirSync(runDir, { recursive: true });
+    const reviewGate = {
+      preMutationReview: [],
+      postMutationReview: ["No repository edits"],
+      aiReview: "passed",
+      deterministicGates: [],
+      decision: "pass",
+      notes: [],
+    };
+    const summary = {
+      status: "completed",
+      projectId: variant === "foreign-summary-project" ? "other-project" : "suite",
+      finalVerification: variant === "failed-verification" ? "failed" : "passed",
+      actionsTaken: ["No eligible loop PRs; verified clean target"],
+      followUps: ["An unrelated dependency PR remains outside scope with failing CI."],
+      reviewGate:
+        variant === "invalid-review"
+          ? { ...reviewGate, decision: "unknown" }
+          : variant === "missing-review"
+            ? undefined
+            : variant === "normalized"
+              ? { ...reviewGate, notes: "No remaining task issues" }
+              : reviewGate,
+    };
+    writeFileSync(join(runDir, "supervisor-final-summary.json"), JSON.stringify(summary));
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({
+        workOrderId: variant === "foreign-run" ? "other-run" : runId,
+        projectId: variant === "foreign-project" ? "other-project" : "suite",
+        accepted: variant !== "rejected",
+        resultStatus: variant === "rejected-result" ? "blocked" : "completed",
+        supervisorReviewGate:
+          variant === "different-review"
+            ? { ...reviewGate, postMutationReview: ["Different revision review"] }
+            : variant === "normalized"
+              ? { ...reviewGate, notes: ["No remaining task issues"] }
+              : reviewGate,
+        failures:
+          variant === "incomplete-gate"
+            ? undefined
+            : variant === "contradictory-failures"
+              ? ["Unresolved gate failure"]
+              : [],
+      }),
+    );
+    const record: ScheduledTaskRecord = {
+      taskId: `loop:suite:pull-request-review:${scheduledAt}`,
+      source: "loop-engineering",
+      name: "suite pull-request-review",
+      scheduledAt,
+      status: "running",
+      repairStatus: "running",
+      reportPath: join(runDir, "supervisor.md"),
+      updatedAt: scheduledAt + 1000,
+    };
+    expect(mergeDiscoveredTaskRecords([record], [])[0]).toMatchObject({
+      status,
+      repairStatus: status === "success" ? "not-needed" : "pending",
+    });
+  });
+
   it("does not let a stale system-gate rejection reopen a closed loop success", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-loop-ledger-stale-system-gate-json-"));
     const scheduledAt = Date.parse("2026-07-27T01:00:00Z");
