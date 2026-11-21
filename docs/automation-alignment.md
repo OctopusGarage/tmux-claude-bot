@@ -1800,3 +1800,10 @@ request cannot reschedule after cancellation. Success stops retries, and repeate
 identical failures use DEBUG after the first WARN. Regression coverage lives in
 `tests/adapters/telegram/command-registration.test.ts` and the adapter startup
 notification tests. No command catalog or owner routing changes.
+
+Resource Guardian bulk pane validation fails closed on every malformed row. Its
+diagnostic contains only a one-based row number and a fixed validation category
+(`field-count`, `empty-session`, `invalid-pid`, or `unsafe-pid`), never session
+names or raw pane output. A valid prefix does not authorize partial attribution.
+Historical generic snapshot failures need a fresh observation; they do not justify
+relaxing attribution or terminating an unverified process.

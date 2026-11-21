@@ -564,3 +564,10 @@ Telegram menu registration retries transient failures in-process without blockin
 polling. Diagnose permanent API rejection from `telegram.commands` logs; invalid
 credentials or command payloads require their actual configuration/source fix.
 Do not restart the service solely for a transient menu-registration failure.
+
+Resource Guardian bulk pane validation fails closed on every malformed row. Its
+diagnostic contains only a one-based row number and a fixed validation category
+(`field-count`, `empty-session`, `invalid-pid`, or `unsafe-pid`), never session
+names or raw pane output. A valid prefix does not authorize partial attribution.
+Historical generic snapshot failures need a fresh observation; they do not justify
+relaxing attribution or terminating an unverified process.

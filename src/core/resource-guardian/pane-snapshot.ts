@@ -24,12 +24,21 @@ export function createBulkPaneSnapshotProbe(
       { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 },
     );
     const panes = new Map<string, number[]>();
-    for (const line of stdout.split("\n")) {
+    for (const [index, line] of stdout.split("\n").entries()) {
       if (line === "") continue;
       const match = line.match(/^([^\t]+)\t([1-9]\d*)$/);
       const pid = Number(match?.[2]);
       if (!match?.[1] || !Number.isSafeInteger(pid)) {
-        throw new Error("invalid tmux pane snapshot");
+        const fields = line.split("\t");
+        const reason =
+          fields.length !== 2
+            ? "field-count"
+            : fields[0] === ""
+              ? "empty-session"
+              : !/^[1-9]\d*$/.test(fields[1] ?? "")
+                ? "invalid-pid"
+                : "unsafe-pid";
+        throw new Error(`invalid tmux pane snapshot: row=${index + 1} reason=${reason}`);
       }
       const pids = panes.get(match[1]) ?? [];
       if (!pids.includes(pid)) pids.push(pid);
