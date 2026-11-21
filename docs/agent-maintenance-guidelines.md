@@ -515,6 +515,12 @@ remain fail-closed. The bundled security assessment uses a project's own Python
 virtualenv when available, supports both npm and pnpm lockfiles, and bounds each
 subprocess to two minutes.
 
+Managed reset input-surface refusals and reset-readiness deadlines are
+pre-submission investigation evidence. Preserve those exact original errors when
+reconsidering generic aggregate blocked closures, using the existing original
+retry budget. Do not clear pending input or infer that the WorkOrder executed;
+normal live identity, composer, lease and uncertain-completion gates still apply.
+
 AI capacity, rate-limit, readiness, queue, and network transients must be
 classified before they are reported as project failures. Keep the shared
 transient classifier covered by tests, wire provider transients into bounded

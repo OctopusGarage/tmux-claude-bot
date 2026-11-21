@@ -1624,6 +1624,20 @@ Native system verification and external task preflight/host checks share the sam
 
 External task acceptance commands carry the remaining WorkOrder deadline. The synchronous shell boundary uses a separate watchdog to stop its shell process group on timeout or output overflow before returning; native invocations without an explicit budget retain their existing behavior.
 
+## Managed reset recovery evidence
+
+A managed reset input-surface refusal or reset-readiness deadline happens before
+submission of the WorkOrder prompt. The shared transient classifier exposes these
+as agent-runtime readiness failures, and project recovery preserves the original
+error when reconsidering a generic accepted-blocked aggregate closure. Recovery
+re-enters the existing bounded investigation and dispatch path; it must recheck
+the current composer, live identity and lease before input. It never discards
+pending input or relaxes reset, completion, ownership or retry-budget gates.
+Unsafe ownership or uncertain-completion evidence still blocks recovery.
+`tests/tasks/project-recovery-original-closure.test.ts` covers repeated
+reconciliation, admission deferral, mixed unsafe evidence and exhausted attempts;
+`tests/agents/transient-failure.test.ts` covers readiness classification.
+
 ## Managed Codex Turn Evidence
 
 Startup update-menu handling uses only the current complete known menu: Escape
