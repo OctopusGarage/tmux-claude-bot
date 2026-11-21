@@ -1665,3 +1665,12 @@ records `reviewedHeadSha`, and the independent bot gate validates clean passes
 before accepting approval or merge. External review does not authorize source
 mutation, provider integration, edited evidence or a new deadline. Existing
 native prompts remain unchanged when the reviewer selector is absent.
+
+### Audit rediscovery of accepted outcomes
+
+Daily Task Audit may rediscover outcomes from retained run artifacts. A matching
+accepted completed system gate and valid passing final review take precedence over
+the legacy follow-up keyword heuristic. Follow-ups about unrelated failing CI do
+not reopen that accepted task. The run and project identities, review snapshot,
+empty gate failures and passed final verification must match; otherwise existing
+anomaly detection and repair gates remain authoritative.

@@ -70,6 +70,13 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Daily Audit artifact discovery honors a completed passing final summary's matching
+accepted system gate before applying legacy follow-up keyword checks. Run and
+project identities, a valid passing review snapshot, empty gate failures and passed
+final verification must agree. Unrelated follow-up CI failures cannot reopen an
+accepted task; missing, foreign, contradictory or stale gate evidence retains
+conservative anomaly detection. Discovery regressions enforce both boundaries.
+
 The registry read regression retains 240 terminal history records with unread
 journal sentinels; its current recoverable journal still uses the full public
 lifecycle. This isolates read-count assertions from unrelated historical setup

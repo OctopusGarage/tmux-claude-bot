@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   AutomationOccurrenceStore,
   automationOccurrenceId,
@@ -9,6 +10,7 @@ import {
 import { LOOP_RUN_ARTIFACTS, loopRunsRoot } from "../loop/artifacts.js";
 import type { LoopConfig } from "../loop/config.js";
 import { parseLoopConfigYaml } from "../loop/config.js";
+import { parseSupervisorReviewGate } from "../loop/final-summary-contract.js";
 import {
   type LoopJitterJobKind,
   loopScheduleJitterMaxMs,
@@ -410,6 +412,7 @@ function recordForSupervisorArtifacts(input: {
       ...input,
       path: finalSummaryPath,
       summary: finalSummary,
+      acceptedSystemGate: hasMatchingCompletedSystemGate(input, finalSummary, systemGate),
     });
   }
   if (supervisorSummary !== null) {
@@ -420,6 +423,29 @@ function recordForSupervisorArtifacts(input: {
     });
   }
   return null;
+}
+
+/** Accepted review evidence outranks the legacy follow-up keyword heuristic. */
+function hasMatchingCompletedSystemGate(
+  input: { projectId: string; runDir: string },
+  summary: Record<string, unknown>,
+  gate: Record<string, unknown> | null,
+): boolean {
+  const reviewGate = parseSupervisorReviewGate(summary.reviewGate);
+  return (
+    summary.status === "completed" &&
+    summary.finalVerification === "passed" &&
+    summary.projectId === input.projectId &&
+    reviewGate?.decision === "pass" &&
+    gate?.accepted === true &&
+    gate.resultStatus === "completed" &&
+    gate.workOrderId === basename(input.runDir) &&
+    gate.projectId === input.projectId &&
+    Array.isArray(gate.failures) &&
+    gate.failures.length === 0 &&
+    (isDeepStrictEqual(gate.supervisorReviewGate, summary.reviewGate) ||
+      isDeepStrictEqual(gate.supervisorReviewGate, reviewGate))
+  );
 }
 
 function recordForSystemGateFailure(input: {
@@ -573,12 +599,13 @@ function recordForSupervisorFinalSummary(input: {
   now: number;
   path: string;
   summary: Record<string, unknown>;
+  acceptedSystemGate?: boolean;
 }): ScheduledTaskRecord {
   const status = typeof input.summary.status === "string" ? input.summary.status : "unknown";
   const summaryText =
     parseFirstString(input.summary.actionsTaken) ?? `final summary status ${status}`;
   if (status === "completed") {
-    const anomaly = completedFinalSummaryAnomaly(input.summary);
+    const anomaly = input.acceptedSystemGate ? null : completedFinalSummaryAnomaly(input.summary);
     if (anomaly !== null) {
       return {
         taskId: input.taskId,
