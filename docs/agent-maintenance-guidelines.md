@@ -559,3 +559,8 @@ with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy
 installations skip this step. Installation failures prevent startup and remain
 visible in service logs; the service manager retries. This recovery runs outside
 the bot, so it also works when the bot cannot boot.
+
+Telegram menu registration retries transient failures in-process without blocking
+polling. Diagnose permanent API rejection from `telegram.commands` logs; invalid
+credentials or command payloads require their actual configuration/source fix.
+Do not restart the service solely for a transient menu-registration failure.

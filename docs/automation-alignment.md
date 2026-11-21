@@ -1787,3 +1787,16 @@ is needed once this version is running. Omitted or `true` preserves alert delive
 Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
 The generic config command validates this setting as a non-secret boolean; the
 notification gateway enforces the same preference for both channels and all callers.
+
+## Telegram command-menu recovery
+
+Menu registration uses the adapter's existing bounded transport independently
+of polling. A transient network/server failure retries one request at a time
+with exponential backoff capped at 30 seconds; Telegram retry_after may require
+a longer delay. Permanent API rejection stops registration retries. Polling,
+notification registration and other channels remain available. Adapter shutdown,
+fatal authentication and normal polling return cancel scheduled retries; a late
+request cannot reschedule after cancellation. Success stops retries, and repeated
+identical failures use DEBUG after the first WARN. Regression coverage lives in
+`tests/adapters/telegram/command-registration.test.ts` and the adapter startup
+notification tests. No command catalog or owner routing changes.
