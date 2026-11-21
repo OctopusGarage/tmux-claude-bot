@@ -30,6 +30,21 @@ describe("bulk pane snapshot", () => {
     ).rejects.toThrow("invalid tmux pane snapshot");
   });
 
+  it.each([
+    ["private-session", "field-count"],
+    ["private-session\t10\textra-secret", "field-count"],
+    ["\t10", "empty-session"],
+    ["private-session\t-1", "invalid-pid"],
+    ["private-session\t9007199254740992", "unsafe-pid"],
+  ])("reports only a fixed validation category for malformed rows", async (row, reason) => {
+    const error = await createBulkPaneSnapshotProbe({
+      exec: async () => ({ stdout: `valid\t10\n${row}\n`, stderr: "" }),
+    })().catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(`invalid tmux pane snapshot: row=2 reason=${reason}`);
+    expect((error as Error).message).not.toMatch(/private-session|extra-secret/);
+  });
+
   it("does not turn a failed command into a valid empty roster", async () => {
     await expect(
       createBulkPaneSnapshotProbe({

@@ -6,13 +6,15 @@ import { ChannelSenderRegistry } from "../../../src/core/projects/channel-sender
 import { SecurityAlerts } from "../../../src/core/security/alerts.js";
 
 const sendMessage = vi.fn(async () => ({}));
+const setMyCommands = vi.fn(async () => {});
+const startPolling = vi.fn(async () => {});
 const sendTelegramAttachment = vi.fn(async () => {});
 const middlewares: Array<(ctx: any, next: () => Promise<void>) => Promise<void> | void> = [];
 
 class FakeBot {
   api = {
     config: { use: vi.fn() },
-    setMyCommands: vi.fn(async () => {}),
+    setMyCommands,
     getMe: vi.fn(async () => ({ id: 42, username: "test_bot" })),
     sendMessage,
   };
@@ -20,7 +22,7 @@ class FakeBot {
     middlewares.push(middleware);
   });
   catch = vi.fn();
-  start = vi.fn(async () => {});
+  start = startPolling;
   stop = vi.fn(async () => {});
 }
 
@@ -74,6 +76,93 @@ describe("startTelegram notification registration", () => {
     vi.resetModules();
     vi.clearAllMocks();
     middlewares.length = 0;
+    setMyCommands.mockReset().mockResolvedValue(undefined);
+    startPolling.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("retries failed command registration while healthy polling continues and cancels on return", async () => {
+    mockGrammy();
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({ registerHandlers: vi.fn() }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    let finishPolling: () => void = () => {};
+    startPolling.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPolling = resolve;
+        }),
+    );
+    setMyCommands
+      .mockRejectedValueOnce(new Error("TLS disconnected"))
+      .mockRejectedValueOnce(new Error("network unavailable"));
+    vi.useFakeTimers();
+    const running = startTelegram(deps());
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(startPolling).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(setMyCommands).toHaveBeenCalledTimes(3);
+      expect(setMyCommands.mock.calls[2]).toEqual(setMyCommands.mock.calls[0]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(setMyCommands).toHaveBeenCalledTimes(3);
+    } finally {
+      finishPolling();
+      await running;
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels registration when notification startup throws", async () => {
+    mockGrammy();
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({ registerHandlers: vi.fn() }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    setMyCommands.mockRejectedValue(new Error("TLS disconnected"));
+    vi.useFakeTimers();
+    try {
+      await expect(
+        startTelegram(deps(), {
+          onNotificationsReady: () => {
+            throw new Error("startup failed");
+          },
+        }),
+      ).rejects.toThrow("startup failed");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(setMyCommands).toHaveBeenCalledOnce();
+      expect(startPolling).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a pending registration after polling stops", async () => {
+    mockGrammy();
+    vi.doMock("@grammyjs/files", () => ({ hydrateFiles: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../../src/adapters/telegram/handlers.js", () => ({ registerHandlers: vi.fn() }));
+    vi.doMock("../../../src/adapters/telegram/voice-handler.js", () => ({
+      registerVoiceHandler: vi.fn(),
+    }));
+    vi.doMock("../../../src/adapters/telegram/media.js", () => ({ sendTelegramAttachment }));
+    const { startTelegram } = await import("../../../src/adapters/telegram/start.js");
+    setMyCommands.mockRejectedValue(new Error("TLS disconnected"));
+    vi.useFakeTimers();
+    try {
+      await startTelegram(deps());
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(setMyCommands).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("registers a telegram owner notification sender", async () => {

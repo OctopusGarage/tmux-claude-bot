@@ -34,10 +34,14 @@ afterEach(() => {
   else process.env.TCB_STATE_DIR = originalStateDir;
 });
 
-function fixture(error?: string, attempt = 0) {
+function fixture(
+  error?: string,
+  attempt = 0,
+  source: "loop-engineering" | "autopilot-delegate" = "loop-engineering",
+) {
   const ledger = new DailyTaskLedger();
   const taskId = "loop:suite:bug-fix:1000";
-  ledger.expect({ taskId, source: "loop-engineering", name: "suite bug-fix", scheduledAt: 1000 });
+  ledger.expect({ taskId, source, name: "suite bug-fix", scheduledAt: 1000 });
   if (error === undefined) ledger.reconcileExpectedMissing(1001);
   else ledger.fail(taskId, { endedAt: 1001, error });
   ledger.markRepairStatus(taskId, { repairStatus: "blocked", updatedAt: 1100, summary: closure });
@@ -100,6 +104,8 @@ describe("original task evidence survives generic accepted-blocked closure", () 
     undefined,
     "Cannot verify live agent identity for managed context reset",
     "Codex live transcript unavailable and no fresh launch grant",
+    "Cannot verify automation input surface: composer missing or contains pending input",
+    "Agent context reset readiness deadline exhausted",
   ])("reconsiders %s and remains due on repeated reconciliation", async (error) => {
     const f = fixture(error, 1);
     await f.reconcile();
@@ -117,10 +123,28 @@ describe("original task evidence survives generic accepted-blocked closure", () 
     });
   });
 
+  it("reopens an Autopilot original refused before prompt submission", async () => {
+    const f = fixture(
+      "Cannot verify automation input surface: composer missing or contains pending input",
+      1,
+      "autopilot-delegate",
+    );
+    await f.reconcile();
+    await f.pass();
+    await f.reconcile();
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.ledger.listAll()[0]).toMatchObject({ status: "failed", repairStatus: "pending" });
+    expect(f.coordinator.findOpenProjectRecovery("suite")).toMatchObject({
+      attempt: 1,
+      status: "pending",
+    });
+  });
+
   it.each([
     "Codex live transcript unavailable for managed completion evidence",
     "Reserved worker ownership changed during context reset",
     "Codex process changed during managed context reset",
+    "Cannot verify automation input surface: composer missing or contains pending input; ownership changed",
     "RalphWorks declared needs_input; no native fallback is allowed",
   ])("preserves the unsafe boundary: %s", async (error) => {
     const f = fixture(error);
@@ -146,19 +170,21 @@ describe("original task evidence survives generic accepted-blocked closure", () 
     expect(f.ledger.listAll()[0]?.repairStatus).toBe("blocked");
   });
 
-  it.each([undefined, "Cannot verify live agent identity for managed context reset"])(
-    "never recreates an exhausted original budget: %s",
-    async (error) => {
-      const f = fixture(error, 3);
-      await f.reconcile();
-      await f.pass();
-      await f.reconcile();
-      await f.pass();
-      expect(f.dispatch).not.toHaveBeenCalled();
-      expect(f.coordinator.list()).toHaveLength(1);
-      expect(f.coordinator.list()[0]?.attempt).toBe(3);
-    },
-  );
+  it.each([
+    undefined,
+    "Cannot verify live agent identity for managed context reset",
+    "Cannot verify automation input surface: composer missing or contains pending input",
+    "Agent context reset readiness deadline exhausted",
+  ])("never recreates an exhausted original budget: %s", async (error) => {
+    const f = fixture(error, 3);
+    await f.reconcile();
+    await f.pass();
+    await f.reconcile();
+    await f.pass();
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.coordinator.list()).toHaveLength(1);
+    expect(f.coordinator.list()[0]?.attempt).toBe(3);
+  });
 
   it("keeps a genuine blocked sibling terminal while reconsidering the retryable original", async () => {
     const f = fixture("Cannot verify live agent identity for managed context reset");

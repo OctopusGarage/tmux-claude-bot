@@ -1,3 +1,5 @@
+import { isManagedResetReadinessFailure } from "../agents/transient-failure.js";
+
 export type RecoveryClassification =
   | "retryable"
   | "waiting-external"
@@ -83,7 +85,7 @@ export function hasOriginalRecoveryRetryEvidence(
   if (!["missing", "failed", "running-timeout"].includes(record.status)) return false;
   const error = record.error?.toLowerCase() ?? "";
   if (
-    error.includes("cannot verify live agent identity for managed context reset") ||
+    isManagedResetReadinessFailure(error) ||
     error.includes("codex live transcript unavailable and no fresh launch grant") ||
     /assessment (?:result|score|scoring).*numeric score|assessment scor(?:e|ing) contract|score:null/.test(
       error,

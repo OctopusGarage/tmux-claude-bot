@@ -45,6 +45,8 @@ describe("agent transient failure classification", () => {
   it.each([
     "Cannot verify live agent identity for managed context reset",
     "Codex live transcript unavailable and no fresh launch grant",
+    "Cannot verify automation input surface: composer missing or contains pending input",
+    "Agent context reset readiness deadline exhausted",
   ])("classifies managed dispatch readiness refusal: %s", (message) => {
     expect(classifyAgentTransientFailure(message)).toEqual({
       kind: "agent-readiness",
@@ -61,6 +63,20 @@ describe("agent transient failure classification", () => {
     "Cannot verify an unrelated project identity",
   ])("preserves ownership and unrelated failures: %s", (message) => {
     expect(classifyAgentTransientFailure(message)).toBeNull();
+  });
+
+  it.each([
+    "ownership changed",
+    "process changed",
+    "stop unverified",
+    "unresolved active turn",
+    "Codex live transcript unavailable for managed completion evidence",
+  ])("does not let a reset refusal override unsafe execution evidence: %s", (unsafe) => {
+    for (const refusal of [
+      "Cannot verify automation input surface: composer missing or contains pending input",
+      "Agent context reset readiness deadline exhausted",
+    ])
+      expect(classifyAgentTransientFailure(`${refusal}; ${unsafe}`)).toBeNull();
   });
 
   it("does not classify ordinary task failures as transient agent failures", () => {

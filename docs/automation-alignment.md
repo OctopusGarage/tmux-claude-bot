@@ -1624,6 +1624,20 @@ Native system verification and external task preflight/host checks share the sam
 
 External task acceptance commands carry the remaining WorkOrder deadline. The synchronous shell boundary uses a separate watchdog to stop its shell process group on timeout or output overflow before returning; native invocations without an explicit budget retain their existing behavior.
 
+## Managed reset recovery evidence
+
+A managed reset input-surface refusal or reset-readiness deadline happens before
+submission of the WorkOrder prompt. The shared transient classifier exposes these
+as agent-runtime readiness failures, and project recovery preserves the original
+error when reconsidering a generic accepted-blocked aggregate closure. Recovery
+re-enters the existing bounded investigation and dispatch path; it must recheck
+the current composer, live identity and lease before input. It never discards
+pending input or relaxes reset, completion, ownership or retry-budget gates.
+Unsafe ownership or uncertain-completion evidence still blocks recovery.
+`tests/tasks/project-recovery-original-closure.test.ts` covers repeated
+reconciliation, admission deferral, mixed unsafe evidence and exhausted attempts;
+`tests/agents/transient-failure.test.ts` covers readiness classification.
+
 ## Managed Codex Turn Evidence
 
 Startup update-menu handling uses only the current complete known menu: Escape
@@ -1773,3 +1787,23 @@ is needed once this version is running. Omitted or `true` preserves alert delive
 Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
 The generic config command validates this setting as a non-secret boolean; the
 notification gateway enforces the same preference for both channels and all callers.
+
+## Telegram command-menu recovery
+
+Menu registration uses the adapter's existing bounded transport independently
+of polling. A transient network/server failure retries one request at a time
+with exponential backoff capped at 30 seconds; Telegram retry_after may require
+a longer delay. Permanent API rejection stops registration retries. Polling,
+notification registration and other channels remain available. Adapter shutdown,
+fatal authentication and normal polling return cancel scheduled retries; a late
+request cannot reschedule after cancellation. Success stops retries, and repeated
+identical failures use DEBUG after the first WARN. Regression coverage lives in
+`tests/adapters/telegram/command-registration.test.ts` and the adapter startup
+notification tests. No command catalog or owner routing changes.
+
+Resource Guardian bulk pane validation fails closed on every malformed row. Its
+diagnostic contains only a one-based row number and a fixed validation category
+(`field-count`, `empty-session`, `invalid-pid`, or `unsafe-pid`), never session
+names or raw pane output. A valid prefix does not authorize partial attribution.
+Historical generic snapshot failures need a fresh observation; they do not justify
+relaxing attribution or terminating an unverified process.

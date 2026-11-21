@@ -515,6 +515,12 @@ remain fail-closed. The bundled security assessment uses a project's own Python
 virtualenv when available, supports both npm and pnpm lockfiles, and bounds each
 subprocess to two minutes.
 
+Managed reset input-surface refusals and reset-readiness deadlines are
+pre-submission investigation evidence. Preserve those exact original errors when
+reconsidering generic aggregate blocked closures, using the existing original
+retry budget. Do not clear pending input or infer that the WorkOrder executed;
+normal live identity, composer, lease and uncertain-completion gates still apply.
+
 AI capacity, rate-limit, readiness, queue, and network transients must be
 classified before they are reported as project failures. Keep the shared
 transient classifier covered by tests, wire provider transients into bounded
@@ -553,3 +559,15 @@ with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy
 installations skip this step. Installation failures prevent startup and remain
 visible in service logs; the service manager retries. This recovery runs outside
 the bot, so it also works when the bot cannot boot.
+
+Telegram menu registration retries transient failures in-process without blocking
+polling. Diagnose permanent API rejection from `telegram.commands` logs; invalid
+credentials or command payloads require their actual configuration/source fix.
+Do not restart the service solely for a transient menu-registration failure.
+
+Resource Guardian bulk pane validation fails closed on every malformed row. Its
+diagnostic contains only a one-based row number and a fixed validation category
+(`field-count`, `empty-session`, `invalid-pid`, or `unsafe-pid`), never session
+names or raw pane output. A valid prefix does not authorize partial attribution.
+Historical generic snapshot failures need a fresh observation; they do not justify
+relaxing attribution or terminating an unverified process.
