@@ -68,11 +68,22 @@ export function reconcilePendingLedgerFromTerminalRepairQueue(input: {
   now: number;
 }): number {
   const openTaskIds = new Set<string>();
-  const terminalByTaskId = new Map<string, ScheduledTaskRepairStatus>();
+  const terminalByTaskId = new Map<
+    string,
+    { repairStatus: ScheduledTaskRepairStatus; updatedAt: number }
+  >();
   for (const record of input.coordinator.list()) {
     if (isTerminalRepairStatus(record.status)) {
       const repairStatus = ledgerRepairStatusForQueueStatus(record.status);
-      for (const taskId of record.linkedTaskIds) terminalByTaskId.set(taskId, repairStatus);
+      for (const taskId of record.linkedTaskIds) {
+        const previous = terminalByTaskId.get(taskId);
+        if (
+          previous === undefined ||
+          record.updatedAt > previous.updatedAt ||
+          (record.updatedAt === previous.updatedAt && repairStatus === "blocked")
+        )
+          terminalByTaskId.set(taskId, { repairStatus, updatedAt: record.updatedAt });
+      }
       continue;
     }
     for (const taskId of record.linkedTaskIds) openTaskIds.add(taskId);
@@ -82,8 +93,17 @@ export function reconcilePendingLedgerFromTerminalRepairQueue(input: {
   for (const record of input.ledger.listAll()) {
     if (record.repairStatus !== "pending" && record.repairStatus !== "running") continue;
     if (openTaskIds.has(record.taskId)) continue;
-    const repairStatus = terminalByTaskId.get(record.taskId);
-    if (repairStatus === undefined) continue;
+    const terminal = terminalByTaskId.get(record.taskId);
+    if (terminal === undefined) continue;
+    // A supported newer correction must reach normal guarded recovery rather than
+    // being overwritten by the older fixed projection it explicitly corrected.
+    if (
+      terminal.repairStatus === "fixed" &&
+      record.repairStatus === "pending" &&
+      record.updatedAt > terminal.updatedAt
+    )
+      continue;
+    const repairStatus = terminal.repairStatus;
     input.ledger.markRepairStatus(record.taskId, {
       repairStatus,
       updatedAt: input.now,

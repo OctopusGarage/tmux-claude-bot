@@ -39,6 +39,19 @@ not create repeated notifications.
 
 ## Recovery state-machine guarantees
 
+When a supported repair-only report corrects a task to pending, an older fixed
+queue projection must not undo that newer evidence. Daily Audit selects the newest
+terminal record per exact task and lets the newer correction reach normal guarded
+recovery. This does not reset attempt budgets or override external, uncertain or
+exhausted boundaries.
+
+Observing a retryable terminal recovery artifact consumes its execution only once.
+The Repair Coordinator persists that ledger task identity together with the retry
+transition, retains it across restart, and refuses to settle an old artifact over
+a newer WorkOrder. Repeated observations leave the attempt and retry deadline
+unchanged. Existing terminal records and uncertain legacy budgets are preserved;
+reconciliation must not infer fresh execution from mutable ledger timestamps.
+
 Project recovery completion requires an explicit durable repair link or an exact
 successful delegated counterpart. A task ID, run ID or occurrence timestamp
 mentioned in an unrelated successful investigation summary is diagnostic context,

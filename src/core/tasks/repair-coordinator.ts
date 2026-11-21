@@ -31,6 +31,7 @@ export type RepairQueueRecord = {
   leaseId?: string;
   leaseExpiresAt?: number;
   workOrderId?: string;
+  settledRecoveryTaskIds?: string[];
 };
 
 export type RepairQueueStore = {
@@ -460,23 +461,49 @@ export class RepairCoordinator {
   releaseForRetry(
     id: string,
     now: number,
-    options: { detachWorkOrder?: boolean } = {},
+    options: {
+      detachWorkOrder?: boolean;
+      settledTaskId?: string;
+      expectedWorkOrderId?: string;
+    } = {},
   ): RepairQueueRecord | undefined {
-    const record = this.store.get(id);
-    if (record === undefined) return undefined;
-    const attempt = record.attempt + 1;
-    const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
-    const retryBase = options.detachWorkOrder
-      ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
-      : withoutLease;
-    const updated: RepairQueueRecord = {
-      ...retryBase,
-      status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
-      attempt,
-      nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
-      updatedAt: now,
-    };
-    this.store.set(id, updated);
+    let updated: RepairQueueRecord | undefined;
+    this.store.update((records) => {
+      const record = records[id];
+      if (record === undefined) return false;
+      const settledTaskId = options.settledTaskId;
+      const expectedWorkOrderId = settledTaskId?.startsWith("autopilot:")
+        ? settledTaskId.slice("autopilot:".length)
+        : options.expectedWorkOrderId;
+      // Artifact observation is not a new execution, and cannot release a newer owner.
+      if (
+        settledTaskId !== undefined &&
+        (isTerminal(record.status) ||
+          record.settledRecoveryTaskIds?.includes(settledTaskId) ||
+          (record.workOrderId !== undefined && record.workOrderId !== expectedWorkOrderId) ||
+          record.status === "leased")
+      )
+        return false;
+      const attempt = record.attempt + 1;
+      const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+      const retryBase = options.detachWorkOrder
+        ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
+        : withoutLease;
+      updated = {
+        ...retryBase,
+        ...(settledTaskId === undefined
+          ? {}
+          : {
+              settledRecoveryTaskIds: [...(record.settledRecoveryTaskIds ?? []), settledTaskId],
+            }),
+        status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
+        attempt,
+        nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
+        updatedAt: now,
+      };
+      records[id] = updated;
+      return true;
+    });
     return updated;
   }
 
