@@ -1193,7 +1193,15 @@ minutes of durable healthy recovery. It selects only the most recent ended,
 bot-owned incident with failed deterministic-cleanup evidence, persists a
 repair intent before delegation, and shares the global Repair Coordinator's
 one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
-external/unknown attribution, or missing durable evidence blocks repair.
+external/unknown attribution, or missing durable evidence blocks load repair.
+Repeated exact, sanitized pane-snapshot validation failures during action
+preparation can instead enter collector diagnosis after the same stable window.
+This diagnoses bot collection code without granting process ownership: unknown
+attribution stays unknown, probes are read-only, and process termination, parser
+relaxation and historical input replay are prohibited. All such incidents share
+one diagnostic fingerprint and the existing bounded retry budget. Generic legacy
+preparation errors do not qualify; a passing fresh probe cannot establish a
+historical cause.
 The same shared admission gate serializes autonomous background heavy work per
 agent even when usage capacity is available. A new background or resource-repair
 heavy task waits while another autonomous heavy lease is active, which prevents

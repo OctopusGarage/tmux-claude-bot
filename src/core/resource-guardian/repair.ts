@@ -11,6 +11,27 @@ import type { PressureState, ResourceCircuitAdmission, ResourceIncident } from "
 
 export const RESOURCE_REPAIR_STABLE_MS = 10 * 60_000;
 export const RESOURCE_REPAIR_MAX_ATTEMPTS = 3;
+const COLLECTOR_REPAIR_FINGERPRINT = "resource-guardian:pane-snapshot-validation";
+
+/** Collector failure proves a bot diagnostic defect, never ownership of the observed load. */
+function hasCollectorDiagnosticEvidence(incident: ResourceIncident): boolean {
+  return (
+    incident.actions.filter(
+      (action) =>
+        action.kind === "resource-action" &&
+        action.outcome === "failed" &&
+        /^action preparation failed: Error: invalid tmux pane snapshot: row=[1-9]\d* reason=(field-count|empty-session|invalid-pid|unsafe-pid)$/.test(
+          action.reason,
+        ),
+    ).length >= 2
+  );
+}
+
+function repairFingerprint(incident: ResourceIncident): string {
+  return hasCollectorDiagnosticEvidence(incident)
+    ? COLLECTOR_REPAIR_FINGERPRINT
+    : incident.fingerprint;
+}
 
 export type ResourceRepairQueueState = {
   hasActiveFingerprintRepair: boolean;
@@ -87,6 +108,7 @@ export type ResourceRepairEligibilityInput = {
     attribution: "bot-owned" | "external" | "unknown";
   } | null;
   hasRepairNeededEvidence: boolean;
+  hasCollectorDiagnosticEvidence?: boolean;
   hasActiveFingerprintRepair: boolean;
   hasActiveResourceRepair: boolean;
   cooldownActive: boolean;
@@ -107,7 +129,7 @@ function unstableRecoveryReason(
   return null;
 }
 
-/** Select only a durably ended bot incident whose deterministic cleanup remained unresolved. */
+/** Select ended failed cleanup or repeated exact bot collector validation failures. */
 export function selectResourceRepairCandidate(
   incidents: readonly ResourceIncident[],
 ): ResourceIncident | undefined {
@@ -115,14 +137,15 @@ export function selectResourceRepairCandidate(
     .filter(
       (incident) =>
         incident.endedAt !== undefined &&
-        incident.attribution === "bot-owned" &&
         incident.repairWorkOrderId === undefined &&
-        incident.actions.some(
-          (action) =>
-            action.kind === "resource-action" &&
-            action.phase === "deterministic-cleanup" &&
-            action.outcome === "failed",
-        ),
+        (hasCollectorDiagnosticEvidence(incident) ||
+          (incident.attribution === "bot-owned" &&
+            incident.actions.some(
+              (action) =>
+                action.kind === "resource-action" &&
+                action.phase === "deterministic-cleanup" &&
+                action.outcome === "failed",
+            ))),
     )
     .sort(
       (left, right) =>
@@ -136,7 +159,10 @@ export function resourceRepairEligibility(
 ): ResourceRepairEligibility {
   const recoveryReason = unstableRecoveryReason(input);
   if (recoveryReason !== null) return { eligible: false, reason: recoveryReason };
-  if (input.incident?.attribution !== "bot-owned")
+  if (
+    input.incident === null ||
+    (input.incident.attribution !== "bot-owned" && !input.hasCollectorDiagnosticEvidence)
+  )
     return { eligible: false, reason: "incident is not strongly bot-owned" };
   if (!input.hasRepairNeededEvidence)
     return {
@@ -190,7 +216,11 @@ export async function dispatchStableResourceRepair(input: {
           cooldownActive: false,
           retryExhausted: false,
         }
-      : resourceRepairQueueState(input.coordinator, incident?.fingerprint ?? "", input.now);
+      : resourceRepairQueueState(
+          input.coordinator,
+          incident === undefined ? "" : repairFingerprint(incident),
+          input.now,
+        );
   if (
     incident !== undefined &&
     incident.repairWorkOrderId === undefined &&
@@ -217,6 +247,8 @@ export async function dispatchStableResourceRepair(input: {
       ? { id: incident.id, fingerprint: incident.fingerprint, attribution: incident.attribution }
       : null,
     hasRepairNeededEvidence: incident !== undefined,
+    hasCollectorDiagnosticEvidence:
+      incident !== undefined && hasCollectorDiagnosticEvidence(incident),
     hasActiveFingerprintRepair: queue.hasActiveFingerprintRepair,
     hasActiveResourceRepair: queue.hasActiveResourceRepair,
     cooldownActive: queue.cooldownActive,
@@ -396,6 +428,14 @@ export function createProductionResourceRepairDispatcher(
   return async (incident, now, persistIntent) => {
     if (!deps.config.loopEngineering.supervisor.enabled)
       return { status: "blocked", detail: "loop supervisor is disabled" };
+    const diagnosticOnly = hasCollectorDiagnosticEvidence(incident);
+    const evidence = incident.actions
+      .filter(
+        (action) =>
+          !diagnosticOnly || (action.kind === "resource-action" && action.outcome === "failed"),
+      )
+      .map((action) => action.reason)
+      .slice(-20);
     const session = sessionNameFromPath(repoPath, deps.config.projectSessionPrefix);
     return dispatchResourceGuardianRepair({
       now,
@@ -403,8 +443,8 @@ export function createProductionResourceRepairDispatcher(
       repairBranch: deps.config.runtimeGuardian.repairBranch,
       incident: {
         id: incident.id,
-        fingerprint: incident.fingerprint,
-        evidence: incident.actions.map((action) => action.reason).slice(-20),
+        fingerprint: repairFingerprint(incident),
+        evidence,
       },
       coordinator,
       gitTopLevel,
@@ -424,10 +464,11 @@ export function createProductionResourceRepairDispatcher(
       prompt: buildResourceGuardianRepairPrompt({
         repoPath,
         repairBranch: deps.config.runtimeGuardian.repairBranch,
+        diagnosticOnly,
         incident: {
           id: incident.id,
-          fingerprint: incident.fingerprint,
-          evidence: incident.actions.map((action) => action.reason).slice(-20),
+          fingerprint: repairFingerprint(incident),
+          evidence,
         },
       }),
       ...(persistIntent === undefined ? {} : { persistIntent }),

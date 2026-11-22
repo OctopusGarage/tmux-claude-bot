@@ -70,6 +70,15 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Resource Guardian separates load repair authority from collector diagnosis.
+An ended incident with repeated exact sanitized pane-snapshot validation failures
+may enter the existing stable-recovery WorkOrder path even when process
+attribution is unknown. Diagnosis preserves that attribution and forbids signals,
+validation relaxation and replay. A shared collector fingerprint preserves
+cooldown, global ownership and exhausted budgets across pressure incidents.
+Selection, dispatch and prompt regressions enforce these limits; generic legacy
+failure prose grants no diagnostic authority.
+
 Autopilot restart reconciliation requires a completed summary for the configured
 project, passing final verification and a passing review decision when present.
 It must match a completed accepted system gate with no failures and the same
