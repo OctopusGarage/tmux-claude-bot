@@ -51,6 +51,7 @@ function spawnChild(
 ): SpawnedChild {
   const child = deps.startChild();
   let intentional = false;
+  let respawnTimer: ReturnType<typeof setTimeout> | null = null;
   child.onExit(() => {
     if (intentional) return;
     crashes.push(deps.now());
@@ -65,7 +66,8 @@ function spawnChild(
       log.error("child crash-looping; waiting for next code change");
       return;
     }
-    setTimeout(() => {
+    respawnTimer = setTimeout(() => {
+      if (intentional) return;
       onCrashRespawn(spawnChild(deps, crashes, onCrashRespawn));
     }, decision.delayMs);
   });
@@ -73,6 +75,7 @@ function spawnChild(
     child,
     markIntentional: () => {
       intentional = true;
+      if (respawnTimer) clearTimeout(respawnTimer);
     },
   };
 }
@@ -91,6 +94,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   const typecheckFailureRecheckMs = deps.typecheckFailureRecheckMs ?? 30_000;
 
   function scheduleReloadCheck(delayMs: number): void {
+    if (stopped) return;
     timer = setTimeout(() => {
       pending = true;
       void maybeRun();
@@ -100,6 +104,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
 
   async function onSettled(): Promise<void> {
     const code = await deps.runTypecheck();
+    if (stopped) return;
     if (decideGate(code) === "hold") {
       deps.writeStatus(
         buildStatus(
@@ -134,6 +139,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
     old.markIntentional();
     old.child.kill("SIGTERM");
     const exited = await old.child.waitForExit?.(SUPERVISOR_EXIT_GRACE_MS);
+    if (stopped) return;
     if (exited === false) {
       log.warn("old child did not exit before reload respawn");
     }
@@ -148,8 +154,8 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   }
 
   async function maybeRun(): Promise<void> {
-    if (running) return;
-    while (pending) {
+    if (running || stopped) return;
+    while (pending && !stopped) {
       pending = false;
       running = true;
       try {
@@ -161,6 +167,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
   }
 
   const unwatch = deps.watchSrc((rel) => {
+    if (stopped) return;
     if (!shouldTriggerReload(rel)) return;
     if (timer) clearTimeout(timer);
     consecutiveTypecheckFailures = 0;
@@ -174,6 +181,7 @@ export function startSupervisor(deps: SupervisorDeps): SupervisorHandle {
     async stop(signal = "SIGTERM") {
       if (stopped) return;
       stopped = true;
+      pending = false;
       if (timer) clearTimeout(timer);
       unwatch();
       current.markIntentional();

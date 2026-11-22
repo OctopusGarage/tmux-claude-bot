@@ -1094,6 +1094,11 @@ dispatch. User chat and user-confirmed Autopilot retain ordinary FIFO queueing;
 official exhausted-capacity evidence waits rather than bypassing the provider,
 but it still uses bounded lightweight probes before the known reset time so
 early capacity recovery is not missed.
+Managed dev supervisor shutdown cancels pending crash respawns and invalidates
+in-flight reload continuations after typecheck and child-exit waits. A stopped
+supervisor must never start a replacement child or schedule a reload retry;
+`tests/dev-supervisor.test.ts` covers backoff, typecheck success/failure, and
+child-exit success/timeout races.
 Bug-fix and PR-review workers treat async/task lifecycle edits as a mandatory
 risk lens: success, error, timeout, cancellation, replacement, and shutdown
 paths must be traced when touched code can continue work, spawn background
