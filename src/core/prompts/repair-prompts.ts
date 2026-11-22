@@ -14,6 +14,7 @@ type RuntimeGuardianRepairFinding = {
 export function buildResourceGuardianRepairPrompt(input: {
   repoPath: string;
   repairBranch: string;
+  diagnosticOnly?: boolean;
   incident: { id: string; fingerprint: string; evidence: readonly string[] };
 }): string {
   return [
@@ -24,6 +25,13 @@ export function buildResourceGuardianRepairPrompt(input: {
     `Fingerprint: ${input.incident.fingerprint}`,
     "",
     "Scope and safety:",
+    ...(input.diagnosticOnly
+      ? [
+          "- Collector diagnosis only: investigate the bot's pane-snapshot validation failure; unknown process ownership remains unknown.",
+          "- Use bounded read-only probes; never terminate processes, relax attribution validation, replay historical inputs, or reset retry budgets.",
+          "- A passing fresh probe does not prove the historical cause; record exact sanitized evidence and stop without speculative changes.",
+        ]
+      : []),
     "- Work only in this tmux-claude-bot repository; never edit a target project.",
     "- Confirm `git -C <configured-repository> rev-parse --show-toplevel` before mutation.",
     "- Re-check the bounded incident evidence before editing and make no change unless the bot caused a reproducible issue.",

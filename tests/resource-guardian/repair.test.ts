@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HandlerDeps } from "../../src/core/deps.js";
+import { buildResourceGuardianRepairPrompt } from "../../src/core/prompts/repair-prompts.js";
 import {
   createProductionResourceRepairDispatcher,
   dispatchResourceGuardianRepair,
@@ -81,6 +82,149 @@ describe("resourceRepairEligibility", () => {
 });
 
 describe("selectResourceRepairCandidate", () => {
+  function collectorIncident(): ResourceIncident {
+    return {
+      schemaVersion: 1,
+      id: "collector-incident",
+      fingerprint: "pressure-unique",
+      attribution: "unknown",
+      startedAt: 1,
+      endedAt: 2,
+      pressure: "critical",
+      samples: [],
+      transitions: [],
+      actions: [1, 2].map((at) => ({
+        kind: "resource-action",
+        at,
+        outcome: "failed",
+        reason:
+          "action preparation failed: Error: invalid tmux pane snapshot: row=1 reason=field-count",
+      })),
+    };
+  }
+
+  it("dispatches ended collector validation failures for diagnosis without claiming process ownership", async () => {
+    const incident = collectorIncident();
+    const dispatch = vi.fn<Parameters<typeof dispatchStableResourceRepair>[0]["dispatch"]>(
+      async () => ({ status: "queued" as const, detail: "queued", workOrderId: "diagnostic-wo" }),
+    );
+    const writeIncident = vi.fn();
+    await dispatchStableResourceRepair({
+      now: 700_000,
+      pressure: "healthy",
+      circuit: "open",
+      stableSince: 100_000,
+      store: { listIncidents: () => [incident], writeIncident },
+      dispatch,
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ attribution: "unknown", id: incident.id });
+    expect(writeIncident.mock.calls.at(-1)?.[0]).toMatchObject({
+      attribution: "unknown",
+      repairWorkOrderId: "diagnostic-wo",
+    });
+    expect(incident.repairWorkOrderId).toBeUndefined();
+  });
+
+  it("does not turn generic preparation failures or active incidents into diagnostic authority", () => {
+    const incident = collectorIncident();
+    const { endedAt: _, ...active } = incident;
+    for (const candidate of [
+      active,
+      {
+        ...incident,
+        actions: incident.actions.map((action) => ({
+          ...action,
+          reason: "action preparation failed: Error: unknown process",
+        })),
+      },
+    ]) {
+      expect(selectResourceRepairCandidate([candidate])).toBeUndefined();
+    }
+  });
+
+  it("keeps collector diagnosis inside a shared retry budget across pressure incidents", async () => {
+    const incident = collectorIncident();
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const queued = coordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/repo",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "resource-guardian:pane-snapshot-validation",
+      taskId: "older-pressure-incident",
+      now: 1,
+    });
+    for (let n = 0; n < 3; n++) coordinator.releaseForRetry(queued.id, 10 + n);
+    const dispatch = vi.fn();
+    await dispatchStableResourceRepair({
+      now: 700_000,
+      pressure: "healthy",
+      circuit: "open",
+      stableSince: 100_000,
+      store: { listIncidents: () => [incident], writeIncident: vi.fn() },
+      coordinator,
+      dispatch,
+    });
+    expect(selectResourceRepairCandidate([incident])?.id).toBe(incident.id);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(coordinator.list()).toHaveLength(1);
+    expect(coordinator.list()[0]?.attempt).toBe(3);
+  });
+
+  it("states diagnostic-only scope in the collector recovery prompt", () => {
+    const prompt = buildResourceGuardianRepairPrompt({
+      repoPath: "/repo",
+      repairBranch: "repair/resource",
+      diagnosticOnly: true,
+      incident: {
+        id: "incident",
+        fingerprint: "resource-guardian:pane-snapshot-validation",
+        evidence: [],
+      },
+    });
+    expect(prompt).toContain("Collector diagnosis only");
+    expect(prompt).toContain("never terminate processes");
+    expect(prompt).toContain("unknown process ownership remains unknown");
+  });
+
+  it("uses the diagnostic fingerprint and scope at the production delegation boundary", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const requirements: string[] = [];
+    const dispatcher = createProductionResourceRepairDispatcher(
+      {
+        config: {
+          projectSessionPrefix: "tmux_proj_",
+          loopEngineering: { supervisor: { enabled: true } },
+          runtimeGuardian: {
+            repoPath: "/repo",
+            repairBranch: "repair/resource",
+            worktreeIsolation: "isolated",
+          },
+        },
+      } as unknown as HandlerDeps,
+      {
+        coordinator,
+        gitTopLevel: async () => "/repo",
+        setSessionPath: (() => undefined) as never,
+        start: (async (_deps: unknown, input: { requirement: string }) => {
+          requirements.push(input.requirement);
+          return { status: "queued", runId: "diagnostic-work-order" };
+        }) as never,
+      },
+    );
+    const incident = collectorIncident();
+    const result = await dispatcher(incident, 700_000);
+    expect(result.status).toBe("queued");
+    expect(coordinator.list()[0]).toMatchObject({
+      fingerprint: "resource-guardian:pane-snapshot-validation",
+      workOrderId: "diagnostic-work-order",
+    });
+    expect(requirements[0]).toContain("Collector diagnosis only");
+    expect(requirements[0]).toContain("row=1 reason=field-count");
+    expect(incident.attribution).toBe("unknown");
+  });
+
   it("selects the most recent bot-owned ended incident only after durable failed cleanup", () => {
     const incident = (
       id: string,

@@ -192,7 +192,7 @@ export const GOVERNED_PROMPTS: readonly PromptSpec[] = [
   },
   {
     id: "repair.resource-guardian",
-    version: 1,
+    version: 2,
     owner: "src/core/resource-guardian/repair.ts",
     audience: "active-agent",
     riskLevel: "high",
