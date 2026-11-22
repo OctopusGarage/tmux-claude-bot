@@ -70,6 +70,15 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Autopilot restart reconciliation requires a completed summary for the configured
+project, passing final verification and a passing review decision when present.
+It must match a completed accepted system gate with no failures and the same
+normalized review snapshot; the writer's null snapshot preserves non-review runs.
+An accepted blocked gate is a valid blocked outcome, never completion authority.
+Contradictory artifacts cannot close linked repairs or release a non-terminal
+owner; terminal inconsistencies return the ledger to guarded recovery. Task
+reconciliation regressions cover result, failure and review-snapshot mismatches.
+
 Daily Audit artifact discovery honors a completed passing final summary's matching
 accepted system gate before applying legacy follow-up keyword checks. Run and
 project identities, a valid passing review snapshot, empty gate failures and passed

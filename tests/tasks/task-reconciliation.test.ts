@@ -76,6 +76,7 @@ function arrangeTerminalRun(
         projectId: order.projectId,
         resultStatus: "completed",
         accepted: true,
+        supervisorReviewGate: null,
       })}\n`,
     );
   }
@@ -155,6 +156,129 @@ describe("autopilot delegated task reconciliation", () => {
     expect(
       new DailyTaskLedger().listAll().find((item) => item.taskId === `autopilot:${runId}`),
     ).toMatchObject({ status: "failed", repairStatus: "pending" });
+  });
+
+  it.each([
+    { resultStatus: "blocked", failures: [] },
+    { resultStatus: "completed", failures: ["verification failed"] },
+  ])("does not close repairs from contradictory accepted gate %j", async (gate) => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    writeFileSync(
+      join(runDir, "system-gate.json"),
+      JSON.stringify({ ...gate, accepted: true, workOrderId: runId, projectId: "tmux-claude-bot" }),
+    );
+    startLedger(runId);
+    const ledger = new DailyTaskLedger();
+    ledger.expect({ taskId: "original", source: "daily-audit", name: "audit", scheduledAt: 1 });
+    ledger.fail("original", { endedAt: 2, error: "dispatch-failed" });
+    const coordinator = new RepairCoordinator();
+    const queue = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo/tmux-claude-bot",
+      source: "daily-audit",
+      taskFamily: "audit",
+      fingerprint: "dispatch-failed",
+      taskId: "original",
+      now: 1,
+    });
+    coordinator.linkTaskIds(queue.id, [`autopilot:${runId}`], 2);
+    const result = await reconcileAutopilotDelegatedTasks({ now: 3, ledger });
+    expect(result).toMatchObject({ finished: 0, failed: 1 });
+    expect(ledger.listAll().find((record) => record.taskId === `autopilot:${runId}`)).toMatchObject(
+      {
+        status: "failed",
+        repairStatus: "pending",
+      },
+    );
+    expect(ledger.listAll().find((record) => record.taskId === "original")?.repairStatus).toBe(
+      "pending",
+    );
+    expect(coordinator.list().find((record) => record.id === queue.id)?.status).toBe("pending");
+  });
+
+  it.each(["completed", "in-flight"] as const)(
+    "requires the same review snapshot before settling %s ownership",
+    async (state) => {
+      const runId = arrangeTerminalRun(state, true);
+      const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+      const summaryPath = join(runDir, "supervisor-final-summary.json");
+      const reviewGate = {
+        preMutationReview: [],
+        postMutationReview: [],
+        aiReview: "passed",
+        deterministicGates: [],
+        decision: "pass",
+        notes: ["current revision"],
+      };
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          ...JSON.parse(readFileSync(summaryPath, "utf8")),
+          reviewGate,
+        }),
+      );
+      const gatePath = join(runDir, "system-gate.json");
+      const gate = JSON.parse(readFileSync(gatePath, "utf8"));
+      writeFileSync(
+        gatePath,
+        JSON.stringify({
+          ...gate,
+          supervisorReviewGate: { ...reviewGate, notes: ["previous revision"] },
+        }),
+      );
+      startLedger(runId);
+      const result = await reconcileAutopilotDelegatedTasks({ now: 3 });
+      expect(result.finished).toBe(0);
+      expect(new DailyTaskLedger().listAll()[0]?.status).toBe(
+        state === "in-flight" ? "running" : "failed",
+      );
+      // A matching fresh snapshot authorizes settlement of the still-live owner.
+      if (state === "in-flight") {
+        writeFileSync(gatePath, JSON.stringify({ ...gate, supervisorReviewGate: reviewGate }));
+        expect(await reconcileAutopilotDelegatedTasks({ now: 4 })).toMatchObject({ finished: 1 });
+      }
+    },
+  );
+
+  it.each([
+    { finalVerification: "failed" },
+    { projectId: "foreign-project" },
+    {
+      reviewGate: {
+        preMutationReview: [],
+        postMutationReview: [],
+        aiReview: "passed",
+        deterministicGates: [],
+        decision: "block",
+        notes: [],
+      },
+    },
+  ])("rejects contradictory completed summary %j", async (contradiction) => {
+    const runId = arrangeTerminalRun("completed", true);
+    const runDir = join(process.env.TCB_STATE_DIR ?? "", "loop-runs", "tmux-claude-bot", runId);
+    const summaryPath = join(runDir, "supervisor-final-summary.json");
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(summaryPath, "utf8")),
+        ...contradiction,
+      }),
+    );
+    const gatePath = join(runDir, "system-gate.json");
+    writeFileSync(
+      gatePath,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(gatePath, "utf8")),
+        supervisorReviewGate: "reviewGate" in contradiction ? contradiction.reviewGate : null,
+      }),
+    );
+    startLedger(runId);
+    expect(await reconcileAutopilotDelegatedTasks({ now: 3 })).toMatchObject({
+      finished: 0,
+      failed: 1,
+    });
+    expect(new DailyTaskLedger().listAll()[0]?.repairStatus).toBe("pending");
   });
 
   it("does not report accepted blocked system gates as mismatched", async () => {
