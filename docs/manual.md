@@ -1404,9 +1404,12 @@ open-ended mandate as an operator asking whether the last 24 hours completed
 normally. The prompt must not shrink to a fixed checklist: when it finds an
 abnormality, it also investigates why existing automation did not detect, retry,
 or repair it without a manual prompt, and fixes that bot-owned automation gap when evidence
-is sufficient. If admission blocks the broad sweep before a WorkOrder is queued,
-the tick records a `system-self-heal` ledger failure with the exact deferral
-reason so the next audit has durable evidence. Disable the whole tick only for deliberate maintenance windows with
+is sufficient. If ordinary admission blocks the broad sweep before a WorkOrder is
+queued, the tick records a `system-self-heal` ledger occurrence as
+`skipped/not-needed` with the exact wait reason. A later hourly sweep retries
+through normal admission; the skipped occurrence does not mean an investigation
+executed or the underlying tasks recovered. Actual preparation failures remain
+`failed/pending` for repair. Disable the whole tick only for deliberate maintenance windows with
 `SYSTEM_SELF_HEAL_ENABLED=false` or `SYSTEM_SELF_HEAL_TICK_MS=0`; disable only
 the broad agent sweep with `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false`.
 
