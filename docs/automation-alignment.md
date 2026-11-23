@@ -476,6 +476,10 @@ blocks before WorkOrder creation. Exact pressure, quiet-hours and active-project
 ownership waits are skipped/not-needed; actual preparation failures remain
 failed/pending. A later sweep retries through normal admission without claiming
 that the deferred investigation executed.
+The manual's Daily Task Audit section must preserve this distinction: a skipped
+sweep is neither a failed execution nor evidence that the underlying tasks
+recovered. Keep it aligned with `recordBlockedAgentSweep` and the admission-wait
+regressions in `tests/tasks/system-self-heal-service.test.ts`.
 Daily Task Audit service ticks must prune terminal task and repair history by
 task occurrence or queue creation time on a bounded retention window before
 reconciliation. Completed/fixed/superseded history is evidence, not an
