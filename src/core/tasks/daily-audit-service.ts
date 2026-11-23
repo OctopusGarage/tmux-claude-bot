@@ -244,14 +244,38 @@ async function runDailyTaskAuditServiceTickInternal(
         ? "unavailable"
         : await dispatchRepairQueue({ coordinator, ledger, input, repoPath });
   }
-  const notificationResult = await input.notifications.notify(
-    buildDailyTaskAuditNotification({
-      summary: result.summary,
-      repairCandidates: result.repairCandidates,
-      channel: input.config.channel,
-      repairDispatch: appendProjectRecoveryDispatch(repairDispatch, projectRecovery),
-    }),
-  );
+  const notification = buildDailyTaskAuditNotification({
+    summary: result.summary,
+    repairCandidates: result.repairCandidates,
+    channel: input.config.channel,
+    repairDispatch: appendProjectRecoveryDispatch(repairDispatch, projectRecovery),
+  });
+  let notificationResult = await input.notifications.notify(notification);
+  // One serial retry per failed channel; never resend to a channel that succeeded.
+  if (notificationResult.status === "partial") {
+    const deliveries = [...notificationResult.deliveries];
+    for (const [index, delivery] of deliveries.entries()) {
+      if (
+        delivery.ok ||
+        delivery.failedStage !== "message" ||
+        delivery.messageSent !== false ||
+        !/network request.*failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|TLS handshake timeout/i.test(
+          delivery.error ?? "",
+        )
+      )
+        continue;
+      const retry = await input.notifications.notify({
+        ...notification,
+        channel: delivery.channel,
+      });
+      const retriedDelivery = retry.deliveries.find((item) => item.channel === delivery.channel);
+      if (retriedDelivery !== undefined) deliveries[index] = retriedDelivery;
+    }
+    notificationResult = {
+      status: deliveries.every((delivery) => delivery.ok) ? "sent" : "partial",
+      deliveries,
+    };
+  }
   const notificationLog = {
     scheduledAt,
     status: notificationResult.status,

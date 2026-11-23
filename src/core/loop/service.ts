@@ -61,7 +61,10 @@ import {
   type LoopExecutionWorktreePreparationFailure,
   prepareLoopExecutionWorktrees,
 } from "./execution-worktree.js";
-import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
+import {
+  automationGovernanceRepairFailures,
+  repositoryPullRequestReviewDisposition,
+} from "./final-summary-contract.js";
 import {
   recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
@@ -3356,7 +3359,11 @@ export function runSupervisedSystemGateOutcome(input: {
       },
     };
   }
-  const failures: string[] = [];
+  const governanceRepairFailures = automationGovernanceRepairFailures(
+    input.workOrder,
+    input.result.summary,
+  );
+  const failures: string[] = [...governanceRepairFailures];
   const evidence: string[] = [...preVerificationEvidence, ...checkpointGate.evidence];
   const evalReport = buildEvalReportFromSupervisorSummary({
     workOrderId: input.workOrder.id,
@@ -3509,6 +3516,7 @@ export function runSupervisedSystemGateOutcome(input: {
 
   if (
     requiresLoopCreatedPullRequestGate &&
+    governanceRepairFailures.length === 0 &&
     input.project.pullRequest.enabled &&
     supervisorCommitRefs.length > 0
   ) {
@@ -3530,15 +3538,28 @@ export function runSupervisedSystemGateOutcome(input: {
           commitBranch,
           runCommand: input.runCommand,
         });
-        const publication = publishMissingSupervisedPullRequest({
-          project: input.project,
-          workOrder: input.workOrder,
-          summary: input.result.summary,
-          commitBranch,
-          lookup: initialPrLookup,
-          runCommand: input.runCommand,
-          runGit: prRunGit,
-        });
+        const publication =
+          input.workOrder.task?.kind === "automation-governance-review"
+            ? {
+                lookup: initialPrLookup,
+                published: false,
+                ...(initialPrLookup.status === 0 &&
+                governanceRepairPrIdentityMatches(input.result.summary, initialPrLookup.stdout)
+                  ? {}
+                  : {
+                      failure:
+                        "governance repair PR identity is missing or does not match its severity decision",
+                    }),
+              }
+            : publishMissingSupervisedPullRequest({
+                project: input.project,
+                workOrder: input.workOrder,
+                summary: input.result.summary,
+                commitBranch,
+                lookup: initialPrLookup,
+                runCommand: input.runCommand,
+                runGit: prRunGit,
+              });
         if (publication.published) {
           evidence.push("published missing supervised pull request");
         }
@@ -3619,6 +3640,12 @@ export function runSupervisedSystemGateOutcome(input: {
             });
           }
           failures.push(...prGate.failures, ...pendingCheckFailures(prGate.pendingChecks));
+          if (
+            input.workOrder.task?.kind === "automation-governance-review" &&
+            prGate.state === "MERGED"
+          ) {
+            failures.push("governance repair PR must not be merged");
+          }
           if (prGate.failures.length === 0 && prGate.pendingChecks.length === 0) {
             evidence.push("PR commit, body, mergeability, and status-check gate passed");
           }
@@ -3644,6 +3671,7 @@ export function runSupervisedSystemGateOutcome(input: {
   if (!requiresGitGate) evidence.push("no mutating git or PR gate required");
   if (
     requiresLoopCreatedPullRequestGate &&
+    governanceRepairFailures.length === 0 &&
     input.project.pullRequest.enabled &&
     supervisorCommitRefs.length === 0
   ) {
@@ -3678,6 +3706,29 @@ export function runSupervisedSystemGateOutcome(input: {
     failures,
     evidence,
   };
+}
+
+function governanceRepairPrIdentityMatches(
+  summary: LoopSupervisorFinalSummary,
+  stdout: string,
+): boolean {
+  try {
+    const value = JSON.parse(stdout) as { url?: unknown };
+    if (typeof value.url !== "string") return false;
+    const url = new URL(value.url);
+    const match = url.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/([1-9]\d*)$/);
+    const decision = summary.pullRequestDecisions?.[0];
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      match !== null &&
+      decision !== undefined &&
+      match[1]?.toLowerCase() === decision.repository.toLowerCase() &&
+      Number(match[2]) === decision.number
+    );
+  } catch {
+    return false;
+  }
 }
 
 function lookupSupervisedPullRequest(input: {

@@ -31,6 +31,7 @@ export type LoopSupervisorPullRequestDecision = {
   number: number;
   repository: string;
   outcome: LoopSupervisorPullRequestDecisionOutcome;
+  severity?: "P0" | "P1" | "P2" | "P3";
   boundary?: LoopSupervisorPullRequestHumanBoundary;
   reason?: LoopSupervisorPullRequestCloseReason;
   reviewedHeadSha?: string;

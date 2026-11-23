@@ -70,6 +70,22 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Governance repair decisions retain typed P0–P3 severity through final-summary
+normalization. Parser and system acceptance require P0/P1 evidence, explicit
+repair permission, at most one PR and no merged outcome. Repair commits without
+a structured decision cannot trigger the system's PR publication fallback.
+The observed branch PR must match the declared repository/number; missing or
+foreign PRs block instead of invoking fallback publication. Read-only reports and
+ordinary repository reviews remain compatible.
+`tests/loop/governance-repair-policy.test.ts` covers these boundaries.
+
+Daily Audit retries an explicit transient partial message-delivery failure once
+per failed channel within the same tick. Successful channels are never resent;
+permanent errors, missing senders and attachment failures are not replayed.
+An exhausted retry stays partial and visible to the existing self-audit path.
+`tests/tasks/daily-audit-service.test.ts` covers recovery, exhaustion and permanent
+rejection without changing admission, repair dispatch or schedule ownership.
+
 Resource Guardian separates load repair authority from collector diagnosis.
 An ended incident with repeated exact sanitized pane-snapshot validation failures
 may enter the existing stable-recovery WorkOrder path even when process
