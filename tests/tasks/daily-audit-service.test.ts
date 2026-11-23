@@ -58,6 +58,92 @@ function readLogEntries(): Array<{ level: string; component?: string; msg: strin
 }
 
 describe("runDailyTaskAuditServiceTick", () => {
+  it.each([true, false])(
+    "retries a transient partial notification once without duplicating Lark (recovers=%s)",
+    async (recovers) => {
+      process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-audit-partial-retry-"));
+      const notifications = new NotificationGateway();
+      let attempts = 0;
+      const telegram = vi.fn(async () => {
+        attempts++;
+        if (!recovers || attempts === 1)
+          throw new Error("Network request for 'sendMessage' failed!");
+      });
+      const lark = vi.fn(async () => {});
+      notifications.register("telegram", telegram);
+      notifications.register("lark", lark);
+      const now = Date.parse("2026-07-28T02:05:00Z");
+      const result = await runDailyTaskAuditServiceTick({
+        now,
+        config: {
+          enabled: true,
+          tickMs: 300000,
+          schedule: "0 2 * * *",
+          repoPath: "/repo/hub",
+          repairBranch: "dev",
+          autoRepair: false,
+          repairWorktreeIsolation: "isolated",
+          channel: "both",
+        },
+        notifications,
+        discover: () => [
+          {
+            taskId: "broken-task",
+            updatedAt: now,
+            source: "loop-engineering",
+            name: "Broken task",
+            scheduledAt: now - 1000,
+            status: "failed",
+            error: "test failure",
+          },
+        ],
+      });
+      expect(telegram).toHaveBeenCalledTimes(2);
+      expect(lark).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        fired: true,
+        notificationStatus: recovers ? "sent" : "partial",
+      });
+    },
+  );
+  it("does not retry a permanent partial notification failure", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-audit-permanent-"));
+    const notifications = new NotificationGateway();
+    const telegram = vi.fn(async () => {
+      throw new Error("Forbidden: bot was blocked by the user");
+    });
+    notifications.register("telegram", telegram);
+    notifications.register("lark", async () => {});
+    const now = Date.parse("2026-07-28T02:05:00Z");
+    const result = await runDailyTaskAuditServiceTick({
+      now,
+      config: {
+        enabled: true,
+        tickMs: 300000,
+        schedule: "0 2 * * *",
+        repoPath: "/repo/hub",
+        repairBranch: "dev",
+        autoRepair: false,
+        repairWorktreeIsolation: "isolated",
+        channel: "both",
+      },
+      notifications,
+      discover: () => [
+        {
+          taskId: "broken-task",
+          updatedAt: now,
+          source: "loop-engineering",
+          name: "Broken task",
+          scheduledAt: now - 1000,
+          status: "failed",
+          error: "test failure",
+        },
+      ],
+    });
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ fired: true, notificationStatus: "partial" });
+  });
+
   it("serializes overlapping audit ticks instead of dispatching duplicate repairs", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-daily-audit-lock-"));
     let release!: () => void;
