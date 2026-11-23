@@ -408,11 +408,32 @@ function recordForSupervisorArtifacts(input: {
     });
   }
   if (finalSummary !== null) {
+    const acceptedSystemGate = hasMatchingCompletedSystemGate(input, finalSummary, systemGate);
+    const state = readJsonRecord(join(input.runDir, LOOP_RUN_ARTIFACTS.workOrderState));
+    if (
+      !acceptedSystemGate &&
+      state?.runId === basename(input.runDir) &&
+      state.projectId === input.projectId &&
+      state.scheduledAt === input.scheduledAt &&
+      ["dispatching", "queued", "in-flight", "needs-revision"].includes(String(state.status))
+    ) {
+      return {
+        taskId: input.taskId,
+        source: "loop-engineering",
+        name: `${input.projectId} ${input.jobKind}`,
+        scheduledAt: input.scheduledAt,
+        status: "running",
+        repairStatus: "running",
+        summary: "Supervisor summary is intermediate evidence; system acceptance is pending.",
+        reportPath: finalSummaryPath,
+        updatedAt: input.now,
+      };
+    }
     return recordForSupervisorFinalSummary({
       ...input,
       path: finalSummaryPath,
       summary: finalSummary,
-      acceptedSystemGate: hasMatchingCompletedSystemGate(input, finalSummary, systemGate),
+      acceptedSystemGate,
     });
   }
   if (supervisorSummary !== null) {
@@ -512,9 +533,16 @@ function latestSuccessfulLoopRunAfter(input: {
     if (match === null || match.scheduledAt <= input.scheduledAt || match.scheduledAt > input.now) {
       continue;
     }
-    const finalSummaryPath = join(root, name, LOOP_RUN_ARTIFACTS.supervisorFinalSummary);
-    const finalSummary = readJsonRecord(finalSummaryPath);
-    if (finalSummary?.status !== "completed") continue;
+    const runDir = join(root, name);
+    const finalSummaryPath = join(runDir, LOOP_RUN_ARTIFACTS.supervisorFinalSummary);
+    if (readJsonRecord(finalSummaryPath)?.status !== "completed") continue;
+    const record = recordForSupervisorArtifacts({
+      ...input,
+      scheduledAt: match.scheduledAt,
+      taskId: `loop:${input.jobKey}:${match.scheduledAt}`,
+      runDir,
+    });
+    if (record?.status !== "success") continue;
     if (latest === null || match.scheduledAt > latest.scheduledAt) {
       latest = { scheduledAt: match.scheduledAt, path: finalSummaryPath };
     }

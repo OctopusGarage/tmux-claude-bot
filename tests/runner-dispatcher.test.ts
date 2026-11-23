@@ -534,10 +534,11 @@ describe("bounded fresh Codex registration", () => {
     expect(f.dispatcher.consumeFreshLaunch(f.session, 987)).toMatchObject({ agentPid: 987 });
   });
   it("preserves an unused same-process grant across an idempotent start after long external work", async () => {
+    vi.useFakeTimers();
     let probes = 0;
     const f = fixture(async () => (++probes === 1 ? absent : live));
     await f.dispatcher.start(f.session);
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 21 * 60 * 1000);
+    vi.setSystemTime(Date.now() + 21 * 60 * 1000);
     await f.dispatcher.start(f.session);
     expect(f.dispatcher.consumeFreshLaunch(f.session, 987)).toMatchObject({
       agentPid: 987,

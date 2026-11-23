@@ -1682,3 +1682,12 @@ the legacy follow-up keyword heuristic. Follow-ups about unrelated failing CI do
 not reopen that accepted task. The run and project identities, review snapshot,
 empty gate failures and passed final verification must match; otherwise existing
 anomaly detection and repair gates remain authoritative.
+
+### Scheduled discovery acceptance window
+
+Daily Task Audit discovery distinguishes a worker's completed summary from system
+acceptance while its matching WorkOrder remains nonterminal. It reports the task
+as running until a matching accepted completed system gate is durable, preserving
+normal ownership and recovery. Older failures are superseded only by later runs
+that pass the same discovery classification, including system rejection and final
+verification checks. Legacy summary-only history remains supported.

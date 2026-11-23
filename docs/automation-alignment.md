@@ -471,9 +471,11 @@ consuming dispatch attempts and resume when re-enabled. The pause takes effect
 when a tick reads the updated config; it does not cancel already admitted work
 or invalidate an in-progress tick's snapshot. Project Recovery and active
 delegation retain their separate admission semantics.
-System Self-Heal broad agent sweeps must leave durable retryable failure ledger
-evidence when admission blocks the sweep before WorkOrder creation; otherwise
-the hourly operator-equivalent check can disappear from the next audit window.
+System Self-Heal broad agent sweeps retain a ledger occurrence when admission
+blocks before WorkOrder creation. Exact pressure, quiet-hours and active-project
+ownership waits are skipped/not-needed; actual preparation failures remain
+failed/pending. A later sweep retries through normal admission without claiming
+that the deferred investigation executed.
 Daily Task Audit service ticks must prune terminal task and repair history by
 task occurrence or queue creation time on a bounded retention window before
 reconciliation. Completed/fixed/superseded history is evidence, not an
@@ -523,12 +525,10 @@ When cleanup refuses a bot-owned path because Git cannot prove that path is the
 expected worktree, retain the path and coalesce repeated refusals into bounded
 periodic warnings with suppressed-repeat evidence; never trade log quietness for
 unsafe recursive deletion.
-That durable evidence is a `failed/pending` repair candidate, because no
-WorkOrder was created and the next scheduled sweep alone is not enough evidence
-that the operator-equivalent check actually ran.
-Legacy deferred sweep records that were stored as `skipped/not-needed` must be
-reopened to `failed/pending` during audit reconciliation so historical missed
-operator-equivalent checks do not stay hidden.
+Legacy exact admission-only sweep failures normalize to skipped/not-needed
+only when they retain direct pre-WorkOrder evidence and no active repair owner.
+Other legacy deferred sweep failures retain the existing repair path. A skipped
+admission wait never certifies that the operator-equivalent investigation ran.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing
@@ -1883,3 +1883,15 @@ diagnostic contains only a one-based row number and a fixed validation category
 names or raw pane output. A valid prefix does not authorize partial attribution.
 Historical generic snapshot failures need a fresh observation; they do not justify
 relaxing attribution or terminating an unverified process.
+
+### Discovery during system acceptance
+
+Daily Audit discovery keeps an identity-matching nonterminal scheduled WorkOrder
+`running` when its final summary is present but a matching completed accepted
+system gate is absent. The summary remains intermediate evidence during worker
+and supervisor finalization. A matching accepted gate can establish completion
+before terminal state publication; explicit system rejection retains precedence.
+Later-success supersession uses the same artifact classification, so live,
+rejected or failed-verification summaries cannot close older failures. Legacy
+summary-only artifacts without matching active state retain compatibility.
+`tests/tasks/task-discovery-acceptance.test.ts` covers these boundaries.
