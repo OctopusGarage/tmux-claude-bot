@@ -187,7 +187,14 @@ describe("fresh registry reads", () => {
       const historical = run(`history-${index}`, index % 2 === 0 ? "completed" : "cancelled", {
         journal: true,
       });
-      settledJournal(historical);
+      // Historical journals must not be opened. Keep their setup independent of
+      // live delegation transitions; only the current journal needs that lifecycle.
+      const attempts = join(dirname(historical.finalSummaryPath ?? ""), "iteration-attempts");
+      mkdirSync(attempts);
+      writeFileSync(
+        join(attempts, "first.json"),
+        JSON.stringify({ attemptId: "historical-sentinel", supervisorSession: SESSION }),
+      );
     }
     const pending = run("current", "in-flight", { journal: true });
     settledJournal(pending);

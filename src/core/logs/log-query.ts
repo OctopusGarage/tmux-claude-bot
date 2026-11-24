@@ -129,8 +129,8 @@ export function readRecords(days = 1): LogRecord[] {
   return readLogReport(days).records;
 }
 
-export function queryLogs(filter: LogFilter, days = 1): LogRecord[] {
-  return filterRecords(readRecords(days), filter);
+export function queryLogs(filter: LogFilter, days?: number): LogRecord[] {
+  return filterRecords(readRecords(days ?? resolveLogDays(undefined, filter.since)), filter);
 }
 
 function parseLogRecord(value: unknown): LogRecord | null {
@@ -157,6 +157,25 @@ export function parseLogDays(value: string): number {
     throw new Error(`invalid --days "${value}" (expected an integer from 1 to ${MAX_LOG_DAYS})`);
   }
   return days;
+}
+
+/** Include every local date touched by --since unless --days explicitly limits it. */
+export function resolveLogDays(
+  days: string | undefined,
+  since: number | undefined,
+  now = Date.now(),
+): number {
+  if (days !== undefined) return parseLogDays(days);
+  if (since === undefined) return 1;
+  if (!Number.isFinite(new Date(since).getTime())) {
+    throw new Error("invalid --since (timestamp is outside the supported date range)");
+  }
+  const dayMs = 86_400_000;
+  const localDay = (time: number): number => {
+    const date = new Date(time);
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / dayMs;
+  };
+  return Math.max(1, Math.min(MAX_LOG_DAYS, localDay(now) - localDay(since) + 1));
 }
 
 export function summarizeLogs(

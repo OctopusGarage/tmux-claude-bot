@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { parseSupervisorReviewGate } from "../loop/final-summary-contract.js";
 import {
   readLoopSupervisorWorkerLeaseState,
   releaseLoopSupervisorWorker,
@@ -10,7 +12,10 @@ import {
   listTerminalLoopSupervisorWorkOrders,
   writeLoopSupervisorWorkOrderState,
 } from "../loop/supervisor-state.js";
-import { parseSupervisorFinalSummaryFile } from "../loop/work-order.js";
+import {
+  type LoopSupervisorFinalSummary,
+  parseSupervisorFinalSummaryFile,
+} from "../loop/work-order.js";
 import { RepairCoordinator } from "./repair-coordinator.js";
 import { DailyTaskLedger } from "./task-ledger.js";
 
@@ -59,6 +64,7 @@ export async function reconcileAutopilotDelegatedTasks(
       gatePath,
       actionable.workOrder.id,
       actionable.workOrder.projectId,
+      summary.ok ? summary.summary : undefined,
     );
     if (!terminalRunIds.has(runId) && !gate.ok) continue;
     result.checked += 1;
@@ -154,6 +160,7 @@ export async function reconcileAutopilotDelegatedTasks(
       join(actionable.runDir, "system-gate.json"),
       actionable.workOrder.id,
       actionable.workOrder.projectId,
+      summary.ok ? summary.summary : undefined,
     );
     if (!(summary.ok && summary.summary.status === "completed" && gate.ok)) continue;
     reconcileOperatorEquivalentSelfHealQueue({
@@ -200,6 +207,7 @@ function readAcceptedSystemGate(
   path: string,
   workOrderId: string,
   projectId: string,
+  summary: LoopSupervisorFinalSummary | undefined,
 ): { ok: true } | { ok: false; reason: string } {
   if (!existsSync(path)) return { ok: false, reason: `missing system gate (${path})` };
   try {
@@ -212,6 +220,8 @@ function readAcceptedSystemGate(
       resultStatus: string;
       workOrderId: string;
       projectId: string;
+      failures: unknown;
+      supervisorReviewGate: unknown;
     }>;
     if (
       gate.accepted !== true ||
@@ -222,6 +232,23 @@ function readAcceptedSystemGate(
         ok: false,
         reason: `rejected or mismatched system gate (${path})`,
       };
+    }
+    if (
+      summary?.status === "completed" &&
+      (summary.projectId !== projectId ||
+        summary.finalVerification !== "passed" ||
+        (summary.reviewGate !== undefined && summary.reviewGate.decision !== "pass") ||
+        gate.resultStatus !== "completed" ||
+        (gate.failures !== undefined &&
+          (!Array.isArray(gate.failures) || gate.failures.length > 0)) ||
+        !isDeepStrictEqual(
+          gate.supervisorReviewGate === undefined || gate.supervisorReviewGate === null
+            ? undefined
+            : parseSupervisorReviewGate(gate.supervisorReviewGate),
+          summary.reviewGate,
+        ))
+    ) {
+      return { ok: false, reason: `contradictory completion system gate (${path})` };
     }
     return { ok: true };
   } catch {

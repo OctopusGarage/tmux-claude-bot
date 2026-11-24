@@ -131,7 +131,7 @@ export type ResourceIncidentAction = {
   at: number;
   outcome: "recorded" | "sent" | "partial" | "failed" | "skipped";
   reason: string;
-  /** Explicit lifecycle phase; legacy unphased action evidence never authorizes repair. */
+  /** Explicit cleanup phase; exact collector failures may authorize diagnosis only. */
   phase?: "deterministic-cleanup" | "repair-intent" | "repair-dispatch" | "pressure-notification";
   /** Identity proof recorded before a protect-mode destructive action. */
   target?: {

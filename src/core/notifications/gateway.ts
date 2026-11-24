@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { normalizeError } from "../../shared/utils/error.js";
 import { tildeifyHome } from "../../shared/utils/path.js";
 import { type AttachmentKind, validateAttachment } from "../attachments/classify.js";
+import { readConfigEnvironment } from "../config/env-store.js";
 import { NotificationPolicyStore } from "./policy-store.js";
 
 export type NotificationChannel = "telegram" | "lark";
@@ -249,6 +250,12 @@ export class NotificationGateway {
   }
 
   private shouldDeliver(req: NotificationRequest, channel: NotificationChannel): boolean {
+    if (
+      (req.source === "resource-guardian" || req.delivery?.topic.startsWith("agent-capacity:")) &&
+      readConfigEnvironment().get("RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED") === "false"
+    ) {
+      return false;
+    }
     const delivery = req.delivery;
     if (delivery === undefined) return true;
     const fingerprint =

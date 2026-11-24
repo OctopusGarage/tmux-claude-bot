@@ -39,6 +39,27 @@ not create repeated notifications.
 
 ## Recovery state-machine guarantees
 
+When a supported repair-only report corrects a task to pending, an older fixed
+queue projection must not undo that newer evidence. Daily Audit selects the newest
+terminal record per exact task and lets the newer correction reach normal guarded
+recovery. This does not reset attempt budgets or override external, uncertain or
+exhausted boundaries.
+
+Observing a retryable terminal recovery artifact consumes its execution only once.
+The Repair Coordinator persists that ledger task identity together with the retry
+transition, retains it across restart, and refuses to settle an old artifact over
+a newer WorkOrder. Repeated observations leave the attempt and retry deadline
+unchanged. Existing terminal records and uncertain legacy budgets are preserved;
+reconciliation must not infer fresh execution from mutable ledger timestamps.
+
+Project recovery completion requires an explicit durable repair link or an exact
+successful delegated counterpart. A task ID, run ID or occurrence timestamp
+mentioned in an unrelated successful investigation summary is diagnostic context,
+not proof that the task was repaired. It must never close that task or its repair
+group. Summary text and final-summary artifacts follow the same rule; focused
+regressions cover cross-project timestamp collisions and retain linked success.
+
+
 Supervisor delivery has a bounded worker-consumption watchdog. A prompt that
 remains queued because the worker never becomes ready is cancelled with an
 explicit retryable delivery failure; it is not left indefinitely in an
@@ -1028,6 +1049,14 @@ human boundary and the PR remains open, the repository-review consumer may
 reopen it once as `retry-wait`. Reopening increments a retry epoch, resets only
 that epoch's bounded attempt counter, retains migration evidence, and yields to
 any newer or active occurrence for the same repository.
+
+Repository PR-review queue reconciliation follows later corrections to a block
+that it originally derived from the daily task ledger. Only newer evidence for
+the exact repository occurrence may restore pending work or acknowledge a
+successful repair. Restoring work preserves its attempt budget and retry epoch;
+this correction does not reset exhausted budgets, and normal admission still applies. Explicit
+review decisions and unrelated terminal outcomes are not reopened by this path.
+
 An isolated repository-review WorkOrder synchronizes to a detached remote base
 when it does not own an execution branch. It never checks out or pulls the base
 branch already owned by the source worktree.
@@ -1093,15 +1122,30 @@ limited to a hard-coded checklist. The sweep must also ask why each abnormality
 was not already detected, retried, or repaired by existing automation; when that
 reason is a bot-owned automation gap, the same repair slice should fix the gap
 instead of waiting for an operator to rediscover it. When the sweep changes this
-repository, it must verify locally, commit on `dev`, push to `origin/dev`, run
-`git pull --rebase` after the successful push, and leave the worktree clean. It
-must still reuse Daily Task Audit repair dispatch, Project Recovery dispatch,
+repository, it must verify locally and follow the WorkOrder
+`commitPolicy.branch` and `pullRequestPolicy`. When PRs are enabled, use one PR
+against the configured base, pass CI and mergeability gates, and merge only under
+that policy; do not push directly to the base branch. After a successful push,
+pull/rebase the configured base only on the exact WorkOrder branch when safe.
+An isolated worker stays on that branch and leaves original source adoption and
+switch-back to the bot system. Leave the worktree clean. It must still reuse Daily Task Audit repair dispatch, Project Recovery dispatch,
 Repair Coordinator leases, Resource Guardian admission, and the normal WorkOrder
 gates. It is not permission to bypass owner-decision, external-wait, official
 exhausted-capacity, resource-pressure, clean-worktree, or verification blockers;
-it also does not count as an interactive notification flow. A blocked broad
-sweep is durable evidence: the tick records a `system-self-heal` ledger failure
-with the admission reason when no WorkOrder is created.
+it also does not count as an interactive notification flow. Expected admission
+waits, including a project already owned by active automation,
+are recorded as skipped/not-needed before WorkOrder creation. Actual preparation
+failures remain durable `system-self-heal` failures for repair. Historical
+normalization requires exact admission-only evidence and preserves active repair
+ownership and appended recovery evidence.
+
+A generic accepted-blocked investigation does not prove that every original task
+has a non-retryable execution boundary. Preserved pre-submission or environment
+failure evidence, and ordinary missing scheduled occurrences without execution
+artifacts, re-enter the existing bounded investigation path. The bot checks
+original and linked recovery artifacts before dispatch, preserves uncertain
+submissions and active owners, and retains each original's consumed retry budget.
+Fresh occurrences do not inherit an older original's exhausted budget.
 
 Historical Loop failures use project-scoped recovery. The recovery classifier
 reads ledger evidence and supervisor artifacts, resolves only projects,
@@ -1149,7 +1193,15 @@ minutes of durable healthy recovery. It selects only the most recent ended,
 bot-owned incident with failed deterministic-cleanup evidence, persists a
 repair intent before delegation, and shares the global Repair Coordinator's
 one-at-a-time fingerprint, cooldown, and retry boundaries. A pressure relapse,
-external/unknown attribution, or missing durable evidence blocks repair.
+external/unknown attribution, or missing durable evidence blocks load repair.
+Repeated exact, sanitized pane-snapshot validation failures during action
+preparation can instead enter collector diagnosis after the same stable window.
+This diagnoses bot collection code without granting process ownership: unknown
+attribution stays unknown, probes are read-only, and process termination, parser
+relaxation and historical input replay are prohibited. All such incidents share
+one diagnostic fingerprint and the existing bounded retry budget. Generic legacy
+preparation errors do not qualify; a passing fresh probe cannot establish a
+historical cause.
 The same shared admission gate serializes autonomous background heavy work per
 agent even when usage capacity is available. A new background or resource-repair
 heavy task waits while another autonomous heavy lease is active, which prevents
@@ -1621,3 +1673,21 @@ records `reviewedHeadSha`, and the independent bot gate validates clean passes
 before accepting approval or merge. External review does not authorize source
 mutation, provider integration, edited evidence or a new deadline. Existing
 native prompts remain unchanged when the reviewer selector is absent.
+
+### Audit rediscovery of accepted outcomes
+
+Daily Task Audit may rediscover outcomes from retained run artifacts. A matching
+accepted completed system gate and valid passing final review take precedence over
+the legacy follow-up keyword heuristic. Follow-ups about unrelated failing CI do
+not reopen that accepted task. The run and project identities, review snapshot,
+empty gate failures and passed final verification must match; otherwise existing
+anomaly detection and repair gates remain authoritative.
+
+### Scheduled discovery acceptance window
+
+Daily Task Audit discovery distinguishes a worker's completed summary from system
+acceptance while its matching WorkOrder remains nonterminal. It reports the task
+as running until a matching accepted completed system gate is durable, preserving
+normal ownership and recovery. Older failures are superseded only by later runs
+that pass the same discovery classification, including system rejection and final
+verification checks. Legacy summary-only history remains supported.

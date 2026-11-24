@@ -61,7 +61,10 @@ import {
   type LoopExecutionWorktreePreparationFailure,
   prepareLoopExecutionWorktrees,
 } from "./execution-worktree.js";
-import { repositoryPullRequestReviewDisposition } from "./final-summary-contract.js";
+import {
+  automationGovernanceRepairFailures,
+  repositoryPullRequestReviewDisposition,
+} from "./final-summary-contract.js";
 import {
   recoverInvalidOutputFromFinalSummaryAsync,
   supervisorFinalStatusToRunStatus,
@@ -1614,7 +1617,7 @@ export async function runLoopServiceTickAsync(input: {
         ];
       });
       const plan = planLoopSupervisorDispatch({
-        targets: targets.slice(0, idleSupervisorSessions.length).map(({ target }) => target),
+        targets: targets.map(({ target }) => target),
         activeResourcePaths: active.resourcePaths,
       });
       if (plan.ready.length === 0) {
@@ -1637,7 +1640,10 @@ export async function runLoopServiceTickAsync(input: {
       const targetByKey = new Map(
         targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
       );
-      const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
+      const batches = allocateLoopSupervisorBatches(
+        plan.ready.slice(0, idleSupervisorSessions.length),
+        idleSupervisorSessions,
+      );
       for (const batch of batches) {
         await Promise.all(
           batch.map(async ({ item: target, supervisorSession }) => {
@@ -2044,11 +2050,31 @@ export function reconcileRepositoryReviewQueueLedgerClosures(
   const recordsByTaskId = new Map(ledger.listAll().map((record) => [record.taskId, record]));
 
   for (const item of queue.list({ all: true })) {
-    if (isTerminalRepositoryReviewQueueStatus(item.status)) continue;
     const taskId = `loop:pr-review:${item.repositoryId}:${item.scheduledAt}`;
     const record = recordsByTaskId.get(taskId);
     if (record === undefined) continue;
     const closure = repositoryReviewQueueClosureFromLedger(record);
+    if (isTerminalRepositoryReviewQueueStatus(item.status)) {
+      const correction =
+        closure?.status === "completed"
+          ? { status: "completed" as const, reason: closure.reason }
+          : record.source === "loop-engineering" && record.repairStatus === "pending"
+            ? {
+                status: "retry-wait" as const,
+                reason: "reconciled from newer daily task ledger repairStatus=pending",
+              }
+            : null;
+      if (
+        correction !== null &&
+        queue.reconcileLedgerBlock(item.id, {
+          ...correction,
+          ledgerUpdatedAt: record.updatedAt,
+          now,
+        })
+      )
+        reconciled++;
+      continue;
+    }
     if (closure === null) continue;
     if (
       queue.completeOccurrence(
@@ -3336,7 +3362,11 @@ export function runSupervisedSystemGateOutcome(input: {
       },
     };
   }
-  const failures: string[] = [];
+  const governanceRepairFailures = automationGovernanceRepairFailures(
+    input.workOrder,
+    input.result.summary,
+  );
+  const failures: string[] = [...governanceRepairFailures];
   const evidence: string[] = [...preVerificationEvidence, ...checkpointGate.evidence];
   const evalReport = buildEvalReportFromSupervisorSummary({
     workOrderId: input.workOrder.id,
@@ -3489,6 +3519,7 @@ export function runSupervisedSystemGateOutcome(input: {
 
   if (
     requiresLoopCreatedPullRequestGate &&
+    governanceRepairFailures.length === 0 &&
     input.project.pullRequest.enabled &&
     supervisorCommitRefs.length > 0
   ) {
@@ -3510,15 +3541,28 @@ export function runSupervisedSystemGateOutcome(input: {
           commitBranch,
           runCommand: input.runCommand,
         });
-        const publication = publishMissingSupervisedPullRequest({
-          project: input.project,
-          workOrder: input.workOrder,
-          summary: input.result.summary,
-          commitBranch,
-          lookup: initialPrLookup,
-          runCommand: input.runCommand,
-          runGit: prRunGit,
-        });
+        const publication =
+          input.workOrder.task?.kind === "automation-governance-review"
+            ? {
+                lookup: initialPrLookup,
+                published: false,
+                ...(initialPrLookup.status === 0 &&
+                governanceRepairPrIdentityMatches(input.result.summary, initialPrLookup.stdout)
+                  ? {}
+                  : {
+                      failure:
+                        "governance repair PR identity is missing or does not match its severity decision",
+                    }),
+              }
+            : publishMissingSupervisedPullRequest({
+                project: input.project,
+                workOrder: input.workOrder,
+                summary: input.result.summary,
+                commitBranch,
+                lookup: initialPrLookup,
+                runCommand: input.runCommand,
+                runGit: prRunGit,
+              });
         if (publication.published) {
           evidence.push("published missing supervised pull request");
         }
@@ -3599,6 +3643,12 @@ export function runSupervisedSystemGateOutcome(input: {
             });
           }
           failures.push(...prGate.failures, ...pendingCheckFailures(prGate.pendingChecks));
+          if (
+            input.workOrder.task?.kind === "automation-governance-review" &&
+            prGate.state === "MERGED"
+          ) {
+            failures.push("governance repair PR must not be merged");
+          }
           if (prGate.failures.length === 0 && prGate.pendingChecks.length === 0) {
             evidence.push("PR commit, body, mergeability, and status-check gate passed");
           }
@@ -3624,6 +3674,7 @@ export function runSupervisedSystemGateOutcome(input: {
   if (!requiresGitGate) evidence.push("no mutating git or PR gate required");
   if (
     requiresLoopCreatedPullRequestGate &&
+    governanceRepairFailures.length === 0 &&
     input.project.pullRequest.enabled &&
     supervisorCommitRefs.length === 0
   ) {
@@ -3658,6 +3709,29 @@ export function runSupervisedSystemGateOutcome(input: {
     failures,
     evidence,
   };
+}
+
+function governanceRepairPrIdentityMatches(
+  summary: LoopSupervisorFinalSummary,
+  stdout: string,
+): boolean {
+  try {
+    const value = JSON.parse(stdout) as { url?: unknown };
+    if (typeof value.url !== "string") return false;
+    const url = new URL(value.url);
+    const match = url.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/([1-9]\d*)$/);
+    const decision = summary.pullRequestDecisions?.[0];
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      match !== null &&
+      decision !== undefined &&
+      match[1]?.toLowerCase() === decision.repository.toLowerCase() &&
+      Number(match[2]) === decision.number
+    );
+  } catch {
+    return false;
+  }
 }
 
 function lookupSupervisedPullRequest(input: {

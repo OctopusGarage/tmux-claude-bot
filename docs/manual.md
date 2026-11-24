@@ -260,6 +260,9 @@ For the complete maintained CLI command and option surface, see
 | `tcb install` | provision the managed service into the stable dir |
 | `tcb service <install\|uninstall\|status\|pause\|resume\|restart\|logs>` | manage the auto-restarting service |
 
+Log queries with `--since` automatically include all local dates in the window
+(up to 30 daily files); an explicit `--days` keeps its selected file limit.
+
 Dashboard filters apply to both text and JSON. `--project` narrows Project
 Sessions and project-owned attention/work/outcomes while retaining global health
 evidence; `--problems` suppresses nonproblem collections (the stable JSON schema
@@ -371,6 +374,13 @@ tcb task report --id "radar:daily:2026-07-27" --source radar-monitor \
   --status failed --repair-status fixed \
   --summary "fixed and verified on dev"
 ```
+
+Repair-only ledger updates use `tcb task report --status unchanged --repair-status blocked` (or another verified repair status), with the existing `--id`, `--source`,
+`--name`, and `--scheduled-at`. This requires a matching existing record and
+preserves its execution status, timestamps, error, failure kind, and report path.
+Only the repair status, optional summary, and update time change; execution-field
+overrides are rejected. This supports missing and timed-out historical tasks
+without inventing a new execution outcome.
 
 This is what the **Home Operator skill** drives, so an agent in Claude Code /
 Codex can operate the system in natural language. The bundled source lives at
@@ -1394,9 +1404,12 @@ open-ended mandate as an operator asking whether the last 24 hours completed
 normally. The prompt must not shrink to a fixed checklist: when it finds an
 abnormality, it also investigates why existing automation did not detect, retry,
 or repair it without a manual prompt, and fixes that bot-owned automation gap when evidence
-is sufficient. If admission blocks the broad sweep before a WorkOrder is queued,
-the tick records a `system-self-heal` ledger failure with the exact deferral
-reason so the next audit has durable evidence. Disable the whole tick only for deliberate maintenance windows with
+is sufficient. If ordinary admission blocks the broad sweep before a WorkOrder is
+queued, the tick records a `system-self-heal` ledger occurrence as
+`skipped/not-needed` with the exact wait reason. A later hourly sweep retries
+through normal admission; the skipped occurrence does not mean an investigation
+executed or the underlying tasks recovered. Actual preparation failures remain
+`failed/pending` for repair. Disable the whole tick only for deliberate maintenance windows with
 `SYSTEM_SELF_HEAL_ENABLED=false` or `SYSTEM_SELF_HEAL_TICK_MS=0`; disable only
 the broad agent sweep with `SYSTEM_SELF_HEAL_AGENT_SWEEP_ENABLED=false`.
 
@@ -1577,3 +1590,16 @@ Cleanup checks same-user open files and working directories before removal;
 No additional schedule or retention setting is needed.
 
 External PR review binds every clean pass to one complete frozen base/head/diff identity. Immediately before delivery, re-read the current PR state and merge with `--match-head-commit` set to the reviewed head. Post-merge API state cannot independently reconstruct whether the base moved immediately before the merge; native CI, mergeability and branch policy remain required.
+
+
+## Resource and capacity notification preference
+
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED false` to mute all
+Resource Guardian alerts (including pressure, recovery, sampling and action failures)
+and Claude/Codex capacity transition alerts on Telegram and Feishu/Lark.
+Monitoring, resource protection, admission gates, status/history commands and other
+notifications remain active. The preference is checked at delivery time; no restart
+is needed once this version is running. Omitted or `true` preserves alert delivery.
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
+The generic config command validates this setting as a non-secret boolean; the
+notification gateway enforces the same preference for both channels and all callers.

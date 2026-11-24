@@ -1,7 +1,8 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { runConfigCommand } from "../../../src/core/config/config-command.js";
 import { NotificationGateway } from "../../../src/core/notifications/gateway.js";
 
 describe("NotificationGateway", () => {
@@ -421,5 +422,53 @@ describe("NotificationGateway", () => {
     expect(telegram).toHaveBeenCalledTimes(2);
     expect(telegram.mock.calls[0]?.[0]).not.toContain("source:");
     expect(telegram.mock.calls[0]?.[1]).toMatchObject({ source: "tmux-claude-bot" });
+  });
+});
+
+describe("resource and capacity notification preference", () => {
+  it("mutes both categories on both channels, preserves other alerts, and can be re-enabled live", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tcb-notification-mute-"));
+    const previous = process.env.TCB_STATE_DIR;
+    process.env.TCB_STATE_DIR = dir;
+    try {
+      const gateway = new NotificationGateway({ stateDir: dir });
+      const sender = vi.fn(async () => {});
+      gateway.register("telegram", sender);
+      gateway.register("lark", sender);
+      const key = "RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED";
+      expect(runConfigCommand(["set", key, "invalid"]).exitCode).toBe(1);
+      expect(runConfigCommand(["set", key, "false"]).exitCode).toBe(0);
+      for (const request of [
+        { source: "resource-guardian", title: "Resource action failed" },
+        { source: "resource-guardian", title: "Resource pressure recovered" },
+        { source: "resource-guardian", title: "Resource pressure critical" },
+        {
+          source: "loop-engineering",
+          title: "codex capacity unknown",
+          delivery: {
+            mode: "state-change" as const,
+            topic: "agent-capacity:codex",
+            state: "unknown",
+          },
+        },
+      ]) {
+        expect((await gateway.notify(request)).status).toBe("suppressed");
+      }
+      expect(sender).not.toHaveBeenCalled();
+      expect(
+        (await gateway.notify({ source: "loop-engineering", title: "Task failed" })).status,
+      ).toBe("sent");
+      expect(sender).toHaveBeenCalledTimes(2);
+      expect(runConfigCommand(["set", key, "true"]).exitCode).toBe(0);
+      expect(
+        (await gateway.notify({ source: "resource-guardian", title: "Resource pressure critical" }))
+          .status,
+      ).toBe("sent");
+      expect(sender).toHaveBeenCalledTimes(4);
+    } finally {
+      if (previous === undefined) delete process.env.TCB_STATE_DIR;
+      else process.env.TCB_STATE_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

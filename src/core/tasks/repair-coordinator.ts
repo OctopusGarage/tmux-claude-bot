@@ -31,6 +31,7 @@ export type RepairQueueRecord = {
   leaseId?: string;
   leaseExpiresAt?: number;
   workOrderId?: string;
+  settledRecoveryTaskIds?: string[];
 };
 
 export type RepairQueueStore = {
@@ -100,6 +101,7 @@ export type RepairEnqueueInput = {
   taskId: string;
   summary?: string;
   priority?: number;
+  originalAttempt?: number;
   now: number;
 };
 
@@ -156,6 +158,30 @@ export class RepairCoordinator {
   constructor(private readonly store: RepairQueueStore = new PersistentRepairQueueStore()) {}
 
   enqueue(input: RepairEnqueueInput): RepairQueueRecord {
+    const originalAttempt =
+      input.source === "project-recovery"
+        ? Math.max(
+            0,
+            input.originalAttempt ?? 0,
+            ...this.list()
+              .filter(
+                (record) =>
+                  record.source === "project-recovery" &&
+                  record.linkedTaskIds.includes(input.taskId),
+              )
+              .map((record) => record.attempt),
+          )
+        : 0;
+    if (originalAttempt >= REPAIR_MAX_ATTEMPTS) {
+      const exhausted = this.list().find(
+        (record) =>
+          record.source === "project-recovery" &&
+          record.linkedTaskIds.includes(input.taskId) &&
+          isTerminal(record.status) &&
+          record.attempt >= REPAIR_MAX_ATTEMPTS,
+      );
+      if (exhausted !== undefined) return exhausted;
+    }
     const dedupeKey = createRepairDedupeKey(input);
     let existing = this.list().find(
       (record) => record.dedupeKey === dedupeKey && !isTerminal(record.status),
@@ -195,7 +221,10 @@ export class RepairCoordinator {
           !hasNonRetryableProjectRecoveryEvidence(record, input),
       );
       if (stale !== undefined) {
-        existing = reopenTerminalRepairRecord(stale, input.now);
+        existing = {
+          ...reopenTerminalRepairRecord(stale, input.now),
+          attempt: Math.max(stale.attempt, originalAttempt),
+        };
         this.store.set(existing.id, existing);
       }
     }
@@ -204,7 +233,10 @@ export class RepairCoordinator {
         .filter((record) => isRecoverableProjectRecoveryTerminal(record, input))
         .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
       if (stale !== undefined) {
-        existing = reopenTerminalRepairRecord(stale, input.now);
+        existing = {
+          ...reopenTerminalRepairRecord(stale, input.now),
+          attempt: Math.max(stale.attempt, originalAttempt),
+        };
         this.store.set(existing.id, existing);
       }
     }
@@ -234,6 +266,14 @@ export class RepairCoordinator {
       const updated = {
         ...current,
         source: input.source === "project-recovery" ? input.source : current.source,
+        attempt:
+          input.source === "project-recovery" &&
+          (current.status === "pending" || current.status === "retry-wait") &&
+          current.linkedTaskIds.every(
+            (id, index) => id === input.taskId || (index > 0 && id.startsWith("autopilot:")),
+          )
+            ? Math.max(current.attempt, originalAttempt)
+            : current.attempt,
         linkedTaskIds,
         summaries,
         priority: Math.max(current.priority, input.priority ?? 0),
@@ -253,9 +293,9 @@ export class RepairCoordinator {
       fingerprint: input.fingerprint,
       linkedTaskIds: [input.taskId],
       summaries: input.summary === undefined ? [] : [input.summary],
-      status: "pending",
+      status: originalAttempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "pending",
       priority: input.priority ?? 0,
-      attempt: 0,
+      attempt: originalAttempt,
       createdAt: input.now,
       updatedAt: input.now,
       nextAttemptAt: input.now,
@@ -421,23 +461,49 @@ export class RepairCoordinator {
   releaseForRetry(
     id: string,
     now: number,
-    options: { detachWorkOrder?: boolean } = {},
+    options: {
+      detachWorkOrder?: boolean;
+      settledTaskId?: string;
+      expectedWorkOrderId?: string;
+    } = {},
   ): RepairQueueRecord | undefined {
-    const record = this.store.get(id);
-    if (record === undefined) return undefined;
-    const attempt = record.attempt + 1;
-    const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
-    const retryBase = options.detachWorkOrder
-      ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
-      : withoutLease;
-    const updated: RepairQueueRecord = {
-      ...retryBase,
-      status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
-      attempt,
-      nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
-      updatedAt: now,
-    };
-    this.store.set(id, updated);
+    let updated: RepairQueueRecord | undefined;
+    this.store.update((records) => {
+      const record = records[id];
+      if (record === undefined) return false;
+      const settledTaskId = options.settledTaskId;
+      const expectedWorkOrderId = settledTaskId?.startsWith("autopilot:")
+        ? settledTaskId.slice("autopilot:".length)
+        : options.expectedWorkOrderId;
+      // Artifact observation is not a new execution, and cannot release a newer owner.
+      if (
+        settledTaskId !== undefined &&
+        (isTerminal(record.status) ||
+          record.settledRecoveryTaskIds?.includes(settledTaskId) ||
+          (record.workOrderId !== undefined && record.workOrderId !== expectedWorkOrderId) ||
+          record.status === "leased")
+      )
+        return false;
+      const attempt = record.attempt + 1;
+      const { leaseId: _leaseId, leaseExpiresAt: _leaseExpiresAt, ...withoutLease } = record;
+      const retryBase = options.detachWorkOrder
+        ? (({ workOrderId: _workOrderId, ...withoutWorkOrder }) => withoutWorkOrder)(withoutLease)
+        : withoutLease;
+      updated = {
+        ...retryBase,
+        ...(settledTaskId === undefined
+          ? {}
+          : {
+              settledRecoveryTaskIds: [...(record.settledRecoveryTaskIds ?? []), settledTaskId],
+            }),
+        status: attempt >= REPAIR_MAX_ATTEMPTS ? "dead-letter" : "retry-wait",
+        attempt,
+        nextAttemptAt: attempt >= REPAIR_MAX_ATTEMPTS ? now : now + repairBackoffMs(attempt),
+        updatedAt: now,
+      };
+      records[id] = updated;
+      return true;
+    });
     return updated;
   }
 

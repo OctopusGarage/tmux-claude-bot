@@ -1,3 +1,5 @@
+import { isManagedResetReadinessFailure } from "../agents/transient-failure.js";
+
 export type RecoveryClassification =
   | "retryable"
   | "waiting-external"
@@ -15,6 +17,7 @@ export type HistoricalRecoveryInput = {
   summary?: string;
   reportPath?: string;
   artifactText?: string;
+  targetIds?: string[];
   attempt: number;
   laterSuccess?: boolean;
 };
@@ -45,13 +48,62 @@ export type ConfiguredRecoveryConfig = {
 
 const MAX_RECOVERY_ATTEMPTS = 3;
 const ASSESSMENT_SCORING_CONTRACT_RE =
-  /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract|targetscore)/;
+  /(assessment (result|score|scoring).*numeric score|numeric score.*assessment|score:null|assessment score contract|assessment scoring contract)/;
 const CAPACITY_OR_LEASE_RE =
   /(supervisor lease|interactive-agent-busy|automation admission deferred|already has active automation|active workorder|active recovery|queue full|supervisor.*busy)/;
 const SOURCE_GIT_STATE_RE =
   /(source worktree is dirty|source branch.*dirty|source branch.*diverg|branch.*diverg|diverg.*branch|neither ancestor nor descendant|not an ancestor|ahead .* behind|behind .* ahead)/;
 const GENERIC_RETRYABLE_RE =
   /(invalid[- ]summary|invalid[- ]final[- ]summary|missing[- ]final[- ]summary|invalid[- ]output|incomplete recovery|can be retried|missing|preflight|dependency|worktree|branch|handoff|dispatch|supervisor-failed|not-found|no pull requests|worker)/;
+
+export function hasGenericProjectRecoveryClosure(summary: string | undefined): boolean {
+  const text = summary?.toLowerCase() ?? "";
+  return (
+    text.includes("closed from the authoritative accepted blocked project recovery") &&
+    text.includes("no retryable project repair remains")
+  );
+}
+
+export function hasUnsafeRecoveryEvidence(text: string): boolean {
+  return /live transcript unavailable for managed completion evidence|stop unverified|ownership changed|process changed|unresolved active turn|ralphworks declared (?:needs_input|max_iterations|failed); no native fallback|"retry"\s*:\s*"manual"/i.test(
+    text,
+  );
+}
+
+/** Original execution evidence takes precedence over an aggregate closure label.
+ * Missing scheduled occurrences re-enter investigation, not blind input replay. */
+export function hasOriginalRecoveryRetryEvidence(
+  record: Pick<
+    HistoricalRecoveryInput,
+    "taskId" | "source" | "status" | "error" | "failureKind" | "summary" | "reportPath"
+  >,
+  artifactText = "",
+): boolean {
+  if (hasUnsafeRecoveryEvidence([record.error, record.summary, artifactText].join(" ")))
+    return false;
+  if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") return false;
+  if (!["missing", "failed", "running-timeout"].includes(record.status)) return false;
+  const error = record.error?.toLowerCase() ?? "";
+  if (
+    error === "loop supervisor work order timed out" ||
+    isManagedResetReadinessFailure(error) ||
+    error.includes("codex live transcript unavailable and no fresh launch grant") ||
+    /assessment (?:result|score|scoring).*numeric score|assessment scor(?:e|ing) contract|score:null/.test(
+      error,
+    ) ||
+    isRetryableSourceGitStateEvidence(error) ||
+    record.failureKind === "dirty-worktree" ||
+    record.failureKind === "dependency-audit-unavailable"
+  )
+    return true;
+  return (
+    record.source === "loop-engineering" &&
+    record.status === "missing" &&
+    !record.taskId.includes(":active-delegated-task:") &&
+    record.error === undefined &&
+    record.reportPath === undefined
+  );
+}
 
 export function classifyHistoricalFailure(
   input: HistoricalRecoveryInput,
@@ -66,6 +118,36 @@ export function classifyHistoricalFailure(
     .filter((value): value is string => value !== undefined)
     .join(" ")
     .toLowerCase();
+  if (
+    /ralphworks declared (needs_input|max_iterations|failed); no native fallback is allowed/.test(
+      evidence,
+    )
+  ) {
+    return {
+      classification: "waiting-external",
+      reason:
+        "RalphWorks declared a terminal external execution blocker; native fallback is prohibited",
+    };
+  }
+  if (hasUnsafeRecoveryEvidence(evidence)) {
+    return {
+      classification: "needs-owner-decision",
+      reason:
+        "original execution or ownership evidence is uncertain; automatic replay is prohibited",
+    };
+  }
+  if (input.error?.toLowerCase() === "loop supervisor work order timed out") {
+    return input.attempt >= MAX_RECOVERY_ATTEMPTS
+      ? {
+          classification: "dead-letter",
+          reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
+        }
+      : {
+          classification: "retryable",
+          reason:
+            "supervisor deadline permits bounded recovery investigation of existing execution evidence",
+        };
+  }
   if (CAPACITY_OR_LEASE_RE.test(evidence)) {
     return {
       classification: "retryable",
@@ -115,6 +197,12 @@ export function classifyHistoricalFailure(
       reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
     };
   }
+  if (hasOriginalRecoveryRetryEvidence(input, input.artifactText)) {
+    return {
+      classification: "retryable",
+      reason: "preserved original execution evidence permits bounded recovery investigation",
+    };
+  }
   if (input.status === "missing" || GENERIC_RETRYABLE_RE.test(evidence)) {
     return {
       classification: "retryable",
@@ -150,7 +238,7 @@ export function isBotOwnedRetryableRecoveryEvidence(evidence: string): boolean {
 
 export function resolveConfiguredRecoveryTarget(
   config: ConfiguredRecoveryConfig,
-  input: Pick<HistoricalRecoveryInput, "taskId" | "name" | "artifactText">,
+  input: Pick<HistoricalRecoveryInput, "taskId" | "name" | "artifactText" | "targetIds">,
   canonicalize: (path: string) => string,
 ): ConfiguredRecoveryTarget | null {
   const candidates: ConfiguredRecoveryTarget[] = [
@@ -176,7 +264,10 @@ export function resolveConfiguredRecoveryTarget(
       ),
     })),
   ];
-  const explicitTargetIds = extractExplicitTargetIds(input.artifactText);
+  const explicitTargetIds = [
+    ...(input.targetIds ?? []),
+    ...extractExplicitTargetIds(input.artifactText),
+  ];
   const identity = `${input.taskId} ${input.name} ${explicitTargetIds.join(" ")}`.toLowerCase();
   const matches = candidates
     .filter((candidate) => identity.includes(candidate.id.toLowerCase()))
@@ -193,7 +284,7 @@ export function resolveConfiguredRecoveryTarget(
   return best;
 }
 
-function extractExplicitTargetIds(artifactText: string | undefined): string[] {
+export function extractExplicitTargetIds(artifactText: string | undefined): string[] {
   if (artifactText === undefined) return [];
   return [...artifactText.matchAll(/(?:Project|Workspace|Repository target):\s*([^\s,;"\\]+)/gim)]
     .map((match) => match[1]?.trim())

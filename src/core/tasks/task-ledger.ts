@@ -1,6 +1,10 @@
 import { classifyAgentTransientFailure } from "../agents/transient-failure.js";
 import { JsonMapStore } from "../infra/json-map-store.js";
-import { isBotOwnedRetryableRecoveryEvidence } from "./project-recovery.js";
+import {
+  hasOriginalRecoveryRetryEvidence,
+  hasUnsafeRecoveryEvidence,
+  isBotOwnedRetryableRecoveryEvidence,
+} from "./project-recovery.js";
 
 export const SCHEDULED_TASK_SOURCES = [
   "loop-engineering",
@@ -92,6 +96,13 @@ const RUNNING_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const SYSTEM_SELF_HEAL_DEFERRED_PREFIX =
   "System self-heal agent sweep deferred before WorkOrder creation: ";
+
+export function isSystemSelfHealAdmissionWait(reason: string): boolean {
+  return (
+    reason.startsWith("automation admission deferred:") ||
+    reason.startsWith("project already has active automation:")
+  );
+}
 
 export class DailyTaskLedger {
   private readonly store = new JsonMapStore<ScheduledTaskRecord>("scheduled_task_ledger.json");
@@ -207,6 +218,7 @@ export class DailyTaskLedger {
       summary?: string;
       error?: string;
       failureKind?: ScheduledTaskFailureKind;
+      inferFailureKind?: boolean;
     },
   ): ScheduledTaskRecord | null {
     const existing = this.store.get(taskId);
@@ -224,7 +236,8 @@ export class DailyTaskLedger {
       ...(input.error !== undefined ? { error: input.error } : {}),
       ...(input.failureKind !== undefined
         ? { failureKind: input.failureKind }
-        : existing.failureKind === undefined &&
+        : input.inferFailureKind !== false &&
+            existing.failureKind === undefined &&
             (input.error !== undefined || input.summary !== undefined)
           ? {
               failureKind: classifyTaskFailure(
@@ -304,7 +317,7 @@ export class DailyTaskLedger {
         if (protectedTaskIds.has(taskId)) continue;
         if (record.status !== "failed" || record.repairStatus !== "pending") continue;
         const reason = record.error;
-        if (reason === undefined || !reason.startsWith("automation admission deferred:")) continue;
+        if (reason === undefined || !isSystemSelfHealAdmissionWait(reason)) continue;
         // Only direct pre-WorkOrder evidence can be reclassified. Appended repair
         // evidence and existing ownership decisions remain authoritative.
         if (record.summary !== `${SYSTEM_SELF_HEAL_DEFERRED_PREFIX}${reason}`) continue;
@@ -511,7 +524,8 @@ function isNonRetryableProjectRecoveryClosure(record: ScheduledTaskRecord): bool
     record.repairStatus === "blocked" &&
     summary.includes("closed from the authoritative accepted blocked project recovery") &&
     summary.includes("no retryable project repair remains") &&
-    !isBotOwnedRetryableRecoveryEvidence(summary)
+    (hasUnsafeRecoveryEvidence([record.error, summary].join(" ")) ||
+      (!isBotOwnedRetryableRecoveryEvidence(summary) && !hasOriginalRecoveryRetryEvidence(record)))
   );
 }
 

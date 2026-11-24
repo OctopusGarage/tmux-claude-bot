@@ -13,6 +13,23 @@ export type AgentTransientFailure = {
   retryable: true;
 };
 
+/** These refusals happen before a managed WorkOrder prompt can be submitted.
+ * Recovery must still revalidate the pane and ownership before any input. */
+export function isManagedResetReadinessFailure(text: string): boolean {
+  const normalized = text.toLowerCase();
+  if (
+    /ownership changed|process changed|stop unverified|unresolved active turn|live transcript unavailable for managed completion evidence/.test(
+      normalized,
+    )
+  )
+    return false;
+  return (
+    normalized.includes("cannot verify live agent identity for managed context reset") ||
+    normalized.includes("cannot verify automation input surface") ||
+    normalized.includes("agent context reset readiness deadline exhausted")
+  );
+}
+
 export function classifyAgentTransientFailure(
   text: string | undefined,
 ): AgentTransientFailure | null {
@@ -40,7 +57,9 @@ export function classifyAgentTransientFailure(
   }
   if (
     normalized.includes("did not become ready") ||
-    normalized.includes("no live loop supervisor session")
+    normalized.includes("no live loop supervisor session") ||
+    isManagedResetReadinessFailure(normalized) ||
+    normalized.includes("codex live transcript unavailable and no fresh launch grant")
   ) {
     return { kind: "agent-readiness", domain: "agent-runtime", retryable: true };
   }

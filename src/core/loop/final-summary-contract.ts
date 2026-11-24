@@ -126,7 +126,36 @@ export function validateSupervisorFinalSummaryForWorkOrder(
     if (disposition === "invalid") return false;
     if (summary.status === "completed" && disposition !== "completed") return false;
   }
-  return true;
+  return automationGovernanceRepairFailures(workOrder, summary).length === 0;
+}
+
+/** Validate reported repair evidence before governance acceptance or publication. */
+export function automationGovernanceRepairFailures(
+  workOrder: LoopWorkOrder,
+  summary: LoopSupervisorFinalSummary,
+): string[] {
+  if (workOrder.task?.kind !== "automation-governance-review") return [];
+  const decisions = summary.pullRequestDecisions ?? [];
+  const failures: string[] = [];
+  if (summary.commits.length > 0 && decisions.length === 0) {
+    failures.push("governance repair commits require a structured PR decision with severity");
+  }
+  if (decisions.length === 0) return failures;
+  if (!workOrder.task.allowRepairPr || workOrder.governance?.repair.allowPullRequest === false) {
+    failures.push("governance repair PRs are not authorized");
+  }
+  if (decisions.length > (workOrder.governance?.repair.maxPullRequests ?? 1)) {
+    failures.push("governance repair exceeds the one-PR limit");
+  }
+  for (const decision of decisions) {
+    if (decision.severity !== "P0" && decision.severity !== "P1") {
+      failures.push("governance repair PR requires P0/P1 severity");
+    }
+    if (decision.outcome === "merged") {
+      failures.push("governance repair PR must not be merged");
+    }
+  }
+  return failures;
 }
 
 /**
@@ -369,6 +398,10 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
     ) {
       return null;
     }
+    const severity = item.severity;
+    if (severity !== undefined && !["P0", "P1", "P2", "P3"].includes(severity as string)) {
+      return null;
+    }
     const outcome = item.outcome as LoopSupervisorPullRequestDecisionOutcome;
     const boundary = item.boundary;
     if (
@@ -412,6 +445,9 @@ function parsePullRequestDecisions(value: unknown): LoopSupervisorPullRequestDec
       number: item.number as number,
       repository: item.repository.trim(),
       outcome,
+      ...(severity === undefined
+        ? {}
+        : { severity: severity as NonNullable<LoopSupervisorPullRequestDecision["severity"]> }),
       ...(boundary === undefined
         ? {}
         : { boundary: boundary as LoopSupervisorPullRequestHumanBoundary }),

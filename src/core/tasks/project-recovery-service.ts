@@ -10,12 +10,16 @@ import {
   type ConfiguredRecoveryConfig,
   type ConfiguredRecoveryTarget,
   classifyHistoricalFailure,
+  extractExplicitTargetIds,
   type HistoricalRecoveryInput,
+  hasGenericProjectRecoveryClosure,
+  hasOriginalRecoveryRetryEvidence,
+  hasUnsafeRecoveryEvidence,
   isRetryableSourceGitStateEvidence,
   type RecoveryClassification,
   resolveConfiguredRecoveryTarget,
 } from "./project-recovery.js";
-import type { RepairCoordinator } from "./repair-coordinator.js";
+import { REPAIR_MAX_ATTEMPTS, type RepairCoordinator } from "./repair-coordinator.js";
 import type { ScheduledTaskRecord, ScheduledTaskRepairStatus } from "./task-ledger.js";
 
 type RecoveryRecord = ScheduledTaskRecord & { repairStatus: "pending" | "blocked" };
@@ -92,6 +96,22 @@ export async function runProjectRecoveryPass(input: {
 
   for (const record of input.records) {
     if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") continue;
+    if (
+      originalHasAuthoritativeRecoveryBoundary(
+        record,
+        input.coordinator,
+        input.records,
+        workOrderRegistry.records,
+      )
+    ) {
+      input.updateRepairStatus(
+        record.taskId,
+        "blocked",
+        "Recovery classification: waiting-external; latest authoritative external or uncertain-execution artifact prohibits automatic replay.",
+      );
+      result.waitingExternal++;
+      continue;
+    }
     if (isCoveredByTerminalProjectRecovery(record, terminalClosureRunIds)) {
       input.updateRepairStatus(
         record.taskId,
@@ -100,7 +120,7 @@ export async function runProjectRecoveryPass(input: {
       );
       continue;
     }
-    const artifactText =
+    const artifact =
       record.reportPath === undefined ? undefined : readRecoveryArtifact(record.reportPath);
     const recoveryInput: HistoricalRecoveryInput = {
       taskId: record.taskId,
@@ -111,12 +131,27 @@ export async function runProjectRecoveryPass(input: {
       ...(record.failureKind === undefined ? {} : { failureKind: record.failureKind }),
       ...(record.summary === undefined ? {} : { summary: record.summary }),
       ...(record.reportPath === undefined ? {} : { reportPath: record.reportPath }),
-      ...(artifactText === undefined ? {} : { artifactText }),
+      ...artifact,
       attempt:
         input.coordinator.list().find((queued) => queued.linkedTaskIds.includes(record.taskId))
           ?.attempt ?? 0,
     };
-    const classification = classifyHistoricalFailure(recoveryInput);
+    const originalAttempt = Math.max(
+      0,
+      ...input.coordinator
+        .list()
+        .filter((queued) => queued.linkedTaskIds.includes(record.taskId))
+        .map((queued) => queued.attempt),
+    );
+    recoveryInput.attempt = originalAttempt;
+    const classification =
+      hasOriginalRecoveryRetryEvidence(record, artifact?.artifactText) &&
+      originalAttempt >= REPAIR_MAX_ATTEMPTS
+        ? {
+            classification: "dead-letter" as const,
+            reason: "original recovery attempt limit reached; preserved retry budget",
+          }
+        : classifyHistoricalFailure(recoveryInput);
     result.classified++;
     if (classification.classification === "superseded") {
       input.updateRepairStatus(record.taskId, "superseded", classification.reason);
@@ -167,20 +202,65 @@ export async function runProjectRecoveryPass(input: {
       result.ownerDecision++;
       continue;
     }
-    const targetRecords = recordsByTarget.get(target.id) ?? [];
+    const groupId = `${target.id}:${originalAttempt}`;
+    const targetRecords = recordsByTarget.get(groupId) ?? [];
     targetRecords.push(record);
-    recordsByTarget.set(target.id, targetRecords);
-    targetById.set(target.id, target);
+    recordsByTarget.set(groupId, targetRecords);
+    targetById.set(groupId, target);
   }
 
   for (const [targetId, records] of recordsByTarget) {
     const target = targetById.get(targetId);
     if (target === undefined) continue;
     let existing = input.coordinator.findOpenProjectRecovery(target.id);
+    const originalAttempt = Math.max(
+      0,
+      ...input.coordinator
+        .list()
+        .filter((queued) => records.some((record) => queued.linkedTaskIds.includes(record.taskId)))
+        .map((queued) => queued.attempt),
+    );
+    if (
+      existing !== undefined &&
+      (existing.status === "pending" || existing.status === "retry-wait") &&
+      existing.attempt < originalAttempt &&
+      records.every((record) => existing?.linkedTaskIds.includes(record.taskId))
+    ) {
+      existing = input.coordinator.enqueue({
+        projectId: existing.projectId,
+        projectPath: existing.projectPath,
+        source: "project-recovery",
+        taskFamily: existing.taskFamily,
+        fingerprint: existing.fingerprint,
+        taskId: records[0]?.taskId ?? target.id,
+        originalAttempt,
+        now: input.now,
+      });
+    }
+    if (existing !== undefined && existing.attempt !== originalAttempt) {
+      for (const record of records)
+        input.updateRepairStatus(
+          record.taskId,
+          "pending",
+          "Recovery dispatch deferred: another original retry budget owns this project's recovery; preserved separate attempt budget.",
+        );
+      result.deferred++;
+      continue;
+    }
     const hasReservedWorkOrder = reservedWorkOrders.some(
       (record) =>
         input.canonicalize(record.workOrder.projectPath) === input.canonicalize(target.path),
     );
+    if (existing === undefined && hasReservedWorkOrder) {
+      for (const record of records)
+        input.updateRepairStatus(
+          record.taskId,
+          "pending",
+          "Recovery dispatch deferred: project already has an active WorkOrder; original execution ownership is preserved.",
+        );
+      result.deferred++;
+      continue;
+    }
     if (existing !== undefined && hasReservedWorkOrder) {
       input.coordinator.linkTaskIds(
         existing.id,
@@ -237,6 +317,7 @@ export async function runProjectRecoveryPass(input: {
         taskId: records[0]?.taskId ?? target.id,
         ...(records[0]?.summary === undefined ? {} : { summary: records[0].summary }),
         priority: 100,
+        originalAttempt,
         now: input.now,
       });
     if (existing === undefined) result.enqueued++;
@@ -276,6 +357,7 @@ export async function runProjectRecoveryPass(input: {
       source: records[0]?.source ?? "loop-engineering",
       name: records[0]?.name ?? target.id,
       status: records[0]?.status ?? "failed",
+      ...(records[0]?.error === undefined ? {} : { error: records[0].error }),
       summary: evidence.join(" "),
       artifactText: evidence.join(" "),
       attempt: 0,
@@ -317,6 +399,86 @@ export async function runProjectRecoveryPass(input: {
   return result;
 }
 
+function originalHasAuthoritativeRecoveryBoundary(
+  original: ScheduledTaskRecord,
+  coordinator: RepairCoordinator,
+  records: readonly ScheduledTaskRecord[],
+  workOrders: readonly {
+    runDir: string;
+    workOrder: { id: string; projectId: string; scheduledAt: number };
+  }[],
+): boolean {
+  if (hasUnsafeRecoveryEvidence([original.error, original.summary].join(" "))) return true;
+  const originalPaths = workOrders
+    .filter(
+      (entry) =>
+        original.taskId === `autopilot:${entry.workOrder.id}` ||
+        (original.source === "loop-engineering" &&
+          original.taskId.split(":").includes(entry.workOrder.projectId) &&
+          (original.taskId.endsWith(`:${entry.workOrder.scheduledAt}`) ||
+            original.taskId.endsWith(`:${entry.workOrder.id}`))),
+    )
+    .map((entry) => entry.runDir);
+  if (original.reportPath !== undefined) originalPaths.push(original.reportPath);
+  if (originalPaths.some((path) => recoveryArtifactHasBoundary(path))) return true;
+  const linkedIds = new Set(
+    coordinator
+      .list()
+      .filter(
+        (queued) =>
+          queued.source === "project-recovery" && queued.linkedTaskIds.includes(original.taskId),
+      )
+      .flatMap((queued) => queued.linkedTaskIds),
+  );
+  const candidates = records
+    .filter(
+      (record) =>
+        record.source === "autopilot-delegate" &&
+        linkedIds.has(record.taskId) &&
+        record.reportPath !== undefined,
+    )
+    .map((record) => ({
+      path: record.reportPath as string,
+      at: record.scheduledAt,
+      error: record.error,
+    }));
+  for (const workOrder of workOrders) {
+    if (linkedIds.has(`autopilot:${workOrder.workOrder.id}`))
+      candidates.push({
+        path: workOrder.runDir,
+        at: workOrder.workOrder.scheduledAt,
+        error: undefined,
+      });
+  }
+  const latest = candidates.sort((a, b) => b.at - a.at)[0];
+  if (latest === undefined) return false;
+  const summaryPath = readFinalSummaryPath(latest.path);
+  const gate =
+    summaryPath === undefined
+      ? undefined
+      : readJson(join(dirname(summaryPath), "system-gate.json"));
+  return (
+    ((gate?.accepted === true || gate?.resultStatus !== "dispatch-failed") &&
+      hasAuthoritativeRetryConflict(gate)) ||
+    hasUnsafeRecoveryEvidence(
+      [latest.error, readRecoveryArtifact(latest.path).artifactText].join(" "),
+    )
+  );
+}
+
+function recoveryArtifactHasBoundary(path: string): boolean {
+  const summaryPath = readFinalSummaryPath(path);
+  const gate =
+    summaryPath === undefined
+      ? undefined
+      : readJson(join(dirname(summaryPath), "system-gate.json"));
+  return (
+    ((gate?.accepted === true || gate?.resultStatus !== "dispatch-failed") &&
+      hasAuthoritativeRetryConflict(gate)) ||
+    hasUnsafeRecoveryEvidence(readRecoveryArtifact(path).artifactText ?? "")
+  );
+}
+
 function projectRecoveryFingerprint(records: readonly RecoveryRecord[]): string {
   const evidence = records
     .map((record) => fingerprintForRecoveryRecord(record))
@@ -342,15 +504,91 @@ export async function reconcileProjectRecoveryArtifacts(input: {
   ) => void;
 }): Promise<ProjectRecoveryArtifactReconciliationResult> {
   const result: ProjectRecoveryArtifactReconciliationResult = { checked: 0, fixed: 0, blocked: 0 };
+  const originalRegistry = readLoopSupervisorWorkOrderRegistry(input.now);
   const byTaskId = new Map(input.records.map((record) => [record.taskId, record]));
   const terminalClosureRunIds = terminalProjectRecoveryRunIds(input.coordinator);
   const closedTaskIds = new Set<string>();
-  for (const queueRecord of input.coordinator.list()) {
+  for (const storedQueueRecord of input.coordinator.list()) {
+    let queueRecord = storedQueueRecord;
     // Self-heal closure belongs to the investigation-window-aware reconciliation.
     if (queueRecord.source === "system-self-heal") continue;
-    const linked = queueRecord.linkedTaskIds
+    let linked = queueRecord.linkedTaskIds
       .map((taskId) => byTaskId.get(taskId))
       .filter((record): record is ScheduledTaskRecord => record !== undefined);
+    const closureTaskMap = new Map(byTaskId);
+    const legacyClosure =
+      isTerminalProjectRecoveryClosure(queueRecord) ||
+      hasLinkedAcceptedBlockedRecoveryArtifact(queueRecord.linkedTaskIds, byTaskId);
+    const latestRecovery = linked
+      .filter((record) => record.source === "autopilot-delegate")
+      .sort((a, b) => b.scheduledAt - a.scheduledAt)[0];
+    const latestSummaryPath =
+      latestRecovery?.reportPath === undefined
+        ? undefined
+        : readFinalSummaryPath(latestRecovery.reportPath);
+    const latestGate =
+      latestSummaryPath === undefined
+        ? undefined
+        : readJson(join(dirname(latestSummaryPath), "system-gate.json"));
+    const latestArtifact =
+      latestRecovery?.reportPath === undefined
+        ? ""
+        : (readRecoveryArtifact(latestRecovery.reportPath).artifactText ?? "");
+    const authoritativeBlocker =
+      hasAuthoritativeRetryConflict(latestGate) ||
+      hasUnsafeRecoveryEvidence([latestRecovery?.error, latestArtifact].join(" "));
+    if (
+      legacyClosure &&
+      (queueRecord.status === "leased" || queueRecord.status === "running") &&
+      linked.some((record) => hasOriginalRecoveryRetryEvidence(record))
+    ) {
+      for (const record of linked) closedTaskIds.add(record.taskId);
+      continue;
+    }
+    const retryableOriginals =
+      legacyClosure && !authoritativeBlocker
+        ? linked.filter(
+            (record) =>
+              (record.source === "loop-engineering" ||
+                (record.taskId === queueRecord.linkedTaskIds[0] &&
+                  !acceptedBlockedRecoveryArtifact(record.reportPath))) &&
+              (record.repairStatus === "blocked" ||
+                record.repairStatus === "pending" ||
+                record.repairStatus === "running") &&
+              hasOriginalRecoveryRetryEvidence(
+                record,
+                record.reportPath === undefined
+                  ? ""
+                  : readRecoveryArtifact(record.reportPath).artifactText,
+              ) &&
+              !originalHasAuthoritativeRecoveryBoundary(
+                record,
+                input.coordinator,
+                input.records,
+                originalRegistry.records,
+              ),
+          )
+        : [];
+    if (retryableOriginals.length > 0) {
+      for (const original of retryableOriginals) closedTaskIds.add(original.taskId);
+      if (queueRecord.status === "leased" || queueRecord.status === "running") continue;
+      const retryableIds = new Set(retryableOriginals.map((record) => record.taskId));
+      for (const original of retryableOriginals) {
+        if (original.repairStatus === "blocked")
+          input.updateRepairStatus(
+            original.taskId,
+            "pending",
+            "Reconsidering preserved original retryable evidence; aggregate blocked closure does not prove an execution boundary.",
+          );
+        closureTaskMap.delete(original.taskId);
+      }
+      linked = linked.filter((record) => !retryableIds.has(record.taskId));
+      queueRecord = {
+        ...queueRecord,
+        linkedTaskIds: queueRecord.linkedTaskIds.filter((id) => !retryableIds.has(id)),
+      };
+      if (linked.length === 0) continue;
+    }
     const terminalClosure = isTerminalProjectRecoveryClosure(queueRecord);
     const hasLinkedRecoveryArtifact = linked.some(
       (record) =>
@@ -365,7 +603,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
       const closureRecords = linkedTerminalClosureRecords(
         queueRecord.linkedTaskIds,
         linked,
-        byTaskId,
+        closureTaskMap,
       );
       const needsClosure =
         !isRepairTerminal(queueRecord.status) ||
@@ -449,13 +687,9 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         record.taskId !== queueRecord.linkedTaskIds[0] &&
         record.status === "success",
     );
-    const summaryMatchedRecoverySucceeded = input.records.some(
-      (record) =>
-        record.source === "autopilot-delegate" &&
-        record.status === "success" &&
-        originals.some((original) => recoveryRecordMentionsTask(record, original.taskId)),
-    );
-    const recoverySucceeded = linkedRecoverySucceeded || summaryMatchedRecoverySucceeded;
+    // Investigation prose may mention unresolved tasks, even across projects.
+    // Only an explicitly linked recovery can settle this repair group.
+    const recoverySucceeded = linkedRecoverySucceeded;
     const recoveryFailed = linked.some(
       (record) =>
         record.source === "autopilot-delegate" &&
@@ -501,7 +735,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         for (const record of linkedAcceptedBlockedClosureRecords(
           queueRecord.linkedTaskIds,
           linked,
-          byTaskId,
+          closureTaskMap,
         )) {
           input.updateRepairStatus(record.taskId, "blocked", summary);
           closedTaskIds.add(record.taskId);
@@ -517,10 +751,14 @@ export async function reconcileProjectRecoveryArtifacts(input: {
           ["failed", "missing", "running-timeout"].includes(record.status) &&
           retryableBlockedRecoveryArtifact(record.reportPath),
       );
-      if (retryableBlockedRecoveries.length > 0) {
+      const terminalRecord = [...retryableBlockedRecoveries].sort(
+        (a, b) => b.scheduledAt - a.scheduledAt || b.taskId.localeCompare(a.taskId),
+      )[0];
+      if (terminalRecord !== undefined) {
         const transitionedTaskIds = transitionRetryableArtifact({
           coordinator: input.coordinator,
           queueRecordId: queueRecord.id,
+          terminalRecord,
           now: input.now,
           records: [...originals, ...retryableBlockedRecoveries],
           updateRepairStatus: input.updateRepairStatus,
@@ -649,6 +887,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         transitionRetryableArtifact({
           coordinator: input.coordinator,
           queueRecordId: queueRecord.id,
+          terminalRecord: record,
           now: input.now,
           records: [record],
           updateRepairStatus: input.updateRepairStatus,
@@ -670,6 +909,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
 }
 
 function transitionRetryableArtifact(input: {
+  terminalRecord: ScheduledTaskRecord;
   coordinator: RepairCoordinator;
   queueRecordId: string;
   now: number;
@@ -681,20 +921,45 @@ function transitionRetryableArtifact(input: {
   ) => void;
   result: ProjectRecoveryArtifactReconciliationResult;
 }): string[] {
+  const records = [...new Map(input.records.map((record) => [record.taskId, record])).values()];
+  const taskIds = records.map((record) => record.taskId);
+  const summaryPath =
+    input.terminalRecord.reportPath === undefined
+      ? undefined
+      : readFinalSummaryPath(input.terminalRecord.reportPath);
+  const gate =
+    summaryPath === undefined
+      ? undefined
+      : readJson(join(dirname(summaryPath), "system-gate.json"));
   const released = input.coordinator.releaseForRetry(input.queueRecordId, input.now, {
     detachWorkOrder: true,
+    settledTaskId: input.terminalRecord.taskId,
+    ...(typeof gate?.workOrderId === "string" ? { expectedWorkOrderId: gate.workOrderId } : {}),
   });
-  const exhausted = released?.status === "dead-letter";
+  const settled =
+    released ??
+    input.coordinator
+      .list()
+      .find(
+        (record) =>
+          record.id === input.queueRecordId &&
+          record.workOrderId === undefined &&
+          ["pending", "retry-wait", "dead-letter"].includes(record.status) &&
+          record.settledRecoveryTaskIds?.includes(input.terminalRecord.taskId),
+      );
+  if (settled === undefined) return taskIds;
+  const exhausted = settled.status === "dead-letter";
   const repairStatus = exhausted ? "blocked" : "pending";
   const summary = exhausted
     ? "Recovery classification: recovery attempt limit reached; repair moved to dead-letter."
     : "Authoritative supervisor final summary reports retryable automation recovery evidence; returned to the repair queue.";
-  const records = [...new Map(input.records.map((record) => [record.taskId, record])).values()];
+  // Recover a crash after queue settlement but before the ledger projection.
   for (const record of records) {
-    input.updateRepairStatus(record.taskId, repairStatus, summary);
+    if (released !== undefined || record.repairStatus !== repairStatus)
+      input.updateRepairStatus(record.taskId, repairStatus, summary);
   }
-  if (exhausted) input.result.blocked++;
-  return records.map((record) => record.taskId);
+  if (exhausted && released !== undefined) input.result.blocked++;
+  return taskIds;
 }
 
 function isTerminalLinkedRepairRecord(record: ScheduledTaskRecord): boolean {
@@ -730,30 +995,6 @@ function linkedOriginalsFixedBySuccessfulCounterpart(
         record.repairStatus === "running" ||
         record.repairStatus === "blocked") &&
       taskIdRunAliases(record.taskId).some((runId) => successfulDelegatedRunIds.has(runId)),
-  );
-}
-
-function recoveryRecordMentionsTask(record: ScheduledTaskRecord, taskId: string): boolean {
-  const needles = taskMentionNeedles(taskId);
-  if (record.summary !== undefined && needles.some((needle) => record.summary?.includes(needle)))
-    return true;
-  if (record.reportPath === undefined) return false;
-  const summaryPath = readFinalSummaryPath(record.reportPath);
-  if (summaryPath === undefined) return false;
-  try {
-    const text = readFileSync(summaryPath, "utf8");
-    return needles.some((needle) => text.includes(needle));
-  } catch {
-    return false;
-  }
-}
-
-function taskMentionNeedles(taskId: string): string[] {
-  const occurrenceId = taskId.split(":").at(-1);
-  const occurrenceAliases =
-    occurrenceId !== undefined && /^\d{10,}$/.test(occurrenceId) ? [occurrenceId] : [];
-  return [...new Set([taskId, ...taskIdRunAliases(taskId), ...occurrenceAliases])].filter(
-    (needle) => needle.length > 0,
   );
 }
 
@@ -810,6 +1051,8 @@ function acceptedCompletedSystemGate(
   return (
     systemGate?.accepted === true &&
     systemGate.resultStatus === "completed" &&
+    (systemGate.failures === undefined ||
+      (Array.isArray(systemGate.failures) && systemGate.failures.length === 0)) &&
     systemGate.workOrderId === basename(dirname(summaryPath)) &&
     systemGate.projectId === summary.projectId &&
     (isDeepStrictEqual(systemGate.supervisorReviewGate, summary.reviewGate) ||
@@ -823,13 +1066,7 @@ function isRepairTerminal(status: string): boolean {
 }
 
 function isTerminalProjectRecoveryClosure(record: { summaries: readonly string[] }): boolean {
-  return record.summaries.some((summary) => {
-    const normalized = summary.toLowerCase();
-    return (
-      normalized.includes("closed from the authoritative accepted blocked project recovery") &&
-      normalized.includes("no retryable project repair remains")
-    );
-  });
+  return record.summaries.some(hasGenericProjectRecoveryClosure);
 }
 
 function terminalProjectRecoveryRunIds(coordinator: RepairCoordinator): Set<string> {
@@ -860,6 +1097,7 @@ function isCoveredByTerminalProjectRecovery(
   record: ScheduledTaskRecord,
   terminalClosureRunIds: ReadonlySet<string>,
 ): boolean {
+  if (hasOriginalRecoveryRetryEvidence(record)) return false;
   if (record.repairStatus !== "pending" && record.repairStatus !== "running") return false;
   if (!["failed", "missing", "running-timeout"].includes(record.status)) return false;
   if (record.source === "autopilot-delegate") {
@@ -1076,20 +1314,33 @@ function hasPreciseBotRetryableEvidence(evidence: string): boolean {
   );
 }
 
-function readRecoveryArtifact(reportPath: string): string | undefined {
+function readRecoveryArtifact(reportPath: string): { artifactText?: string; targetIds: string[] } {
   const basePath =
     reportPath.endsWith(".md") || reportPath.endsWith(".json") ? dirname(reportPath) : reportPath;
+  const workOrderPath = join(basePath, "work-order.json");
+  const targetIds: string[] = [];
+  try {
+    const workOrder = JSON.parse(readFileSync(workOrderPath, "utf8"));
+    for (const id of [workOrder.projectId, workOrder.workspace?.id]) {
+      if (typeof id === "string") targetIds.push(id);
+    }
+    // Legacy recovery prompts carry explicit routing labels, not diagnostic evidence.
+    for (const text of [workOrder.task?.requirement, workOrder.goal]) {
+      if (typeof text === "string") targetIds.push(...extractExplicitTargetIds(text));
+    }
+  } catch {
+    // Missing or invalid instructions cannot supply routing authority.
+  }
   const paths = [
-    join(basePath, "work-order.json"),
-    reportPath,
+    join(basePath, "system-gate.json"),
     join(basePath, "supervisor-final-summary.json"),
     join(basePath, "supervisor-summary.json"),
-    join(basePath, "system-gate.json"),
+    reportPath,
   ];
   const seen = new Set<string>();
   const evidence = paths
     .filter((path) => {
-      if (seen.has(path)) return false;
+      if (path === workOrderPath || seen.has(path)) return false;
       seen.add(path);
       return true;
     })
@@ -1100,5 +1351,8 @@ function readRecoveryArtifact(reportPath: string): string | undefined {
         return [];
       }
     });
-  return evidence.length === 0 ? undefined : evidence.join("\n").slice(0, 32_000);
+  return {
+    targetIds,
+    ...(evidence.length === 0 ? {} : { artifactText: evidence.join("\n").slice(0, 32_000) }),
+  };
 }

@@ -70,6 +70,153 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Codex readiness accepts the exact `← for agents · ? for shortcuts` navigation
+footer below a current composer. The footer alone, menu selectors, boot text,
+active turns and unknown footer text remain insufficient readiness evidence.
+This prevents idle managed delivery from timing out on the navigation hint;
+input ownership, pending-text and transcript checks remain separate gates.
+`tests/codex-runner.test.ts` covers the observed idle pane and refusal boundaries.
+
+An exact original supervisor WorkOrder timeout re-enters bounded recovery
+investigation even when incidental report prose mentions conflicts. It never
+bypasses the original attempt limit, explicit external/manual boundary, uncertain
+execution evidence, or existing live-owner admission. Daily Audit reconsiders
+such blocked ledger records from their original error rather than preserving a
+prose-derived owner-decision label. `tests/tasks/project-recovery.test.ts` covers
+retry, exhaustion, external execution and unsafe ownership boundaries.
+
+Background active-delegation priority counts only ready repository reviews whose
+configured targets are enabled, matching the repository-review consumer. Disabled
+or removed targets retain their durable queue records without starving independent
+recovery. Enabled ready reviews still take priority; missing or unreadable review
+configuration supplies no runnable review priority. Regression coverage lives in
+`tests/autopilot/delegated-task-supervisor-pool.test.ts`. The independent review
+consumer evaluates conflicts across the ready queue before selecting at most one
+target per idle supervisor. A conflicting prefix must not hide later independent
+work; `tests/loop/service-supervisor.test.ts` covers production tick dispatch.
+
+Governance repair decisions retain typed P0–P3 severity through final-summary
+normalization. Parser and system acceptance require P0/P1 evidence, explicit
+repair permission, at most one PR and no merged outcome. Repair commits without
+a structured decision cannot trigger the system's PR publication fallback.
+The observed branch PR must match the declared repository/number; missing or
+foreign PRs block instead of invoking fallback publication. Read-only reports and
+ordinary repository reviews remain compatible.
+`tests/loop/governance-repair-policy.test.ts` covers these boundaries.
+
+Daily Audit retries an explicit transient partial message-delivery failure once
+per failed channel within the same tick. Successful channels are never resent;
+permanent errors, missing senders and attachment failures are not replayed.
+An exhausted retry stays partial and visible to the existing self-audit path.
+`tests/tasks/daily-audit-service.test.ts` covers recovery, exhaustion and permanent
+rejection without changing admission, repair dispatch or schedule ownership.
+
+Resource Guardian separates load repair authority from collector diagnosis.
+An ended incident with repeated exact sanitized pane-snapshot validation failures
+may enter the existing stable-recovery WorkOrder path even when process
+attribution is unknown. Diagnosis preserves that attribution and forbids signals,
+validation relaxation and replay. A shared collector fingerprint preserves
+cooldown, global ownership and exhausted budgets across pressure incidents.
+Selection, dispatch and prompt regressions enforce these limits; generic legacy
+failure prose grants no diagnostic authority.
+
+Autopilot restart reconciliation requires a completed summary for the configured
+project, passing final verification and a passing review decision when present.
+It must match a completed accepted system gate with no failures and the same
+normalized review snapshot; the writer's null snapshot preserves non-review runs.
+An accepted blocked gate is a valid blocked outcome, never completion authority.
+Contradictory artifacts cannot close linked repairs or release a non-terminal
+owner; terminal inconsistencies return the ledger to guarded recovery. Task
+reconciliation regressions cover result, failure and review-snapshot mismatches.
+
+Daily Audit artifact discovery honors a completed passing final summary's matching
+accepted system gate before applying legacy follow-up keyword checks. Run and
+project identities, a valid passing review snapshot, empty gate failures and passed
+final verification must agree. Unrelated follow-up CI failures cannot reopen an
+accepted task; missing, foreign, contradictory or stale gate evidence retains
+conservative anomaly detection. Discovery regressions enforce both boundaries.
+
+The registry read regression retains 240 terminal history records with unread
+journal sentinels; its current recoverable journal still uses the full public
+lifecycle. This isolates read-count assertions from unrelated historical setup
+I/O while preserving the same history volume, assertions and timeout.
+
+Daily Audit terminal queue projection selects the newest evidence for each exact
+ledger task. A newer pending ledger correction survives an older fixed queue
+record and reaches the existing guarded project recovery path. Equal or older
+corrections still take the terminal result; blocked, uncertain and exhausted
+boundaries remain unchanged. Restart and duplicate-queue tests prevent a supported
+repair-only correction from being silently reclosed by a stale fixed projection.
+
+Terminal recovery artifact settlement persists the consumed ledger execution ID
+with the retry counter in one locked queue update. Repeated ticks and store
+restarts cannot spend another attempt or move its retry time. A terminal queue
+record stays terminal, and an older artifact cannot detach a different current
+WorkOrder. Grouped reconciliation selects the newest scheduled recovery identity,
+not the ledger update time that reconciliation itself changes. Standalone and
+grouped regressions cover replay, fresh ownership and historical exhausted counts.
+A crash after queue persistence replays only missing ledger status updates without
+spending another retry. Legacy counters are preserved; a large counter alone cannot prove actual dispatches
+or authorize a reset without retained execution evidence.
+
+Repository PR review priority refusals use the shared `automation admission
+deferred:` contract. Repair Coordinator preserves the execution retry budget and
+Runtime Guardian leaves findings unhandled without starting a repair cooldown
+when ready reviews defer background delegation before WorkOrder creation. The
+delegation regression passes the real refusal through both consumers and checks
+that the next Guardian tick remains eligible; review priority is unchanged.
+
+Repository-review blocks derived from the daily task ledger are reconsidered only
+when the exact matching ledger occurrence has newer repair evidence. A pending
+correction restores bounded retry eligibility; a successful repair closes the
+queue occurrence. Attempts, retry epochs and admission deferrals are preserved.
+Independent blocked decisions, manual review, dead letters and completed work
+remain terminal. `tests/loop/repository-review-ledger-correction.test.ts` covers
+restart recovery, stale evidence, repeated ticks and exhausted budgets.
+
+Project recovery completion requires an explicit durable repair link or an exact
+successful delegated counterpart. Unrelated investigation task/run/timestamp
+mentions are diagnostic evidence, never authority to close a task or repair
+group. Recovery regressions preserve linked success and reject prose closure.
+
+Managed reset identity counts unique exact transcript paths, so repeated file
+descriptors for one transcript cannot manufacture ambiguity. Distinct transcript
+paths still fail closed before any reset, native write, restart or prompt.
+Resolver and managed-reset integration regressions enforce both outcomes.
+
+Every supervisor summary prompt specifies planning JSON field types, including
+boolean or `"not-applicable"` score applicability. Score prose belongs in evidence,
+not typed planning fields; malformed summaries retain the existing rejection.
+Structured log queries automatically cover the local dates touched by `--since`
+(up to 30 daily files), unless `--days` explicitly limits the read. Prompt and
+log rollover regressions protect recovery delivery and operator visibility.
+The shared Telegram, Lark and Control/TUI last-hour reader uses the same date
+selection, so midnight cannot hide part of the existing time window. Session,
+severity, trace and result-count filters remain unchanged.
+
+
+Original task recovery evidence takes precedence over a generic accepted-blocked
+aggregate label. Daily Audit, ledger preservation and artifact reconciliation
+reconsider only the qualifying original subset, preserve historical execution
+status, and retain true external and uncertain-submission boundaries. Original
+WorkOrder artifacts are checked even when a ledger report path is missing; the
+first linked recovery can carry the authoritative boundary. Active repair owners
+are never released by this migration. Same-original attempts cannot reset during
+queue migration, exhausted budgets cannot dispatch, and fresh occurrences keep
+separate budgets while another project recovery owns execution. Focused recovery
+regressions cover repeated ticks, mixed aggregates/budgets and original artifacts.
+
+
+Managed context-reset identity and Codex transcript readiness refusals use the
+shared agent-runtime transient classification. Scheduled dispatch remains due,
+and terminal dispatch failures remain visible to Runtime Guardian's existing
+repair path. Classification never grants identity, bypasses transcript evidence,
+replays uncertain input in place, or treats ownership/process replacement as a
+provider transient. Classifier, schedule-completion and Guardian tests cover the
+two exact pre-submission refusal diagnostics and preserve ownership failures.
+The older completion-evidence transcript diagnostic is ambiguous about submission
+and does not authorize automatic replay.
+
 The Take over entry, per-candidate confirmation and local `adopt` command share
 the same process-bound candidate discovery. Codex runtime helpers are excluded;
 the unique open parent rollout determines the resumable session. Child rollouts
@@ -97,6 +244,26 @@ or autonomous admission bypass is added. `docs/scheduled-messages.md` owns usage
 and recovery semantics; schedule, adapter, dispatcher and control tests enforce
 the shared contract.
 
+Remote-branch reconciliation records sanitized repository/phase/branch failure
+reasons even before a deletion intent exists. Repeated failures use bounded
+warning coalescing; observation failure never creates deletion authority or
+suppresses the next normal reconciliation attempt. Remote-branch tests cover
+pre-intent diagnostics, secret redaction, retry, and absence of deletion.
+
+Terminal worktree cleanup preserves protected-branch and source-root refusals.
+Repeated identical refusals use the shared bounded warning coalescer: first and
+hourly aggregate warnings remain visible, repeats are DEBUG, and Git validation
+still runs on later passes so a restored source can recover without restart.
+
+Historical recovery classifies system-gate and outcome evidence separately from
+WorkOrder requirement/goal instructions. WorkOrders supply only structured target
+IDs and explicitly labelled legacy routing IDs; their instruction text never
+enters diagnostic evidence or consumes its bounded text budget.
+A configured `targetScore` alone is not an assessment failure. Declared RalphWorks
+terminal execution blockers retain the external boundary even when old ledger
+classification text suggests a native retry. Project recovery tests enforce this
+precedence; these records still require an available configured target.
+
 Repair visibility and task-ledger alignment: Observer task sources derive from
 `SCHEDULED_TASK_SOURCES`; its output accepts completed repairs and unavailable
 dependency-audit evidence. Daily Audit's Runtime Overview domain requires
@@ -110,7 +277,8 @@ Runtime Guardian readiness validates the configured Git root and retains source
 cleanliness and branch gates. Durable readiness evidence records the first
 blockage, reason/policy changes, and recovery; repeated refusals are DEBUG and do
 not consume finding handling or repair cooldown. Expected self-heal admission
-waits before WorkOrder creation are skipped/not-needed, not new repair failures.
+waits before WorkOrder creation, including exact active-project ownership conflicts,
+are skipped/not-needed, not new repair failures.
 Daily Audit normalizes only exact historical admission-only sweep failures and
 preserves active repair ownership and actual preparation failures. Resource repair
 queue settlement still runs under pressure, but incident-history scanning waits
@@ -328,9 +496,15 @@ consuming dispatch attempts and resume when re-enabled. The pause takes effect
 when a tick reads the updated config; it does not cancel already admitted work
 or invalidate an in-progress tick's snapshot. Project Recovery and active
 delegation retain their separate admission semantics.
-System Self-Heal broad agent sweeps must leave durable retryable failure ledger
-evidence when admission blocks the sweep before WorkOrder creation; otherwise
-the hourly operator-equivalent check can disappear from the next audit window.
+System Self-Heal broad agent sweeps retain a ledger occurrence when admission
+blocks before WorkOrder creation. Exact pressure, quiet-hours and active-project
+ownership waits are skipped/not-needed; actual preparation failures remain
+failed/pending. A later sweep retries through normal admission without claiming
+that the deferred investigation executed.
+The manual's Daily Task Audit section must preserve this distinction: a skipped
+sweep is neither a failed execution nor evidence that the underlying tasks
+recovered. Keep it aligned with `recordBlockedAgentSweep` and the admission-wait
+regressions in `tests/tasks/system-self-heal-service.test.ts`.
 Daily Task Audit service ticks must prune terminal task and repair history by
 task occurrence or queue creation time on a bounded retention window before
 reconciliation. Completed/fixed/superseded history is evidence, not an
@@ -355,8 +529,12 @@ Autopilot reconciliation must also terminalize open `system-self-heal` sweep
 deferral records so manually prompted recovery does not leave stale audit
 attention behind.
 When a System Self-Heal broad sweep changes this repository, the WorkOrder must
-verify locally, commit on `dev`, push to `origin/dev`, run `git pull --rebase`
-after the successful push, and finish with a clean worktree. If commit, push, or
+verify locally and follow its exact `commitPolicy.branch` and `pullRequestPolicy`.
+When PRs are enabled, deliver one PR against the configured base and pass CI and
+mergeability gates instead of pushing directly to the base branch. After a
+successful push, pull/rebase the configured base only on the WorkOrder branch
+when safe. An isolated worker stays on that branch and leaves source adoption
+and switch-back to the bot system. Finish with a clean worktree. If commit, push, or
 rebase is blocked, the WorkOrder must record the exact blocker instead of
 leaving uncommitted edits behind.
 Loop execution worktree cleanup must remove terminal completed isolated
@@ -376,12 +554,10 @@ When cleanup refuses a bot-owned path because Git cannot prove that path is the
 expected worktree, retain the path and coalesce repeated refusals into bounded
 periodic warnings with suppressed-repeat evidence; never trade log quietness for
 unsafe recursive deletion.
-That durable evidence is a `failed/pending` repair candidate, because no
-WorkOrder was created and the next scheduled sweep alone is not enough evidence
-that the operator-equivalent check actually ran.
-Legacy deferred sweep records that were stored as `skipped/not-needed` must be
-reopened to `failed/pending` during audit reconciliation so historical missed
-operator-equivalent checks do not stay hidden.
+Legacy exact admission-only sweep failures normalize to skipped/not-needed
+only when they retain direct pre-WorkOrder evidence and no active repair owner.
+Other legacy deferred sweep failures retain the existing repair path. A skipped
+admission wait never certifies that the operator-equivalent investigation ran.
 Daily Task Audit and Runtime Guardian both delegate bot-owned repair admission
 through this module; neither may directly claim, retry, or mark a repair running
 during admission and dispatch. Runtime Guardian may still reconcile an existing
@@ -713,6 +889,14 @@ Codex may retain an earlier `esc to interrupt` line after its footer reports
 `Context … Goal achieved` or its current UI renders `Worked for <duration>`;
 either later completion marker makes the composer ready again. A newer working
 marker still wins, so genuine active turns remain protected from queued input.
+Managed Codex pre-submit completion probes expand their initial history window
+from 1 MiB to at most 8 MiB when the latest root start lies outside the first tail.
+Idle still requires the existing paired root start/terminal lifecycle evidence;
+a child terminal, malformed/torn history, or a root beyond the bound never
+proves completion. Exact live PID/session/path, file identity, prompt binding,
+ownership and fresh terminal revalidation remain unchanged. Incremental managed
+turn reads keep their 1 MiB bound. Codex history tests cover long completed and
+aborted roots, active/child turns, follow-up prompt binding and the hard bound.
 Periodic WorkOrder reconciliation must defer a final summary while the owning
 supervisor queue is still processing or has queued work. The summary can appear
 before the live dispatch promise resolves; consuming it early can terminalize
@@ -955,6 +1139,11 @@ dispatch. User chat and user-confirmed Autopilot retain ordinary FIFO queueing;
 official exhausted-capacity evidence waits rather than bypassing the provider,
 but it still uses bounded lightweight probes before the known reset time so
 early capacity recovery is not missed.
+Managed dev supervisor shutdown cancels pending crash respawns and invalidates
+in-flight reload continuations after typecheck and child-exit waits. A stopped
+supervisor must never start a replacement child or schedule a reload retry;
+`tests/dev-supervisor.test.ts` covers backoff, typecheck success/failure, and
+child-exit success/timeout races.
 Bug-fix and PR-review workers treat async/task lifecycle edits as a mandatory
 risk lens: success, error, timeout, cancellation, replacement, and shutdown
 paths must be traced when touched code can continue work, spawn background
@@ -1053,6 +1242,13 @@ operation cannot mask an account mismatch until a later push, merge, or close
 operation fails. Prompt and artifact text must keep token lookup as a literal
 shell command; the resolved token value must never be pasted into a worker pane,
 summary, log, or chat message.
+
+Task reporting supports repair-only `--status unchanged` for existing records.
+The CLI and task-report boundary require matching source/name/schedule identity
+and a repair status, reject execution metadata overrides, and preserve historical
+execution outcomes (including missing/timeouts). The task-report regression suite
+checks preservation and rejects unknown/mismatched records. This does not replace
+the supervisor's final system acceptance gate.
 
 ## Module Alignment Matrix
 
@@ -1533,6 +1729,20 @@ Native system verification and external task preflight/host checks share the sam
 
 External task acceptance commands carry the remaining WorkOrder deadline. The synchronous shell boundary uses a separate watchdog to stop its shell process group on timeout or output overflow before returning; native invocations without an explicit budget retain their existing behavior.
 
+## Managed reset recovery evidence
+
+A managed reset input-surface refusal or reset-readiness deadline happens before
+submission of the WorkOrder prompt. The shared transient classifier exposes these
+as agent-runtime readiness failures, and project recovery preserves the original
+error when reconsidering a generic accepted-blocked aggregate closure. Recovery
+re-enters the existing bounded investigation and dispatch path; it must recheck
+the current composer, live identity and lease before input. It never discards
+pending input or relaxes reset, completion, ownership or retry-budget gates.
+Unsafe ownership or uncertain-completion evidence still blocks recovery.
+`tests/tasks/project-recovery-original-closure.test.ts` covers repeated
+reconciliation, admission deferral, mixed unsafe evidence and exhausted attempts;
+`tests/agents/transient-failure.test.ts` covers readiness classification.
+
 ## Managed Codex Turn Evidence
 
 Startup update-menu handling uses only the current complete known menu: Escape
@@ -1669,3 +1879,57 @@ with `pnpm install --frozen-lockfile` before starting the supervisor. Healthy
 installations skip this step. Installation failures prevent startup and remain
 visible in service logs; the service manager retries. This recovery runs outside
 the bot, so it also works when the bot cannot boot.
+
+
+## Resource and capacity notification preference
+
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED false` to mute all
+Resource Guardian alerts (including pressure, recovery, sampling and action failures)
+and Claude/Codex capacity transition alerts on Telegram and Feishu/Lark.
+Monitoring, resource protection, admission gates, status/history commands and other
+notifications remain active. The preference is checked at delivery time; no restart
+is needed once this version is running. Omitted or `true` preserves alert delivery.
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
+The generic config command validates this setting as a non-secret boolean; the
+notification gateway enforces the same preference for both channels and all callers.
+
+## Telegram command-menu recovery
+
+Menu registration uses the adapter's existing bounded transport independently
+of polling. A transient network/server failure retries one request at a time
+with exponential backoff capped at 30 seconds; Telegram retry_after may require
+a longer delay. Permanent API rejection stops registration retries. Polling,
+notification registration and other channels remain available. Adapter shutdown,
+fatal authentication and normal polling return cancel scheduled retries; a late
+request cannot reschedule after cancellation. Success stops retries, and repeated
+identical failures use DEBUG after the first WARN. Regression coverage lives in
+`tests/adapters/telegram/command-registration.test.ts` and the adapter startup
+notification tests. No command catalog or owner routing changes.
+
+Resource Guardian bulk pane validation fails closed on every malformed row. Its
+diagnostic contains only a one-based row number and a fixed validation category
+(`field-count`, `empty-session`, `invalid-pid`, or `unsafe-pid`), never session
+names or raw pane output. A valid prefix does not authorize partial attribution.
+Historical generic snapshot failures need a fresh observation; they do not justify
+relaxing attribution or terminating an unverified process.
+
+### Discovery during system acceptance
+
+Daily Audit discovery keeps an identity-matching nonterminal scheduled WorkOrder
+`running` when its final summary is present but a matching completed accepted
+system gate is absent. The summary remains intermediate evidence during worker
+and supervisor finalization. A matching accepted gate can establish completion
+before terminal state publication; explicit system rejection retains precedence.
+Later-success supersession uses the same artifact classification, so live,
+rejected or failed-verification summaries cannot close older failures. Legacy
+summary-only artifacts without matching active state retain compatibility.
+`tests/tasks/task-discovery-acceptance.test.ts` covers these boundaries.
+
+### Recovery acceptance with contradictory failures
+
+Project-recovery artifact reconciliation requires a matching accepted completed
+system gate with no reported failures. Nonempty or malformed `failures` keeps the
+repair pending instead of marking it fixed; legacy gates that omit the field
+remain compatible. Regression cases in
+`tests/tasks/project-recovery-service.test.ts` cover contradictory accepted gates
+and preserve existing identity, review-snapshot and retry ownership checks.

@@ -34,6 +34,15 @@ import {
 import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { createResourceGuardianStore } from "../../src/core/resource-guardian/store.js";
+import {
+  RuntimeGuardianStore,
+  runRuntimeGuardianTick,
+} from "../../src/core/runtime-guardian/service.js";
+import { admitRecoveryFindings } from "../../src/core/tasks/recovery-admission.js";
+import {
+  InMemoryRepairQueueStore,
+  RepairCoordinator,
+} from "../../src/core/tasks/repair-coordinator.js";
 import type { AppConfig } from "../../src/shared/types.js";
 
 const startLoopSupervisor = vi.fn();
@@ -164,18 +173,71 @@ describe("active delegated task supervisor pool", () => {
     restartLoopSupervisor.mockReset();
   });
 
+  function reviewConfig(enabled: boolean): string {
+    const path = join(process.env.TCB_STATE_DIR ?? tmpdir(), "loop.yml");
+    writeFileSync(
+      path,
+      `projects: []
+prReview:
+  repositories:
+    - id: synthetic-reviews
+      name: Synthetic Reviews
+      agent: codex
+      repo: synthetic/app
+      path: /fixture/reviews
+      enabled: ${enabled}
+      schedule: "0 2 * * *"
+`,
+    );
+    return path;
+  }
+
+  it.each(["disabled", "removed"])(
+    "does not prioritize %s repository reviews over background recovery",
+    async (state) => {
+      const { startActiveDelegatedTask } = await import(
+        "../../src/core/autopilot/delegated-task.js"
+      );
+      const input = deps(1);
+      input.config.loopEngineering.configFile = reviewConfig(false);
+      if (state === "removed")
+        writeFileSync(input.config.loopEngineering.configFile, "projects: []\n");
+      const now = Date.now();
+      const queue = new RepositoryReviewQueue();
+      queue.enqueue({
+        repositoryId: "synthetic-reviews",
+        scheduledAt: now - 1,
+        priority: 1000,
+        now,
+      });
+      const before = queue.listReady(now);
+      setPathForSession("tmux_proj_app", "/fixture/app");
+      const result = await startActiveDelegatedTask(input, {
+        session: "tmux_proj_app",
+        requirement: "continue maintenance",
+        resourceTrigger: "background",
+      });
+      expect(result.status === "blocked" ? result.reason : "queued").not.toContain(
+        "repository PR review queue has ready work",
+      );
+      expect(queue.listReady(now)).toEqual(before);
+    },
+  );
+
   it("defers background active delegation while repository PR review work is ready", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const now = Date.now();
     new RepositoryReviewQueue().enqueue({
-      repositoryId: "tmux-claude-bot-all-prs",
+      repositoryId: "synthetic-reviews",
       scheduledAt: now - 1,
       priority: 1000,
       now,
     });
     setPathForSession("tmux_proj_app", "/fixture/app");
 
-    const result = await startActiveDelegatedTask(deps(1), {
+    const input = deps(1);
+    input.config.loopEngineering.configFile = reviewConfig(true);
+    const result = await startActiveDelegatedTask(input, {
       session: "tmux_proj_app",
       requirement: "continue maintenance",
       resourceTrigger: "background",
@@ -187,6 +249,71 @@ describe("active delegated task supervisor pool", () => {
       showQueue: true,
     });
     expect(startLoopSupervisor).not.toHaveBeenCalled();
+
+    if (result.status !== "blocked") throw new Error("expected priority deferral");
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const admission = await admitRecoveryFindings({
+      findings: [
+        {
+          projectId: "app",
+          projectPath: "/fixture/app",
+          source: "runtime-guardian",
+          taskFamily: "missing-system-gate",
+          fingerprint: "missing-gate",
+          taskId: "run-1",
+          priority: 100,
+        },
+      ],
+      coordinator,
+      now,
+      leaseId: "priority-check",
+      dispatch: async () => ({ status: "blocked", detail: result.reason }),
+    });
+    expect(admission.disposition).toBe("deferred");
+    expect(coordinator.list()).toEqual([
+      expect.objectContaining({ status: "pending", attempt: 0 }),
+    ]);
+
+    const store = new RuntimeGuardianStore();
+    const dispatchRepair = vi.fn(async () => ({
+      status: "blocked" as const,
+      detail: result.reason,
+    }));
+    const guardianConfig = {
+      enabled: true,
+      mode: "fast-heal" as const,
+      worktreeIsolation: "isolated" as const,
+      tickMs: 120_000,
+      lookbackMs: 86_400_000,
+      cooldownMs: 1_800_000,
+      repoPath: "/fixture/bot",
+      repairBranch: "dev",
+      maxFindingsPerTick: 3,
+    };
+    for (const tickAt of [now, now + guardianConfig.tickMs]) {
+      const tick = await runRuntimeGuardianTick({
+        now: tickAt,
+        config: guardianConfig,
+        store,
+        coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+        discover: () => [
+          {
+            kind: "missing-system-gate",
+            severity: "high",
+            runId: "run-1",
+            projectId: "app",
+            projectPath: "/fixture/app",
+            evidence: ["missing gate"],
+          },
+        ],
+        checkRepairReadiness: () => ({ ok: true }),
+        dispatchRepair,
+      });
+      expect(tick).toMatchObject({ fired: true, repairDispatch: "blocked" });
+    }
+    expect(dispatchRepair).toHaveBeenCalledTimes(2);
+    expect(store.lastRepairAttemptAt("/fixture/bot")).toBeUndefined();
+    expect(store.lastHandledAt("missing-system-gate:app:run-1")).toBeUndefined();
   });
 
   it("rejects a recovery workspace identity absent from configuration", async () => {

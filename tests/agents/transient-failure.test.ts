@@ -42,6 +42,43 @@ describe("agent transient failure classification", () => {
     expect(isProviderTransientFailure("loop supervisor task queue is full")).toBe(false);
   });
 
+  it.each([
+    "Cannot verify live agent identity for managed context reset",
+    "Codex live transcript unavailable and no fresh launch grant",
+    "Cannot verify automation input surface: composer missing or contains pending input",
+    "Agent context reset readiness deadline exhausted",
+  ])("classifies managed dispatch readiness refusal: %s", (message) => {
+    expect(classifyAgentTransientFailure(message)).toEqual({
+      kind: "agent-readiness",
+      domain: "agent-runtime",
+      retryable: true,
+    });
+    expect(isProviderTransientFailure(message)).toBe(false);
+  });
+
+  it.each([
+    "Codex live transcript unavailable for managed completion evidence",
+    "Reserved worker ownership changed during context reset",
+    "Codex process changed during managed context reset",
+    "Cannot verify an unrelated project identity",
+  ])("preserves ownership and unrelated failures: %s", (message) => {
+    expect(classifyAgentTransientFailure(message)).toBeNull();
+  });
+
+  it.each([
+    "ownership changed",
+    "process changed",
+    "stop unverified",
+    "unresolved active turn",
+    "Codex live transcript unavailable for managed completion evidence",
+  ])("does not let a reset refusal override unsafe execution evidence: %s", (unsafe) => {
+    for (const refusal of [
+      "Cannot verify automation input surface: composer missing or contains pending input",
+      "Agent context reset readiness deadline exhausted",
+    ])
+      expect(classifyAgentTransientFailure(`${refusal}; ${unsafe}`)).toBeNull();
+  });
+
   it("does not classify ordinary task failures as transient agent failures", () => {
     expect(classifyAgentTransientFailure("pnpm test failed with assertion errors")).toBeNull();
     expect(isAgentTransientFailure("pnpm test failed with assertion errors")).toBe(false);

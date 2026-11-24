@@ -367,7 +367,7 @@ export async function startActiveDelegatedTask(
       showQueue: false,
     };
   }
-  const readyRepositoryReviewCount = readyRepositoryPullRequestReviewCount();
+  const readyRepositoryReviewCount = readyRepositoryPullRequestReviewCount(deps);
   if (
     input.resourceTrigger === "background" &&
     input.trustedRunId === undefined &&
@@ -375,7 +375,7 @@ export async function startActiveDelegatedTask(
   ) {
     return {
       status: "blocked",
-      reason: `repository PR review queue has ready work (${readyRepositoryReviewCount}); deferring background active delegation so PR auto-merge can run first`,
+      reason: `automation admission deferred: repository PR review queue has ready work (${readyRepositoryReviewCount}); deferring background active delegation so PR auto-merge can run first`,
       showQueue: true,
     };
   }
@@ -1319,9 +1319,19 @@ function activeDelegatedAdmissionContext(deps: HandlerDeps) {
   };
 }
 
-function readyRepositoryPullRequestReviewCount(now = Date.now()): number {
+function readyRepositoryPullRequestReviewCount(deps: HandlerDeps, now = Date.now()): number {
+  const configFile = deps.config.loopEngineering.configFile;
+  if (configFile.trim() === "" || !existsSync(configFile)) return 0;
   try {
-    return new RepositoryReviewQueue().listReady(now).length;
+    const config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+    const enabled = new Set(
+      config.prReview.repositories
+        .filter((repository) => repository.enabled !== false)
+        .map((repository) => repository.id),
+    );
+    return new RepositoryReviewQueue()
+      .listReady(now)
+      .filter((item) => enabled.has(item.repositoryId)).length;
   } catch (err) {
     log.warn("active delegated task could not inspect repository PR review queue", { err });
     return 0;

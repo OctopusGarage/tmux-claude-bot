@@ -454,3 +454,16 @@ delivery. Workspace opt-in is rejected. The supervisor uses
 for each exact revision. Findings/incomplete reports do not approve; revisions
 reset clean-pass counts, and external failures block without native fallback.
 See [the manual](../manual.md#optional-ralphworks-pr-review-passes).
+
+
+## Resource and capacity notification preference
+
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED false` to mute all
+Resource Guardian alerts (including pressure, recovery, sampling and action failures)
+and Claude/Codex capacity transition alerts on Telegram and Feishu/Lark.
+Monitoring, resource protection, admission gates, status/history commands and other
+notifications remain active. The preference is checked at delivery time; no restart
+is needed once this version is running. Omitted or `true` preserves alert delivery.
+Run `tcb config set RESOURCE_CAPACITY_NOTIFICATIONS_ENABLED true` to restore alerts.
+The generic config command validates this setting as a non-secret boolean; the
+notification gateway enforces the same preference for both channels and all callers.

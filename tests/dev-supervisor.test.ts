@@ -396,6 +396,66 @@ describe("startSupervisor", () => {
     expect(statuses.at(-1)?.state).toBe("crash-wait");
   });
 
+  it("does not respawn a crashed child after stop during backoff", async () => {
+    const { deps, children, startChild } = makeDeps();
+    const supervisor = startSupervisor(deps);
+    expectChild(children, 0).fireExit();
+
+    await supervisor.stop();
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(startChild).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([0, 1])(
+    "does not resume reload work after stop during typecheck (exit %s)",
+    async (code) => {
+      let finishTypecheck!: (code: number) => void;
+      const { deps, startChild, fire, statuses } = makeDeps({
+        runTypecheck: () =>
+          new Promise<number>((resolve) => {
+            finishTypecheck = resolve;
+          }),
+      });
+      const supervisor = startSupervisor(deps);
+      fire("core/x.ts");
+      await vi.advanceTimersByTimeAsync(60);
+
+      await supervisor.stop();
+      finishTypecheck(code);
+      await flushAll();
+
+      expect(startChild).toHaveBeenCalledTimes(1);
+      expect(statuses).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([true, false])(
+    "does not spawn after stop while reload waits for exit (%s)",
+    async (exited) => {
+      let finishExit!: (exited: boolean) => void;
+      const { deps, children, startChild, fire, statuses } = makeDeps();
+      const supervisor = startSupervisor(deps);
+      expectChild(children, 0).waitForExit.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishExit = resolve;
+          }),
+      );
+      fire("core/x.ts");
+      await vi.advanceTimersByTimeAsync(60);
+
+      await supervisor.stop();
+      finishExit(exited);
+      await flushAll();
+
+      expect(startChild).toHaveBeenCalledTimes(1);
+      expect(statuses).toEqual([]);
+    },
+  );
+
   it("stop marks the live child intentional, clears the watcher, and is idempotent", async () => {
     const { deps, children, unwatch } = makeDeps();
     const supervisor = startSupervisor(deps);

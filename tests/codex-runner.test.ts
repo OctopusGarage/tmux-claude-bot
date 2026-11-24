@@ -47,6 +47,25 @@ const completedTurnPane = [
 ].join("\n");
 
 describe("codex pane heuristics", () => {
+  it("recognizes the current composer above the agent-navigation footer", () => {
+    expect(
+      paneLooksReady(
+        "• Context compacted\n› Ask Codex to do anything\nContext 95% left · weekly 34% left · Main [default]\n← for agents · ? for shortcuts",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "← for agents · ? for shortcuts",
+    "› 1. Update now\n← for agents · ? for shortcuts",
+    "› Old prompt\nStarting Codex\n← for agents · ? for shortcuts",
+    "› Task\n• Working (1s • esc to interrupt)\n← for agents · ? for shortcuts",
+    "› Task\n← for agents · Enter to confirm",
+    "› Task\nunknown metadata · ← for agents · ? for shortcuts",
+  ])("does not infer readiness from navigation hints alone: %s", (pane) => {
+    expect(paneLooksReady(pane)).toBe(false);
+  });
+
   it("ready when no 'esc to interrupt' spinner is present", () => {
     expect(paneLooksReady(ready)).toBe(true);
   });
@@ -547,6 +566,28 @@ describe("CodexRunner.waitUntilDone", () => {
 });
 
 describe("CodexRunner.waitUntilInputReady", () => {
+  it("accepts the agent-navigation footer without sending any keys", async () => {
+    const sendRawKey = vi.fn();
+    const capturePane = vi.fn(async () => "› \nContext 95% left\n← for agents · ? for shortcuts");
+    const runner = new CodexRunner({
+      bridge: {
+        resolveSessionName: async () => "sess",
+        capturePane,
+        sendRawKey,
+      } as unknown as TmuxBridge,
+      output: { process: (s: string) => s } as OutputProcessor,
+      configResolver: { isCodexRunning: async () => true } as unknown as ConfigResolver,
+      codexCommand: "codex --yolo",
+      idlePollTicks: 1_000,
+      pollIntervalMs: 1,
+      maxWaitReadyMs: 20,
+      maxWaitDoneMs: 5,
+    });
+    await expect(runner.waitUntilInputReady("sess")).resolves.toBeUndefined();
+    expect(capturePane).toHaveBeenCalledTimes(1);
+    expect(sendRawKey).not.toHaveBeenCalled();
+  });
+
   it("accepts input after a completed goal even when the old working line remains visible", async () => {
     const bridge = {
       resolveSessionName: async (s?: string) => s ?? "sess",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyHistoricalFailure,
   type HistoricalRecoveryInput,
+  hasOriginalRecoveryRetryEvidence,
   resolveConfiguredRecoveryTarget,
 } from "../../src/core/tasks/project-recovery.js";
 
@@ -16,6 +17,29 @@ const base: HistoricalRecoveryInput = {
 };
 
 describe("project recovery", () => {
+  it.each([
+    [0, "", "retryable"],
+    [3, "", "dead-letter"],
+    [0, '"retry":"manual"', "needs-owner-decision"],
+    [0, "ownership changed", "needs-owner-decision"],
+    [0, "RalphWorks declared needs_input; no native fallback is allowed", "waiting-external"],
+  ] as const)(
+    "investigates supervisor timeouts without bypassing boundaries (%s, %s)",
+    (attempt, boundary, classification) => {
+      const input = {
+        ...base,
+        source: "autopilot-delegate",
+        error: "loop supervisor work order timed out",
+        summary:
+          "Recovery classification: needs-owner-decision; evidence requires a project-owner or PR decision",
+        artifactText: `A conflicting queue prefix needs a bot-owned regression. ${boundary}`,
+        attempt,
+      };
+      expect(classifyHistoricalFailure(input).classification).toBe(classification);
+      expect(hasOriginalRecoveryRetryEvidence(input, input.artifactText)).toBe(boundary === "");
+    },
+  );
+
   it.each([
     ["", 0, "retryable"],
     ["PR requires a design decision", 0, "needs-owner-decision"],
@@ -38,6 +62,30 @@ describe("project recovery", () => {
       ).toBe(expected);
     },
   );
+
+  it("does not infer assessment failures from a configured targetScore", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "blocked",
+        summary: "External service unavailable",
+        artifactText: '{"targetScore":95}',
+      }).classification,
+    ).toBe("waiting-external");
+  });
+
+  it("preserves declared external execution blockers over stale retry diagnostics", () => {
+    expect(
+      classifyHistoricalFailure({
+        ...base,
+        error: "dispatch-failed",
+        summary:
+          "Recovery classification: assessment scoring contract evidence is retryable automation repair work",
+        artifactText: "RalphWorks declared needs_input; no native fallback is allowed",
+        attempt: 3,
+      }),
+    ).toMatchObject({ classification: "waiting-external" });
+  });
 
   it("classifies missing project tooling as retryable", () => {
     expect(

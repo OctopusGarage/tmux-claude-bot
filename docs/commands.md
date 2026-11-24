@@ -43,7 +43,7 @@ The authoritative command list is `BOT_COMMANDS` in `src/core/command/action-reg
 | `history` | Show recent conversation history (`/history N` for the Nth recent round) |
 | `inputs` | List your recent inputs (`/inputs N` for the last N) — tap one to fetch & edit it |
 | `sessions` | List resumable conversations for the current session's agent (tap one to resume) |
-| `logs` | Show current-session WARN/ERROR logs from the last hour; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
+| `logs` | Show current-session WARN/ERROR logs from the last hour, including across local midnight; `/logs <traceId>` filters to one trace, `/logs N` shows the last N. Owner-only (Lark: 1:1 chat only). |
 | `autopilot` | Delegate the current confirmed work to the Loop Supervisor: `/autopilot [requirement]` or `/autopilot delegate [requirement]`. It drives implementation, review, tests, coverage review, configured PR/merge/switch-back gates, and final notification. The chat control panel exposes **Delegate now**, **Review plan first** with **Confirm delegation**, and a supervisor queue view for active work; a queue view is shown only when all Supervisor sessions are occupied. Lark can cancel active-delegated queue items from that queue card. |
 | `opportunity` | Review proactive Loop Engineering suggestions: `/opportunity [list\|show\|discuss\|dismiss\|snooze <number\|id>]`; `discuss` opens project-agent discussion and `snooze` hides an item from the active numbered list for 14 days. Suggestion cards keep each item readable and offer per-item show/discuss/dismiss actions plus batch actions. After approval, use Autopilot's Continue via supervisor action so execution goes through the same active-delegation pipeline. Owner-only in private chat; Lark also works in a bound project group. |
 | `dashboard` | Show the read-only Runtime Overview: overall health, attention, active Work, Automation Families, AI Interfaces, recent outcomes, and Project Sessions. Owner-only (Lark: 1:1 chat only). |
@@ -136,6 +136,13 @@ failure counts.
 Repair agents should update the same task id after verification with
 `--repair-status fixed`, `--repair-status superseded`,
 `--repair-status not-reproducible`, or `--repair-status blocked`.
+
+Repair-only ledger updates use `tcb task report --status unchanged --repair-status blocked` (or another verified repair status), with the existing `--id`, `--source`,
+`--name`, and `--scheduled-at`. This requires a matching existing record and
+preserves its execution status, timestamps, error, failure kind, and report path.
+Only the repair status, optional summary, and update time change; execution-field
+overrides are rejected. This supports missing and timed-out historical tasks
+without inventing a new execution outcome.
 
 Button and TUI shortcuts ask for confirmation before `exit`, `restart`, `clear`, or
 `compact`. Known typed slash commands are treated as explicit bot intent and run

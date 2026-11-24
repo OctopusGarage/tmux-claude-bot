@@ -4247,6 +4247,74 @@ workspaces:
     );
   });
 
+  it("dispatches an independent queued review beyond an active conflicting prefix", async () => {
+    process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
+    const repoOne = mkdtempSync(join(tmpdir(), "tcb-loop-repo-one-"));
+    const repoTwo = mkdtempSync(join(tmpdir(), "tcb-loop-repo-two-"));
+    const configFile = writeRepositoryPrReviewConfig({ repoOne, repoTwo });
+    const config = parseLoopConfigYaml(readFileSync(configFile, "utf8"));
+    const activeRepository = config.prReview.repositories[0];
+    if (activeRepository === undefined) throw new Error("missing repository");
+    const activeWorkOrder = buildRepositoryPullRequestReviewWorkOrder({
+      config,
+      repository: activeRepository,
+      scheduledAt: Date.parse("2026-07-16T10:05:00Z"),
+      runId: "active-repo-one-prs",
+    });
+    writeLoopSupervisorWorkOrderState({
+      workOrder: activeWorkOrder,
+      supervisorSession: "tmux_proj_loop-supervisor-1",
+      status: "in-flight",
+      now: Date.now(),
+    });
+    const queue = new RepositoryReviewQueue();
+    const now = Date.parse("2026-07-16T10:10:00Z");
+    queue.enqueue({ repositoryId: "repo-one-prs", scheduledAt: now - 60_000, priority: 1000, now });
+    queue.enqueue({ repositoryId: "repo-two-prs", scheduledAt: now - 30_000, priority: 1000, now });
+    const sessions: string[] = [];
+
+    const result = await runLoopServiceTickAsync({
+      configFile,
+      repositoryReviewOnly: true,
+      now: Date.parse("2026-07-16T10:10:00Z"),
+      schedulerStore: new LoopSchedulerStore(),
+      runCommand: () => {
+        throw new Error("repository PR review should not call gh gates");
+      },
+      runGit: (invocation) => {
+        if (invocation.args.join(" ") === "status --porcelain") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (invocation.args.join(" ") === "branch --show-current") {
+          return { status: 0, stdout: "dev\n", stderr: "" };
+        }
+        throw new Error(`unexpected git args: ${invocation.args.join(" ")}`);
+      },
+      runSupervisorTask: async (request) => {
+        sessions.push(request.session);
+        const marker = finalMarkerFromPrompt(request.prompt);
+        return {
+          status: 0,
+          stdout: `${marker}\n${JSON.stringify({
+            status: "completed",
+            projectId: request.workOrder.projectId,
+            actionsTaken: ["reviewed open pull requests"],
+            delegatedTasks: [],
+            finalVerification: "passed",
+            commits: [],
+            followUps: [],
+            pullRequestDecisions: [],
+          })}`,
+          stderr: "",
+        };
+      },
+      supervisorSessionNames: ["tmux_proj_loop-supervisor-1", "tmux_proj_loop-supervisor-2"],
+    });
+
+    expect(result).toMatchObject({ ran: 1, failed: 0 });
+    expect(sessions).toEqual(["tmux_proj_loop-supervisor-2"]);
+  });
+
   it("does not dispatch new work to active supervisor sessions or active project paths", async () => {
     process.env.TCB_STATE_DIR = mkdtempSync(join(tmpdir(), "tcb-loop-service-supervisor-state-"));
     const repoOne = mkdtempSync(join(tmpdir(), "tcb-loop-repo-one-"));

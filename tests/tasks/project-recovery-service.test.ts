@@ -20,6 +20,157 @@ afterEach(() => {
 });
 
 describe("project recovery service", () => {
+  it("reconsiders an original supervisor timeout despite incidental conflict prose", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-timeout-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    await mkdir(stateDir, { recursive: true });
+    const reportPath = join(stateDir, "report.md");
+    await writeFile(reportPath, "A conflicting queue prefix needs a bounded bot-owned regression.");
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "suite active delegated task",
+          status: "failed",
+          error: "loop supervisor work order timed out",
+          summary:
+            "Recovery classification: needs-owner-decision; evidence requires a project-owner or PR decision",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "blocked",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "suite", name: "Suite", path: "/repo/suite" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus: vi.fn(),
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ dispatched: 1, ownerDecision: 0 });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classification: expect.objectContaining({ classification: "retryable" }),
+      }),
+    );
+  });
+
+  it("preserves external terminal outcomes before a large WorkOrder prompt", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-external-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportPath = join(stateDir, "loop-runs", "suite", "run-1");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "work-order.json"),
+      JSON.stringify({
+        projectId: "suite",
+        targetScore: 95,
+        goal: "retry dispatch ".repeat(4000),
+      }),
+    );
+    await writeFile(
+      join(reportPath, "supervisor-summary.json"),
+      JSON.stringify({
+        result: { reason: "RalphWorks declared needs_input; no native fallback is allowed" },
+      }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const updateRepairStatus = vi.fn();
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "loop:suite:security-maintenance:1000",
+          source: "loop-engineering",
+          name: "suite security-maintenance",
+          status: "failed",
+          error: "dispatch-failed",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "pending",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "suite", name: "Suite", path: "/repo/suite" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ waitingExternal: 1, dispatched: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "loop:suite:security-maintenance:1000",
+      "blocked",
+      expect.stringContaining("waiting-external"),
+    );
+  });
+
+  it.each([
+    "assessment scoring contract",
+    "control request timed out",
+    "RalphWorks declared needs_input; no native fallback is allowed",
+  ])("does not classify WorkOrder instructions as outcomes: %s", async (phrase) => {
+    const stateDir = join(tmpdir(), `project-recovery-instructions-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    const reportPath = join(stateDir, "loop-runs", "suite", "run-1");
+    await mkdir(reportPath, { recursive: true });
+    await writeFile(
+      join(reportPath, "work-order.json"),
+      JSON.stringify({
+        projectId: "suite",
+        task: { requirement: `Project: suite-repository\nInvestigate ${phrase}` },
+        goal: `${phrase} `.repeat(4000),
+        targetScore: 95,
+      }),
+    );
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const updateRepairStatus = vi.fn();
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "suite active delegated task",
+          status: "failed",
+          error: "network timeout",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "pending",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [],
+        repositories: [{ id: "suite-repository", path: "/repo/suite" }],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus,
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ waitingExternal: 1, dispatched: 0, unconfigured: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updateRepairStatus).toHaveBeenCalledWith(
+      "autopilot:run-1",
+      "blocked",
+      "Recovery classification: waiting-external; evidence points to an external service or execution dependency",
+    );
+  });
+
   it.each([true, false])(
     "validates member repositories for workspace recovery: %s",
     async (valid) => {
@@ -669,6 +820,7 @@ describe("project recovery service", () => {
         projectId: "geo",
         resultStatus: "completed",
         accepted: true,
+        failures: [],
         supervisorReviewGate: {
           preMutationReview: ["reviewed the failure"],
           postMutationReview: ["reviewed the repair"],
@@ -832,6 +984,39 @@ describe("project recovery service", () => {
         resultStatus: "completed",
         accepted: true,
         supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "reported failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: ["required CI failed"],
+      },
+    ],
+    [
+      "malformed failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: "required CI failed",
+      },
+    ],
+    [
+      "null failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: null,
       },
     ],
     [
@@ -1020,7 +1205,7 @@ describe("project recovery service", () => {
     });
   });
 
-  it("closes pending project recovery when successful recovery mentions the WorkOrder run id", async () => {
+  it("keeps failed linked recovery pending despite an unlinked successful run-id mention", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const queue = coordinator.enqueue({
       projectId: "tmux-claude-bot",
@@ -1078,14 +1263,14 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toEqual({ checked: 1, fixed: 1, blocked: 0 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 0 });
     expect(updateRepairStatus).toHaveBeenCalledWith(
       "loop:tmux-claude-bot:automation-governance-review:1789785300000",
-      "fixed",
-      "Closed from the authoritative successful project recovery delegation.",
+      "pending",
+      "Delegated recovery failed; returned to the repair queue for another worker.",
     );
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "fixed",
+      status: "pending",
     });
   });
 
@@ -1829,7 +2014,10 @@ describe("project recovery service", () => {
     coordinator.linkTaskIds(queue.id, ["autopilot:stale-runtime-recovery"], 1_000);
     coordinator.claimIds([queue.id], { now: 1_001, leaseId: "recovery", limit: 1 });
     coordinator.markRunning(queue.id, "recovery", 1_001);
-    const updateRepairStatus = vi.fn();
+    const updateRepairStatus = vi.fn((taskId, repairStatus, summary) => {
+      const record = records.find((entry) => entry.taskId === taskId);
+      if (record !== undefined) Object.assign(record, { repairStatus, summary });
+    });
 
     const records = [
       {
@@ -1877,41 +2065,66 @@ describe("project recovery service", () => {
       expect.stringContaining("returned to the repair queue"),
     );
 
+    const settled = coordinator.list().find((record) => record.id === queue.id);
+    for (const now of [2_100, 2_200, 40_000]) {
+      updateRepairStatus.mockClear();
+      await reconcileProjectRecoveryArtifacts({
+        now,
+        records,
+        coordinator: new RepairCoordinator(store),
+        updateRepairStatus,
+      });
+      expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(settled);
+      expect(updateRepairStatus).not.toHaveBeenCalled();
+    }
+
     const retrying = coordinator.list().find((record) => record.id === queue.id);
     if (retrying === undefined) throw new Error("expected retrying repair queue record");
     store.set(queue.id, {
       ...retrying,
       status: "running",
-      attempt: 2,
-      workOrderId: "stale-runtime-third-attempt",
-      leaseId: "recovery-third-attempt",
-      leaseExpiresAt: 4_000,
+      workOrderId: "newer-live-recovery",
+      leaseId: "newer-live-recovery",
+      leaseExpiresAt: 90_000,
     });
-    updateRepairStatus.mockClear();
-
-    const exhausted = await reconcileProjectRecoveryArtifacts({
-      now: 3_000,
+    const newerOwner = coordinator.list().find((record) => record.id === queue.id);
+    await reconcileProjectRecoveryArtifacts({
+      now: 41_000,
       records,
       coordinator,
       updateRepairStatus,
     });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(newerOwner);
 
-    expect(exhausted).toMatchObject({ fixed: 0, blocked: 1 });
-    expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "dead-letter",
-      attempt: 3,
+    const newerRecovery = {
+      ...records[1],
+      taskId: "autopilot:newer-live-recovery",
+      source: "autopilot-delegate" as const,
+      name: "tmux-claude-bot active delegated task",
+      status: "failed" as const,
+      repairStatus: "pending" as const,
+      scheduledAt: 40_000,
+      updatedAt: 41_000,
+    };
+    coordinator.linkTaskIds(queue.id, [newerRecovery.taskId], 41_000);
+    await reconcileProjectRecoveryArtifacts({
+      now: 42_000,
+      records: [...records, newerRecovery],
+      coordinator,
+      updateRepairStatus,
     });
-    expect(
-      coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
-    ).toBeUndefined();
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "autopilot:original-stale-runtime",
-      "blocked",
-      expect.stringContaining("attempt limit"),
-    );
+    const second = coordinator.list().find((record) => record.id === queue.id);
+    expect(second).toMatchObject({ status: "retry-wait", attempt: 2 });
+    await reconcileProjectRecoveryArtifacts({
+      now: 43_000,
+      records: [...records, newerRecovery],
+      coordinator,
+      updateRepairStatus,
+    });
+    expect(coordinator.list().find((record) => record.id === queue.id)).toEqual(second);
   });
 
-  it("dead-letters a standalone retryable artifact on its third consumed attempt", async () => {
+  it.each([0, 2])("settles standalone retryable artifacts once at attempt %s", async (attempt) => {
     const runDir = join(tmpdir(), `project-recovery-standalone-exhausted-${Date.now()}`);
     await mkdir(runDir, { recursive: true });
     await writeFile(
@@ -1952,25 +2165,25 @@ describe("project recovery service", () => {
       source: "project-recovery",
       taskFamily: "tmux-claude-bot active delegated task",
       fingerprint: "standalone-stale-runtime-source-adoption",
-      taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
+      taskId: "autopilot:standalone-third-attempt",
       now: 1_000,
     });
     store.set(queue.id, {
       ...queue,
       status: "running",
-      attempt: 2,
+      attempt,
       workOrderId: "standalone-third-attempt",
       leaseId: "standalone-third-attempt",
       leaseExpiresAt: 4_000,
     });
     const updateRepairStatus = vi.fn();
 
-    const result = await reconcileProjectRecoveryArtifacts({
+    const input = {
       now: 3_000,
       records: [
         {
-          taskId: "loop:tmux-claude-bot:active-delegated-task:standalone",
-          source: "loop-engineering",
+          taskId: "autopilot:standalone-third-attempt",
+          source: "autopilot-delegate",
           name: "tmux-claude-bot active delegated task",
           status: "failed",
           repairStatus: "running",
@@ -1981,21 +2194,41 @@ describe("project recovery service", () => {
       ],
       coordinator,
       updateRepairStatus,
-    });
+    } as const;
+    const result = await reconcileProjectRecoveryArtifacts(input);
 
-    expect(result).toEqual({ checked: 1, fixed: 0, blocked: 1 });
+    expect(result).toEqual({ checked: 1, fixed: 0, blocked: attempt === 2 ? 1 : 0 });
     expect(coordinator.list().find((record) => record.id === queue.id)).toMatchObject({
-      status: "dead-letter",
-      attempt: 3,
+      status: attempt === 2 ? "dead-letter" : "retry-wait",
+      attempt: attempt + 1,
     });
     expect(
       coordinator.list().find((record) => record.id === queue.id)?.workOrderId,
     ).toBeUndefined();
     expect(updateRepairStatus).toHaveBeenCalledWith(
-      "loop:tmux-claude-bot:active-delegated-task:standalone",
-      "blocked",
-      expect.stringContaining("attempt limit"),
+      "autopilot:standalone-third-attempt",
+      attempt === 2 ? "blocked" : "pending",
+      expect.stringContaining(attempt === 2 ? "attempt limit" : "returned to the repair queue"),
     );
+    // Model a process stopping after queue persistence but before ledger updates.
+    if (attempt === 0) {
+      updateRepairStatus.mockClear();
+      await reconcileProjectRecoveryArtifacts({ ...input, now: 3_050 });
+      expect(updateRepairStatus).toHaveBeenCalledWith(
+        "autopilot:standalone-third-attempt",
+        "pending",
+        expect.any(String),
+      );
+    }
+    const settled = coordinator.list();
+    for (const now of [3_100, 90_000]) {
+      await reconcileProjectRecoveryArtifacts({
+        ...input,
+        now,
+        coordinator: new RepairCoordinator(store),
+      });
+      expect(coordinator.list()).toEqual(settled);
+    }
   });
 
   it.each([
@@ -3168,7 +3401,7 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
-  it("closes pending originals when an unlinked successful recovery final summary names them", async () => {
+  it("keeps originals pending when an unlinked successful final summary names them", async () => {
     const stateDir = join(tmpdir(), `project-recovery-summary-match-${Date.now()}`);
     process.env.TCB_STATE_DIR = stateDir;
     const runDir = join(stateDir, "loop-runs", "fluent-frame", "recovery-run");
@@ -3228,13 +3461,9 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "autopilot:stale-fluent-frame",
-      "fixed",
-      expect.stringContaining("project recovery delegation"),
-    );
-    expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
+    expect(result).toMatchObject({ checked: 0, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "pending", attempt: 0 });
   });
 
   it("closes a terminal blocked project recovery record when a linked recovery later succeeds", async () => {
@@ -3447,10 +3676,10 @@ describe("project recovery service", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
-  it("closes a pending project recovery when an unlinked successful recovery summary names the original task", async () => {
+  it("keeps project recovery pending when an unlinked successful summary names the original task", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const updateRepairStatus = vi.fn();
-    const queueRecord = coordinator.enqueue({
+    coordinator.enqueue({
       projectId: "knowledge-engine",
       projectPath: "/repo/knowledge-engine",
       source: "project-recovery",
@@ -3488,15 +3717,9 @@ describe("project recovery service", () => {
       updateRepairStatus,
     });
 
-    expect(result).toMatchObject({ checked: 1, fixed: 1, blocked: 0 });
-    expect(updateRepairStatus).toHaveBeenCalledWith(
-      "loop:knowledge-engine:security-maintenance:1786636200000",
-      "fixed",
-      expect.stringContaining("project recovery delegation"),
-    );
-    expect(coordinator.list().find((record) => record.id === queueRecord.id)).toMatchObject({
-      status: "fixed",
-    });
+    expect(result).toMatchObject({ checked: 0, fixed: 0, blocked: 0 });
+    expect(updateRepairStatus).not.toHaveBeenCalled();
+    expect(coordinator.list()[0]).toMatchObject({ status: "pending", attempt: 0 });
   });
 
   it("blocks external waits without dispatching them", async () => {

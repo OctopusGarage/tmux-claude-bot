@@ -44,36 +44,41 @@ export async function readCodexTurnCompletion(
     };
     const limit = 1024 * 1024;
     if (sentAfter === Number.POSITIVE_INFINITY) {
-      const tailStart = Math.max(0, stat.size - limit);
-      const tail = Buffer.alloc(stat.size - tailStart);
-      await file.read(tail, 0, tail.length, tailStart);
-      const content = tail.toString("utf8");
-      if (!content.endsWith("\n")) return unavailable;
-      let root: string | undefined;
-      let terminal = false;
-      for (const entry of parseTurnRecords<{
-        type?: string;
-        payload?: { type?: string; turn_id?: string; root_turn_id?: string };
-      }>(tailStart ? content.slice(content.indexOf("\n") + 1) : content)) {
-        const p = entry.payload;
-        if (entry.type !== "event_msg" || !p) continue;
-        if (p.type === "task_started" && p.turn_id && p.turn_id === p.root_turn_id) {
-          root = p.turn_id;
-          terminal = false;
-        } else if (
-          root &&
-          p.turn_id === root &&
-          p.root_turn_id === root &&
-          (p.type === "task_complete" || p.type === "turn_aborted")
-        )
-          terminal = true;
+      // A long root turn may end inside the tail while its start lies further back.
+      // Expand only the initial probe; require the same paired lifecycle evidence.
+      for (let window = limit; window <= 8 * limit; window *= 2) {
+        const tailStart = Math.max(0, stat.size - window);
+        const tail = Buffer.alloc(stat.size - tailStart);
+        await file.read(tail, 0, tail.length, tailStart);
+        const content = tail.toString("utf8");
+        if (!content.endsWith("\n")) return unavailable;
+        let root: string | undefined;
+        let terminal = false;
+        for (const entry of parseTurnRecords<{
+          type?: string;
+          payload?: { type?: string; turn_id?: string; root_turn_id?: string };
+        }>(tailStart ? content.slice(content.indexOf("\n") + 1) : content)) {
+          const p = entry.payload;
+          if (entry.type !== "event_msg" || !p) continue;
+          if (p.type === "task_started" && p.turn_id && p.turn_id === p.root_turn_id) {
+            root = p.turn_id;
+            terminal = false;
+          } else if (
+            root &&
+            p.turn_id === root &&
+            p.root_turn_id === root &&
+            (p.type === "task_complete" || p.type === "turn_aborted")
+          )
+            terminal = true;
+        }
+        if (tailStart && !root) continue;
+        return {
+          status: root && !terminal ? "running" : "pending",
+          output: "",
+          cursor: { ...next, offset: stat.size, atEnd: true },
+        };
       }
-      if (tailStart && !root) return unavailable;
-      return {
-        status: root && !terminal ? "running" : "pending",
-        output: "",
-        cursor: { ...next, offset: stat.size, atEnd: true },
-      };
+      return unavailable;
     }
     const bytes = Math.min(limit, Math.max(0, stat.size - next.offset));
     if (bytes > 0) {

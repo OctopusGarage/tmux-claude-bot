@@ -9,6 +9,7 @@ import { newTraceId, runWithLogContext } from "../../shared/utils/log-context.js
 import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
 import { createAuthGuard } from "./auth.js";
+import { startCommandRegistration } from "./command-registration.js";
 import { BOT_COMMANDS } from "./commands.js";
 import { registerHandlers } from "./handlers.js";
 import { buildOpportunityNotificationKeyboard } from "./keyboards.js";
@@ -141,140 +142,146 @@ export async function startTelegram(
   registerVoiceHandler(bot as any, deps, replyTarget);
   registerHandlers(bot as any, deps, replyTarget);
 
-  try {
-    await bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } });
-    log.info(`Registered ${BOT_COMMANDS.length} commands to Telegram`);
-  } catch (err) {
-    log.error("Failed to set commands", { err });
-  }
-
-  let stopping = false;
-  const stop = async (signal: string) => {
-    if (stopping) return;
-    stopping = true;
-    log.info(`Stopping bot after ${signal}`);
-    markCleanShutdown();
-    try {
-      await bot.stop();
-    } catch {
-      /* ignore */
-    }
-    queue.flushPending();
-    process.exit(0);
-  };
-  process.once("SIGINT", () => void stop("SIGINT"));
-  process.once("SIGTERM", () => void stop("SIGTERM"));
-
-  log.info("Starting bot...");
-  // Best-effort connectivity probe — for a clean "Connected as @…" log and to
-  // surface a bad token early. It is NOT a gate: if Telegram is unreachable (the
-  // proxy/route is down, a network blip), we do NOT exit the process. The
-  // supervised long-poll loop below keeps retrying Telegram in-process while the
-  // control transport (TUI/CLI) and Lark — already started — stay up. A Telegram
-  // or network outage must never take down the rest of the bot.
-  const maxRetries = 5;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const me = await bot.api.getMe();
-      log.info(`Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
-      break;
-    } catch (err) {
-      if (isFatalPollingError(err)) {
-        const code = err instanceof GrammyError ? err.error_code : "?";
-        log.error(
-          `Telegram token rejected (${code}) — leaving Telegram off; Lark / TUI / CLI keep running. Fix the token and restart.`,
-          { err },
-        );
-        return; // bad token: don't poll, but keep the process alive for the other surfaces
-      }
-      const delayMs = Math.min(1000 * 2 ** i, 30000);
-      log.warn(
-        `Telegram not reachable (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
-      );
-      if (i === maxRetries - 1) {
-        log.warn(
-          "Telegram still unreachable — continuing without it; the long-poll loop keeps retrying in the background. Lark / TUI / CLI are unaffected.",
-        );
-        break; // proceed to the supervised loop (it keeps retrying); never exit the process
-      }
-      await sleep(delayMs);
-    }
-  }
-
-  // Register the Telegram owner as the notification-gateway target.
-  const owner = [...config.telegramAllowedUserIds][0];
-  if (owner !== undefined) {
-    deps.notifications.register("telegram", (message, req) => {
-      const reply_markup =
-        req?.source === "opportunity-discovery" && req.opportunities?.length
-          ? buildOpportunityNotificationKeyboard(req.opportunities)
-          : undefined;
-      return (
-        reply_markup
-          ? bot.api.sendMessage(owner, message, { reply_markup })
-          : bot.api.sendMessage(owner, message)
-      ).then(() => {});
-    });
-    deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
-      sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
-    );
-  }
-
-  // Register the Telegram channel sender so the attachment-dispatch layer can
-  // push images/files to a chat via bot.api without importing grammy directly.
-  deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
-    sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
+  const stopCommandRegistration = startCommandRegistration(() =>
+    bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } }),
   );
-  const unregisterScheduledSender = registerScheduledTelegramSender(bot as any, deps, replyTarget);
-  opts.onNotificationsReady?.();
 
-  // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
-  // proxy, getUpdates fails transiently — most often a 409 when a previous
-  // long-poll was dropped and still lingers server-side, or a socket hang-up.
-  // Crashing the process on those churns: the abandoned long-poll becomes a
-  // server-side zombie that 409s the next start, so each restart re-collides.
-  // Supervise the loop instead — on a transient error back off and re-enter
-  // in-process (which closes the failed request cleanly and lets the zombie
-  // expire); only a fatal auth error bubbles out.
-  const MAX_BACKOFF_MS = 30_000;
-  const HEALTHY_RUN_MS = 60_000; // a run this long was healthy → reset backoff
-  let backoffMs = 1000;
-  for (;;) {
-    const startedAt = Date.now();
-    try {
-      await bot.start({
-        timeout: config.telegramLongpollTimeoutSec,
-        onStart: () => log.info("Bot started successfully"),
-      });
-      unregisterScheduledSender();
-      return; // resolved → bot.stop() was called (clean shutdown)
-    } catch (err) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown flips this flag from the onStop cleanup closure while the polling promise is active
-      if (stopping) {
-        log.info(
-          `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,
-        );
-        unregisterScheduledSender();
-        return;
+  try {
+    let stopping = false;
+    const stop = async (signal: string) => {
+      if (stopping) return;
+      stopping = true;
+      stopCommandRegistration();
+      log.info(`Stopping bot after ${signal}`);
+      markCleanShutdown();
+      try {
+        await bot.stop();
+      } catch {
+        /* ignore */
       }
-      if (isFatalPollingError(err)) {
-        // A revoked/invalid token can't be retried away. Stop Telegram but keep
-        // the process alive — Lark / TUI / CLI must not die with it.
-        log.error(
-          "Telegram polling hit a fatal auth error — stopping Telegram; other surfaces continue.",
-          {
-            err,
-          },
+      queue.flushPending();
+      process.exit(0);
+    };
+    process.once("SIGINT", () => void stop("SIGINT"));
+    process.once("SIGTERM", () => void stop("SIGTERM"));
+
+    log.info("Starting bot...");
+    // Best-effort connectivity probe — for a clean "Connected as @…" log and to
+    // surface a bad token early. It is NOT a gate: if Telegram is unreachable (the
+    // proxy/route is down, a network blip), we do NOT exit the process. The
+    // supervised long-poll loop below keeps retrying Telegram in-process while the
+    // control transport (TUI/CLI) and Lark — already started — stay up. A Telegram
+    // or network outage must never take down the rest of the bot.
+    const maxRetries = 5;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const me = await bot.api.getMe();
+        log.info(`Connected to Telegram as @${me.username} (bot ID: ${me.id})`);
+        break;
+      } catch (err) {
+        if (isFatalPollingError(err)) {
+          const code = err instanceof GrammyError ? err.error_code : "?";
+          log.error(
+            `Telegram token rejected (${code}) — leaving Telegram off; Lark / TUI / CLI keep running. Fix the token and restart.`,
+            { err },
+          );
+          return; // bad token: don't poll, but keep the process alive for the other surfaces
+        }
+        const delayMs = Math.min(1000 * 2 ** i, 30000);
+        log.warn(
+          `Telegram not reachable (attempt ${i + 1}/${maxRetries}): ${err instanceof Error ? err.message : err}. Retrying in ${delayMs}ms...`,
         );
-        unregisterScheduledSender();
-        return;
+        if (i === maxRetries - 1) {
+          log.warn(
+            "Telegram still unreachable — continuing without it; the long-poll loop keeps retrying in the background. Lark / TUI / CLI are unaffected.",
+          );
+          break; // proceed to the supervised loop (it keeps retrying); never exit the process
+        }
+        await sleep(delayMs);
       }
-      if (Date.now() - startedAt > HEALTHY_RUN_MS) backoffMs = 1000;
-      log.warn(
-        `polling error: ${err instanceof Error ? err.message : err} — retrying in ${backoffMs}ms`,
-      );
-      await sleep(backoffMs);
-      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     }
+
+    // Register the Telegram owner as the notification-gateway target.
+    const owner = [...config.telegramAllowedUserIds][0];
+    if (owner !== undefined) {
+      deps.notifications.register("telegram", (message, req) => {
+        const reply_markup =
+          req?.source === "opportunity-discovery" && req.opportunities?.length
+            ? buildOpportunityNotificationKeyboard(req.opportunities)
+            : undefined;
+        return (
+          reply_markup
+            ? bot.api.sendMessage(owner, message, { reply_markup })
+            : bot.api.sendMessage(owner, message)
+        ).then(() => {});
+      });
+      deps.notifications.registerAttachment("telegram", (filePath, kind, caption) =>
+        sendTelegramAttachment(bot.api, owner, filePath, kind, caption),
+      );
+    }
+
+    // Register the Telegram channel sender so the attachment-dispatch layer can
+    // push images/files to a chat via bot.api without importing grammy directly.
+    deps.channelSenders.register("telegram", (chatId, filePath, kind, caption) =>
+      sendTelegramAttachment(bot.api, chatId, filePath, kind, caption),
+    );
+    const unregisterScheduledSender = registerScheduledTelegramSender(
+      bot as any,
+      deps,
+      replyTarget,
+    );
+    opts.onNotificationsReady?.();
+
+    // grammy's long-poll loop blocks until the bot is stopped. Through a flaky
+    // proxy, getUpdates fails transiently — most often a 409 when a previous
+    // long-poll was dropped and still lingers server-side, or a socket hang-up.
+    // Crashing the process on those churns: the abandoned long-poll becomes a
+    // server-side zombie that 409s the next start, so each restart re-collides.
+    // Supervise the loop instead — on a transient error back off and re-enter
+    // in-process (which closes the failed request cleanly and lets the zombie
+    // expire); only a fatal auth error bubbles out.
+    const MAX_BACKOFF_MS = 30_000;
+    const HEALTHY_RUN_MS = 60_000; // a run this long was healthy → reset backoff
+    let backoffMs = 1000;
+    for (;;) {
+      const startedAt = Date.now();
+      try {
+        await bot.start({
+          timeout: config.telegramLongpollTimeoutSec,
+          onStart: () => log.info("Bot started successfully"),
+        });
+        unregisterScheduledSender();
+        return; // resolved → bot.stop() was called (clean shutdown)
+      } catch (err) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown flips this flag from the onStop cleanup closure while the polling promise is active
+        if (stopping) {
+          log.info(
+            `Telegram polling stopped after shutdown request: ${err instanceof Error ? err.message : err}`,
+          );
+          unregisterScheduledSender();
+          return;
+        }
+        if (isFatalPollingError(err)) {
+          // A revoked/invalid token can't be retried away. Stop Telegram but keep
+          // the process alive — Lark / TUI / CLI must not die with it.
+          log.error(
+            "Telegram polling hit a fatal auth error — stopping Telegram; other surfaces continue.",
+            {
+              err,
+            },
+          );
+          unregisterScheduledSender();
+          return;
+        }
+        if (Date.now() - startedAt > HEALTHY_RUN_MS) backoffMs = 1000;
+        log.warn(
+          `polling error: ${err instanceof Error ? err.message : err} — retrying in ${backoffMs}ms`,
+        );
+        await sleep(backoffMs);
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+      }
+    }
+  } finally {
+    stopCommandRegistration();
   }
 }
