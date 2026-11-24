@@ -85,6 +85,7 @@ export function hasOriginalRecoveryRetryEvidence(
   if (!["missing", "failed", "running-timeout"].includes(record.status)) return false;
   const error = record.error?.toLowerCase() ?? "";
   if (
+    error === "loop supervisor work order timed out" ||
     isManagedResetReadinessFailure(error) ||
     error.includes("codex live transcript unavailable and no fresh launch grant") ||
     /assessment (?:result|score|scoring).*numeric score|assessment scor(?:e|ing) contract|score:null/.test(
@@ -134,6 +135,18 @@ export function classifyHistoricalFailure(
       reason:
         "original execution or ownership evidence is uncertain; automatic replay is prohibited",
     };
+  }
+  if (input.error?.toLowerCase() === "loop supervisor work order timed out") {
+    return input.attempt >= MAX_RECOVERY_ATTEMPTS
+      ? {
+          classification: "dead-letter",
+          reason: `recovery attempt limit reached (${MAX_RECOVERY_ATTEMPTS})`,
+        }
+      : {
+          classification: "retryable",
+          reason:
+            "supervisor deadline permits bounded recovery investigation of existing execution evidence",
+        };
   }
   if (CAPACITY_OR_LEASE_RE.test(evidence)) {
     return {

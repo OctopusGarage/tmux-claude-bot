@@ -357,6 +357,7 @@ export async function runProjectRecoveryPass(input: {
       source: records[0]?.source ?? "loop-engineering",
       name: records[0]?.name ?? target.id,
       status: records[0]?.status ?? "failed",
+      ...(records[0]?.error === undefined ? {} : { error: records[0].error }),
       summary: evidence.join(" "),
       artifactText: evidence.join(" "),
       attempt: 0,

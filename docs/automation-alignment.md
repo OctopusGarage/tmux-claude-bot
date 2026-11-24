@@ -70,6 +70,24 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+An exact original supervisor WorkOrder timeout re-enters bounded recovery
+investigation even when incidental report prose mentions conflicts. It never
+bypasses the original attempt limit, explicit external/manual boundary, uncertain
+execution evidence, or existing live-owner admission. Daily Audit reconsiders
+such blocked ledger records from their original error rather than preserving a
+prose-derived owner-decision label. `tests/tasks/project-recovery.test.ts` covers
+retry, exhaustion, external execution and unsafe ownership boundaries.
+
+Background active-delegation priority counts only ready repository reviews whose
+configured targets are enabled, matching the repository-review consumer. Disabled
+or removed targets retain their durable queue records without starving independent
+recovery. Enabled ready reviews still take priority; missing or unreadable review
+configuration supplies no runnable review priority. Regression coverage lives in
+`tests/autopilot/delegated-task-supervisor-pool.test.ts`. The independent review
+consumer evaluates conflicts across the ready queue before selecting at most one
+target per idle supervisor. A conflicting prefix must not hide later independent
+work; `tests/loop/service-supervisor.test.ts` covers production tick dispatch.
+
 Governance repair decisions retain typed P0–P3 severity through final-summary
 normalization. Parser and system acceptance require P0/P1 evidence, explicit
 repair permission, at most one PR and no merged outcome. Repair commits without

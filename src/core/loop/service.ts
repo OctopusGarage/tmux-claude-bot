@@ -1617,7 +1617,7 @@ export async function runLoopServiceTickAsync(input: {
         ];
       });
       const plan = planLoopSupervisorDispatch({
-        targets: targets.slice(0, idleSupervisorSessions.length).map(({ target }) => target),
+        targets: targets.map(({ target }) => target),
         activeResourcePaths: active.resourcePaths,
       });
       if (plan.ready.length === 0) {
@@ -1640,7 +1640,10 @@ export async function runLoopServiceTickAsync(input: {
       const targetByKey = new Map(
         targets.map(({ item, target }) => [`${target.due.projectId}:${item.scheduledAt}`, item]),
       );
-      const batches = allocateLoopSupervisorBatches(plan.ready, idleSupervisorSessions);
+      const batches = allocateLoopSupervisorBatches(
+        plan.ready.slice(0, idleSupervisorSessions.length),
+        idleSupervisorSessions,
+      );
       for (const batch of batches) {
         await Promise.all(
           batch.map(async ({ item: target, supervisorSession }) => {
