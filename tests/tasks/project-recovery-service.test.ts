@@ -20,6 +20,48 @@ afterEach(() => {
 });
 
 describe("project recovery service", () => {
+  it("reconsiders an original supervisor timeout despite incidental conflict prose", async () => {
+    const stateDir = join(tmpdir(), `project-recovery-timeout-${Date.now()}`);
+    process.env.TCB_STATE_DIR = stateDir;
+    await mkdir(stateDir, { recursive: true });
+    const reportPath = join(stateDir, "report.md");
+    await writeFile(reportPath, "A conflicting queue prefix needs a bounded bot-owned regression.");
+    const dispatch = vi.fn(async () => ({ status: "queued" as const, runId: "run-2" }));
+    const result = await runProjectRecoveryPass({
+      now: 2000,
+      records: [
+        {
+          taskId: "autopilot:run-1",
+          source: "autopilot-delegate",
+          name: "suite active delegated task",
+          status: "failed",
+          error: "loop supervisor work order timed out",
+          summary:
+            "Recovery classification: needs-owner-decision; evidence requires a project-owner or PR decision",
+          scheduledAt: 1000,
+          updatedAt: 1500,
+          repairStatus: "blocked",
+          reportPath,
+        },
+      ],
+      config: {
+        projects: [{ id: "suite", name: "Suite", path: "/repo/suite" }],
+        repositories: [],
+        workspaces: [],
+      },
+      coordinator: new RepairCoordinator(new InMemoryRepairQueueStore()),
+      updateRepairStatus: vi.fn(),
+      dispatch,
+      canonicalize: (path) => path,
+    });
+    expect(result).toMatchObject({ dispatched: 1, ownerDecision: 0 });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classification: expect.objectContaining({ classification: "retryable" }),
+      }),
+    );
+  });
+
   it("preserves external terminal outcomes before a large WorkOrder prompt", async () => {
     const stateDir = join(tmpdir(), `project-recovery-external-${Date.now()}`);
     process.env.TCB_STATE_DIR = stateDir;

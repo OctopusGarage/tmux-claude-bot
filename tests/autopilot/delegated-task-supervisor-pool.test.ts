@@ -173,18 +173,71 @@ describe("active delegated task supervisor pool", () => {
     restartLoopSupervisor.mockReset();
   });
 
+  function reviewConfig(enabled: boolean): string {
+    const path = join(process.env.TCB_STATE_DIR ?? tmpdir(), "loop.yml");
+    writeFileSync(
+      path,
+      `projects: []
+prReview:
+  repositories:
+    - id: synthetic-reviews
+      name: Synthetic Reviews
+      agent: codex
+      repo: synthetic/app
+      path: /fixture/reviews
+      enabled: ${enabled}
+      schedule: "0 2 * * *"
+`,
+    );
+    return path;
+  }
+
+  it.each(["disabled", "removed"])(
+    "does not prioritize %s repository reviews over background recovery",
+    async (state) => {
+      const { startActiveDelegatedTask } = await import(
+        "../../src/core/autopilot/delegated-task.js"
+      );
+      const input = deps(1);
+      input.config.loopEngineering.configFile = reviewConfig(false);
+      if (state === "removed")
+        writeFileSync(input.config.loopEngineering.configFile, "projects: []\n");
+      const now = Date.now();
+      const queue = new RepositoryReviewQueue();
+      queue.enqueue({
+        repositoryId: "synthetic-reviews",
+        scheduledAt: now - 1,
+        priority: 1000,
+        now,
+      });
+      const before = queue.listReady(now);
+      setPathForSession("tmux_proj_app", "/fixture/app");
+      const result = await startActiveDelegatedTask(input, {
+        session: "tmux_proj_app",
+        requirement: "continue maintenance",
+        resourceTrigger: "background",
+      });
+      expect(result.status === "blocked" ? result.reason : "queued").not.toContain(
+        "repository PR review queue has ready work",
+      );
+      expect(queue.listReady(now)).toEqual(before);
+    },
+  );
+
   it("defers background active delegation while repository PR review work is ready", async () => {
     const { startActiveDelegatedTask } = await import("../../src/core/autopilot/delegated-task.js");
     const now = Date.now();
     new RepositoryReviewQueue().enqueue({
-      repositoryId: "tmux-claude-bot-all-prs",
+      repositoryId: "synthetic-reviews",
       scheduledAt: now - 1,
       priority: 1000,
       now,
     });
     setPathForSession("tmux_proj_app", "/fixture/app");
 
-    const result = await startActiveDelegatedTask(deps(1), {
+    const input = deps(1);
+    input.config.loopEngineering.configFile = reviewConfig(true);
+    const result = await startActiveDelegatedTask(input, {
       session: "tmux_proj_app",
       requirement: "continue maintenance",
       resourceTrigger: "background",
