@@ -70,6 +70,13 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Codex readiness accepts the exact `← for agents · ? for shortcuts` navigation
+footer below a current composer. The footer alone, menu selectors, boot text,
+active turns and unknown footer text remain insufficient readiness evidence.
+This prevents idle managed delivery from timing out on the navigation hint;
+input ownership, pending-text and transcript checks remain separate gates.
+`tests/codex-runner.test.ts` covers the observed idle pane and refusal boundaries.
+
 An exact original supervisor WorkOrder timeout re-enters bounded recovery
 investigation even when incidental report prose mentions conflicts. It never
 bypasses the original attempt limit, explicit external/manual boundary, uncertain

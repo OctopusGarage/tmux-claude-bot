@@ -17,7 +17,7 @@ export function paneLooksReady(pane: string): boolean {
   return lines
     .slice(composer + 1)
     .every((line) =>
-      /^(?:esc again to edit previous message|\? for shortcuts|(?:.*[·•]\s*)?(?:Context \d+% left|\d+% context left)\b.*|gpt-[\w.-]+\s*[·•].*)$/i.test(
+      /^(?:esc again to edit previous message|(?:← for agents · )?\? for shortcuts|(?:.*[·•]\s*)?(?:Context \d+% left|\d+% context left)\b.*|gpt-[\w.-]+\s*[·•].*)$/i.test(
         line,
       ),
     );
