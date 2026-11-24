@@ -1917,3 +1917,12 @@ Later-success supersession uses the same artifact classification, so live,
 rejected or failed-verification summaries cannot close older failures. Legacy
 summary-only artifacts without matching active state retain compatibility.
 `tests/tasks/task-discovery-acceptance.test.ts` covers these boundaries.
+
+### Recovery acceptance with contradictory failures
+
+Project-recovery artifact reconciliation requires a matching accepted completed
+system gate with no reported failures. Nonempty or malformed `failures` keeps the
+repair pending instead of marking it fixed; legacy gates that omit the field
+remain compatible. Regression cases in
+`tests/tasks/project-recovery-service.test.ts` cover contradictory accepted gates
+and preserve existing identity, review-snapshot and retry ownership checks.

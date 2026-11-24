@@ -820,6 +820,7 @@ describe("project recovery service", () => {
         projectId: "geo",
         resultStatus: "completed",
         accepted: true,
+        failures: [],
         supervisorReviewGate: {
           preMutationReview: ["reviewed the failure"],
           postMutationReview: ["reviewed the repair"],
@@ -983,6 +984,39 @@ describe("project recovery service", () => {
         resultStatus: "completed",
         accepted: true,
         supervisorReviewGate: { decision: "pass" },
+      },
+    ],
+    [
+      "reported failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: ["required CI failed"],
+      },
+    ],
+    [
+      "malformed failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: "required CI failed",
+      },
+    ],
+    [
+      "null failures",
+      {
+        workOrderId: "run",
+        projectId: "geo",
+        resultStatus: "completed",
+        accepted: true,
+        supervisorReviewGate: { decision: "pass" },
+        failures: null,
       },
     ],
     [

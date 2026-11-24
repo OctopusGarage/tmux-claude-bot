@@ -1051,6 +1051,8 @@ function acceptedCompletedSystemGate(
   return (
     systemGate?.accepted === true &&
     systemGate.resultStatus === "completed" &&
+    (systemGate.failures === undefined ||
+      (Array.isArray(systemGate.failures) && systemGate.failures.length === 0)) &&
     systemGate.workOrderId === basename(dirname(summaryPath)) &&
     systemGate.projectId === summary.projectId &&
     (isDeepStrictEqual(systemGate.supervisorReviewGate, summary.reviewGate) ||
