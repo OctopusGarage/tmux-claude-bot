@@ -126,6 +126,48 @@ describe("selectResourceRepairCandidate", () => {
     expect(incident.repairWorkOrderId).toBeUndefined();
   });
 
+  it.each([false, true])(
+    "recovers only exact incident ownership from an active diagnostic: %s",
+    async (sameIncident) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const record = coordinator.enqueue({
+        projectId: "bot",
+        projectPath: "/repo",
+        source: "resource-guardian",
+        taskFamily: "resource-guardian-stable-recovery",
+        fingerprint: "resource-guardian:pane-snapshot-validation",
+        taskId: sameIncident ? "collector-incident" : "older-incident",
+        now: 1,
+      });
+      coordinator.claimIds([record.id], { now: 1, leaseId: "active", limit: 1 });
+      coordinator.markRunning(record.id, "active", 1);
+      coordinator.attachWorkOrder(record.id, "older-live-diagnostic", 1);
+      const writeIncident = vi.fn();
+      const dispatch = vi.fn();
+      await dispatchStableResourceRepair({
+        now: 700_000,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        coordinator,
+        store: { listIncidents: () => [collectorIncident()], writeIncident },
+        dispatch,
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      if (sameIncident) {
+        expect(writeIncident).toHaveBeenCalledOnce();
+        expect(writeIncident.mock.calls[0]?.[0]).toMatchObject({
+          repairWorkOrderId: "older-live-diagnostic",
+        });
+      } else expect(writeIncident).not.toHaveBeenCalled();
+      expect(coordinator.list()[0]).toMatchObject({
+        status: "running",
+        workOrderId: "older-live-diagnostic",
+        attempt: 0,
+      });
+    },
+  );
+
   it("retries a failed diagnostic after backoff with a fresh stable WorkOrder", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     let incident = collectorIncident();

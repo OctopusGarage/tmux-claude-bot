@@ -101,6 +101,8 @@ detaching its terminal owner. A due retry uses a settlement-bound WorkOrder id;
 a later incident uses its own stable suffix. Attachment failures still reuse
 the same attempt id. Cancelled work and accepted blocked outcomes stay blocked.
 No new retry can reuse a terminal WorkOrder or reset the shared attempt budget.
+Recovering an active WorkOrder link also requires the exact incident task link;
+a shared fingerprint alone only defers newer incidents and grants no ownership.
 
 Codex readiness accepts the exact `← for agents · ? for shortcuts` navigation
 footer below a current composer. The footer alone, menu selectors, boot text,

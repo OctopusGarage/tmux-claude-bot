@@ -273,7 +273,13 @@ export async function dispatchStableResourceRepair(input: {
   if (
     incident !== undefined &&
     incident.repairWorkOrderId === undefined &&
-    queue.workOrderId !== undefined
+    queue.workOrderId !== undefined &&
+    repairs.some(
+      (record) =>
+        record.source === "resource-guardian" &&
+        record.workOrderId === queue.workOrderId &&
+        record.linkedTaskIds.includes(incident.id),
+    )
   ) {
     const recovered = structuredClone(incident);
     recovered.repairWorkOrderId = queue.workOrderId;
