@@ -550,7 +550,7 @@ export async function reconcileProjectRecoveryArtifacts(input: {
         ? linked.filter(
             (record) =>
               (record.source === "loop-engineering" ||
-                (record.taskId === queueRecord.linkedTaskIds[0] &&
+                (record.source === "autopilot-delegate" &&
                   !acceptedBlockedRecoveryArtifact(record.reportPath))) &&
               (record.repairStatus === "blocked" ||
                 record.repairStatus === "pending" ||

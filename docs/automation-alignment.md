@@ -70,6 +70,46 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+Generic accepted-blocked aggregates reconsider every linked Autopilot original
+with explicit safe pre-submission retry evidence, regardless of its linked-list
+position. Accepted blocked recovery artifacts, uncertain ownership, live owners
+and original attempt limits retain their existing boundaries. Regression coverage
+lives in `tests/tasks/project-recovery-original-closure.test.ts`.
+
+An isolated worker cannot repair the original source checkout. Source branch,
+status and cleanliness gate failures retain their rejection and recovery
+disposition but never request a worker revision, including alongside correctable
+summary failures. Target-worktree corrections remain eligible. The source stays
+untouched; `tests/loop/service-supervisor.test.ts` covers the revision boundary.
+
+Launchd discovery never interprets a shared stdout/stderr file's modification
+time as stderr-only failure or stdout-only success. It uses launchctl exit
+evidence for that case and retains an unknown occurrence when no exit is
+available. Separate error logs retain their existing conservative classification.
+`tests/tasks/task-discovery.test.ts` covers zero, nonzero and unavailable exits.
+
+Resource Guardian restores a newer collector incident falsely linked by the
+exact legacy recovery marker to an older blocked diagnostic only when the
+incident was not part of that dispatch. Terminal WorkOrder links cannot become
+new ownership. The same fingerprint budget, live repair exclusion, healthy
+window and unknown process attribution remain authoritative, including legacy
+blocked records already at the attempt limit. Original dispatched incidents,
+unproven links and closed successful outcomes stay untouched.
+`tests/resource-guardian/repair.test.ts` covers these migration boundaries.
+Failed diagnostic execution settles once into the existing backoff/budget,
+detaching its terminal owner. A due retry uses a settlement-bound WorkOrder id;
+a later incident uses its own stable suffix. Attachment failures still reuse
+the same attempt id. Cancelled work and accepted blocked outcomes stay blocked.
+No new retry can reuse a terminal WorkOrder or reset the shared attempt budget.
+Recovering an active WorkOrder link also requires the exact incident task link;
+a shared fingerprint alone only defers newer incidents and grants no ownership.
+Resource diagnostic admission carries the original refusal reason and retry time
+through the existing shared deferral classifier. Immediate admission waits remain
+pending without spending an execution attempt; pending work is not a live owner
+and resumes only when due. Reopening a blocked Resource Guardian fingerprint
+preserves its prior attempt count. Real start/intent/attachment failures retain
+the existing bounded backoff, and production-composition regressions cover resume.
+
 Codex readiness accepts the exact `← for agents · ? for shortcuts` navigation
 footer below a current composer. The footer alone, menu selectors, boot text,
 active turns and unknown footer text remain insufficient readiness evidence.

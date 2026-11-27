@@ -103,6 +103,71 @@ describe("selectResourceRepairCandidate", () => {
     };
   }
 
+  it("resumes a production diagnostic after admission reopens without spending a retry", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    let incident = collectorIncident();
+    let admitted = false;
+    const start = vi.fn(async () =>
+      admitted
+        ? { status: "queued", runId: "admitted-diagnostic" }
+        : {
+            status: "blocked",
+            reason: "automation admission deferred: quiet-hours",
+            retryAt: 700_100,
+          },
+    );
+    const dispatch = createProductionResourceRepairDispatcher(
+      {
+        config: {
+          projectSessionPrefix: "tmux_proj_",
+          loopEngineering: { supervisor: { enabled: true } },
+          runtimeGuardian: {
+            repoPath: "/repo",
+            repairBranch: "repair/resource",
+            worktreeIsolation: "isolated",
+          },
+        },
+      } as unknown as HandlerDeps,
+      {
+        coordinator,
+        gitTopLevel: async () => "/repo",
+        setSessionPath: (() => {}) as never,
+        start: start as never,
+      },
+    );
+    const tick = (now: number) =>
+      dispatchStableResourceRepair({
+        now,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        coordinator,
+        dispatch,
+        store: {
+          listIncidents: () => [incident],
+          writeIncident: (value) => {
+            incident = value;
+          },
+        },
+      });
+    await tick(700_000);
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "pending",
+      attempt: 0,
+      nextAttemptAt: 700_100,
+    });
+    await tick(700_099);
+    expect(start).toHaveBeenCalledOnce();
+    admitted = true;
+    await tick(700_100);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "running",
+      attempt: 0,
+      workOrderId: "admitted-diagnostic",
+    });
+  });
+
   it("dispatches ended collector validation failures for diagnosis without claiming process ownership", async () => {
     const incident = collectorIncident();
     const dispatch = vi.fn<Parameters<typeof dispatchStableResourceRepair>[0]["dispatch"]>(
@@ -126,6 +191,101 @@ describe("selectResourceRepairCandidate", () => {
     expect(incident.repairWorkOrderId).toBeUndefined();
   });
 
+  it.each([false, true])(
+    "recovers only exact incident ownership from an active diagnostic: %s",
+    async (sameIncident) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const record = coordinator.enqueue({
+        projectId: "bot",
+        projectPath: "/repo",
+        source: "resource-guardian",
+        taskFamily: "resource-guardian-stable-recovery",
+        fingerprint: "resource-guardian:pane-snapshot-validation",
+        taskId: sameIncident ? "collector-incident" : "older-incident",
+        now: 1,
+      });
+      coordinator.claimIds([record.id], { now: 1, leaseId: "active", limit: 1 });
+      coordinator.markRunning(record.id, "active", 1);
+      coordinator.attachWorkOrder(record.id, "older-live-diagnostic", 1);
+      const writeIncident = vi.fn();
+      const dispatch = vi.fn();
+      await dispatchStableResourceRepair({
+        now: 700_000,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        coordinator,
+        store: { listIncidents: () => [collectorIncident()], writeIncident },
+        dispatch,
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      if (sameIncident) {
+        expect(writeIncident).toHaveBeenCalledOnce();
+        expect(writeIncident.mock.calls[0]?.[0]).toMatchObject({
+          repairWorkOrderId: "older-live-diagnostic",
+        });
+      } else expect(writeIncident).not.toHaveBeenCalled();
+      expect(coordinator.list()[0]).toMatchObject({
+        status: "running",
+        workOrderId: "older-live-diagnostic",
+        attempt: 0,
+      });
+    },
+  );
+
+  it("retries a failed diagnostic after backoff with a fresh stable WorkOrder", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    let incident = collectorIncident();
+    const start = vi.fn(async (_prompt: string, context: { runId: string }) => ({
+      status: "queued" as const,
+      runId: context.runId,
+    }));
+    const tick = (now: number) =>
+      dispatchStableResourceRepair({
+        now,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        coordinator,
+        store: {
+          listIncidents: () => [incident],
+          writeIncident: (value) => {
+            incident = value;
+          },
+        },
+        dispatch: (value) =>
+          dispatchResourceGuardianRepair(
+            repairInput({
+              now,
+              coordinator,
+              start,
+              incident: {
+                id: value.id,
+                fingerprint: "resource-guardian:pane-snapshot-validation",
+                evidence: ["collector failed"],
+              },
+            }),
+          ),
+      });
+    await tick(700_000);
+    const first = coordinator.list()[0];
+    if (first?.workOrderId === undefined) throw new Error("missing first diagnostic");
+    reconcileResourceGuardianRepairQueue({
+      coordinator,
+      now: 700_001,
+      readRegistry: (() => ({
+        terminal: [{ workOrder: { id: first.workOrderId }, state: { status: "failed" } }],
+      })) as never,
+    });
+    const retryAt = coordinator.list()[0]?.nextAttemptAt ?? 0;
+    await tick(retryAt - 1);
+    expect(start).toHaveBeenCalledOnce();
+    await tick(retryAt);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(coordinator.list()[0]?.workOrderId).not.toBe(first.workOrderId);
+    expect(coordinator.list()[0]).toMatchObject({ status: "running", attempt: 1 });
+  });
+
   it("does not turn generic preparation failures or active incidents into diagnostic authority", () => {
     const incident = collectorIncident();
     const { endedAt: _, ...active } = incident;
@@ -142,6 +302,78 @@ describe("selectResourceRepairCandidate", () => {
       expect(selectResourceRepairCandidate([candidate])).toBeUndefined();
     }
   });
+
+  it.each(["reopen", "exhausted", "original", "missing-provenance", "older", "live", "fixed"])(
+    "reconsiders only a false collector link within its original safety gates: %s",
+    async (scenario) => {
+      const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+      const queued = coordinator.enqueue({
+        projectId: "bot",
+        projectPath: "/repo",
+        source: "resource-guardian",
+        taskFamily: "resource-guardian-stable-recovery",
+        fingerprint: "resource-guardian:pane-snapshot-validation",
+        taskId: "older-incident",
+        now: 1,
+      });
+      coordinator.claimIds([queued.id], { now: 1, leaseId: "old", limit: 1 });
+      coordinator.markRunning(queued.id, "old", 1);
+      coordinator.attachWorkOrder(queued.id, "old-blocked-wo", 2);
+      coordinator.releaseForRetry(queued.id, 2);
+      coordinator.releaseForRetry(queued.id, 2);
+      if (scenario === "exhausted") coordinator.releaseForRetry(queued.id, 2);
+      coordinator.markTerminal(queued.id, "blocked", 3);
+      const incident = {
+        ...collectorIncident(),
+        startedAt: 4,
+        endedAt: 6,
+        repairWorkOrderId: "old-blocked-wo",
+      };
+      incident.actions.push({
+        kind: "resource-action",
+        phase: "repair-dispatch",
+        at: 10,
+        outcome: "recorded",
+        reason: "repair work order recovered from durable queue",
+      });
+      if (scenario === "original") coordinator.linkTaskIds(queued.id, [incident.id], 3);
+      if (scenario === "missing-provenance") incident.actions.pop();
+      if (scenario === "older") incident.endedAt = 2;
+      if (scenario === "fixed") coordinator.markTerminal(queued.id, "fixed", 3);
+      if (scenario === "live") {
+        coordinator.releaseToQueue(queued.id, 3);
+        coordinator.claimIds([queued.id], { now: 3, leaseId: "active", limit: 1 });
+        coordinator.markRunning(queued.id, "active", 3);
+      }
+      const dispatch = vi.fn(async () => ({
+        status: "queued" as const,
+        detail: "queued",
+        workOrderId: "fresh-wo",
+      }));
+      const writeIncident = vi.fn();
+      await dispatchStableResourceRepair({
+        now: 700_000,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        store: { listIncidents: () => [incident], writeIncident },
+        coordinator,
+        dispatch,
+      });
+      if (scenario === "reopen") {
+        expect(dispatch).toHaveBeenCalledOnce();
+        expect(writeIncident.mock.calls.at(-1)?.[0]).toMatchObject({
+          repairWorkOrderId: "fresh-wo",
+          attribution: "unknown",
+        });
+      } else {
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(writeIncident).not.toHaveBeenCalled();
+      }
+      expect(incident.repairWorkOrderId).toBe("old-blocked-wo");
+      expect(coordinator.list()[0]?.attempt).toBe(scenario === "exhausted" ? 3 : 2);
+    },
+  );
 
   it("keeps collector diagnosis inside a shared retry budget across pressure incidents", async () => {
     const incident = collectorIncident();
@@ -433,6 +665,29 @@ describe("resourceRepairQueueState", () => {
     expect(coordinator.list()[0]).toMatchObject({ status: "fixed" });
   });
 
+  it("spends one retry for a terminal failed diagnostic and never settles it twice", () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "bot",
+      projectPath: "/bot",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "fp",
+      taskId: "incident",
+      now: 1,
+    });
+    coordinator.claimIds([record.id], { now: 1, leaseId: "lease", limit: 1 });
+    coordinator.markRunning(record.id, "lease", 1);
+    coordinator.attachWorkOrder(record.id, "failed-diagnostic", 1);
+    const readRegistry = (() => ({
+      terminal: [{ workOrder: { id: "failed-diagnostic" }, state: { status: "failed" } }],
+    })) as never;
+    reconcileResourceGuardianRepairQueue({ coordinator, now: 2, readRegistry });
+    reconcileResourceGuardianRepairQueue({ coordinator, now: 3, readRegistry });
+    expect(coordinator.list()[0]).toMatchObject({ status: "retry-wait", attempt: 1 });
+    expect(coordinator.list()[0]?.workOrderId).toBeUndefined();
+  });
+
   it("reopens a retryable terminal Resource Guardian record instead of duplicating the fingerprint", () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const first = coordinator.enqueue({
@@ -533,6 +788,70 @@ function repairInput(
 }
 
 describe("dispatchResourceGuardianRepair", () => {
+  it("preserves prior attempts across reopening and immediate admission waits", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "fingerprint-1",
+      taskId: "older-incident",
+      now: 1,
+    });
+    coordinator.releaseForRetry(record.id, 2);
+    coordinator.releaseForRetry(record.id, 3);
+    coordinator.markTerminal(record.id, "blocked", 4);
+    let admitted = false;
+    const start = vi.fn(async (_prompt: string, context: { runId: string }) =>
+      admitted
+        ? { status: "queued" as const, runId: context.runId }
+        : {
+            status: "blocked" as const,
+            reason: "automation admission deferred: quiet-hours",
+            retryAt: 200,
+          },
+    );
+    const request = (now: number) => repairInput({ coordinator, now, start });
+    const deferred = await dispatchResourceGuardianRepair(request(100));
+    expect(deferred.detail).toContain("automation admission deferred:");
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "pending",
+      attempt: 2,
+      nextAttemptAt: 200,
+    });
+    await dispatchResourceGuardianRepair(request(199));
+    expect(start).toHaveBeenCalledOnce();
+    admitted = true;
+    const queued = await dispatchResourceGuardianRepair(request(200));
+    expect(queued.status).toBe("queued");
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(coordinator.list()[0]).toMatchObject({ status: "running", attempt: 2 });
+  });
+
+  it("gives a new incident its own stable WorkOrder without reusing a terminal diagnostic", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const start = vi.fn(async (_prompt: string, context: { runId: string }) => ({
+      status: "queued" as const,
+      runId: context.runId,
+    }));
+    const first = await dispatchResourceGuardianRepair(
+      repairInput({ coordinator, now: 100, start }),
+    );
+    if (first.queueId === undefined) throw new Error("missing original queue");
+    coordinator.markTerminal(first.queueId, "blocked", 101);
+    const next = await dispatchResourceGuardianRepair(
+      repairInput({
+        coordinator,
+        now: 102,
+        start,
+        incident: { id: "later-incident", fingerprint: "fingerprint-1", evidence: ["new failure"] },
+      }),
+    );
+    expect(next.queueId).toBe(first.queueId);
+    expect(next.workOrderId).not.toBe(first.workOrderId);
+  });
+
   it("blocks exact repository dispatch on a missing or mismatched git toplevel", async () => {
     for (const gitTopLevel of [async () => null, async () => "/other-repo"]) {
       const startCalls: string[] = [];

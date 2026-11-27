@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildResourceGuardianRepairPrompt } from "../prompts/repair-prompts.js";
+import { isImmediateRecoveryDeferral } from "../tasks/recovery-admission.js";
 import { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import type { ResourceGuardianStore } from "./store.js";
 import type { PressureState, ResourceCircuitAdmission, ResourceIncident } from "./types.js";
@@ -58,15 +60,22 @@ export function reconcileResourceGuardianRepairQueue(input: {
   if (records.length === 0) return;
   const registry = (input.readRegistry ?? readLoopSupervisorWorkOrderRegistry)();
   const terminalByRunId = new Map(
-    registry.terminal.map((record) => [record.workOrder.id, record.state.status]),
+    registry.terminal.map((record) => [record.workOrder.id, record.state]),
   );
   for (const record of records) {
     if (record.workOrderId === undefined) continue;
-    const terminalStatus = terminalByRunId.get(record.workOrderId);
-    if (terminalStatus === undefined) continue;
+    const terminal = terminalByRunId.get(record.workOrderId);
+    if (terminal === undefined) continue;
+    if (terminal.status === "failed" && terminal.resultStatus !== "blocked") {
+      input.coordinator.releaseForRetry(record.id, input.now, {
+        detachWorkOrder: true,
+        settledTaskId: `autopilot:${record.workOrderId}`,
+      });
+      continue;
+    }
     input.coordinator.markTerminal(
       record.id,
-      terminalStatus === "completed" ? "fixed" : "blocked",
+      terminal.status === "completed" ? "fixed" : "blocked",
       input.now,
     );
   }
@@ -80,19 +89,21 @@ export function resourceRepairQueueState(
   const allRecords = coordinator.list();
   const records = allRecords.filter((record) => record.source === "resource-guardian");
   const matching = records.filter((record) => record.fingerprint === fingerprint);
-  const activeFingerprint = (record: (typeof records)[number]) =>
-    record.status === "pending" || record.status === "leased" || record.status === "running";
   const activeGlobal = (record: (typeof allRecords)[number]) =>
     record.status === "leased" || record.status === "running";
-  const retry = matching.filter((record) => record.status === "retry-wait");
+  const retry = matching.filter(
+    (record) => record.status === "retry-wait" || record.status === "pending",
+  );
   const deadLettered = matching.some((record) => record.status === "dead-letter");
-  const latest = matching.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
+  const latest = matching
+    .filter(activeGlobal)
+    .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
   return {
-    hasActiveFingerprintRepair: matching.some(activeFingerprint),
+    hasActiveFingerprintRepair: matching.some(activeGlobal),
     hasActiveResourceRepair: allRecords.some(activeGlobal),
     cooldownActive: retry.some((record) => record.nextAttemptAt > now),
     retryExhausted:
-      deadLettered || retry.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
+      deadLettered || matching.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
     ...(latest?.workOrderId === undefined ? {} : { workOrderId: latest.workOrderId }),
   };
 }
@@ -207,7 +218,46 @@ export async function dispatchStableResourceRepair(input: {
   // Do not repeatedly scan long-lived incident archives while recovery is impossible.
   // Queue settlement above still runs so terminal repair ownership can be released.
   if (unstableRecoveryReason(input) !== null) return;
-  const incident = selectResourceRepairCandidate(input.store.listIncidents());
+  const repairs = input.coordinator?.list() ?? [];
+  const incidents = input.store.listIncidents().map((incident) => {
+    const endedAt = incident.endedAt;
+    const settledRetry = repairs.some(
+      (record) =>
+        record.source === "resource-guardian" &&
+        record.status === "retry-wait" &&
+        record.fingerprint === repairFingerprint(incident) &&
+        record.linkedTaskIds.includes(incident.id) &&
+        record.settledRecoveryTaskIds?.includes(`autopilot:${incident.repairWorkOrderId}`),
+    );
+    // Older versions copied a terminal diagnostic's link onto later incidents.
+    // Reconsider only that exact false link, never the originally dispatched work.
+    if (
+      incident.repairWorkOrderId !== undefined &&
+      endedAt !== undefined &&
+      (settledRetry ||
+        (hasCollectorDiagnosticEvidence(incident) &&
+          incident.actions.some(
+            (action) =>
+              action.phase === "repair-dispatch" &&
+              action.outcome === "recorded" &&
+              action.reason === "repair work order recovered from durable queue",
+          ) &&
+          repairs.some(
+            (record) =>
+              record.source === "resource-guardian" &&
+              record.status === "blocked" &&
+              record.fingerprint === COLLECTOR_REPAIR_FINGERPRINT &&
+              record.workOrderId === incident.repairWorkOrderId &&
+              !record.linkedTaskIds.includes(incident.id) &&
+              endedAt > record.updatedAt,
+          )))
+    ) {
+      const { repairWorkOrderId: _oldLink, ...candidate } = incident;
+      return candidate;
+    }
+    return incident;
+  });
+  const incident = selectResourceRepairCandidate(incidents);
   const queue =
     input.coordinator === undefined
       ? {
@@ -224,7 +274,13 @@ export async function dispatchStableResourceRepair(input: {
   if (
     incident !== undefined &&
     incident.repairWorkOrderId === undefined &&
-    queue.workOrderId !== undefined
+    queue.workOrderId !== undefined &&
+    repairs.some(
+      (record) =>
+        record.source === "resource-guardian" &&
+        record.workOrderId === queue.workOrderId &&
+        record.linkedTaskIds.includes(incident.id),
+    )
   ) {
     const recovered = structuredClone(incident);
     recovered.repairWorkOrderId = queue.workOrderId;
@@ -314,7 +370,7 @@ export async function dispatchResourceGuardianRepair(input: {
   start(
     requirement: string,
     context: { runId: string },
-  ): Promise<{ status: "queued" | "blocked"; runId?: string }>;
+  ): Promise<{ status: "queued" | "blocked"; runId?: string; reason?: string; retryAt?: number }>;
   prompt: string;
   persistIntent?: (queueId: string) => Promise<void>;
 }): Promise<ResourceGuardianRepairDispatch> {
@@ -333,7 +389,9 @@ export async function dispatchResourceGuardianRepair(input: {
       (record) =>
         record.source === "resource-guardian" &&
         record.fingerprint === input.incident.fingerprint &&
-        (record.status === "retry-wait" || record.status === "dead-letter"),
+        (record.status === "pending" ||
+          record.status === "retry-wait" ||
+          record.status === "dead-letter"),
     );
   if (
     retry !== undefined &&
@@ -361,20 +419,35 @@ export async function dispatchResourceGuardianRepair(input: {
   const running = input.coordinator.markRunning(record.id, leaseId, input.now);
   if (running === undefined)
     return { status: "blocked", detail: "repair could not be marked running" };
+  input.coordinator.linkTaskIds(record.id, [input.incident.id], input.now);
   try {
     await input.persistIntent?.(record.id);
   } catch {
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "resource repair intent was not durably persisted" };
   }
-  let started: { status: "queued" | "blocked"; runId?: string };
+  let started: { status: "queued" | "blocked"; runId?: string; reason?: string; retryAt?: number };
   try {
-    started = await input.start(input.prompt, { runId: resourceRepairRunId(record.id) });
+    started = await input.start(input.prompt, {
+      runId: resourceRepairRunId(
+        record.id,
+        record.linkedTaskIds[0] === input.incident.id ? undefined : input.incident.id,
+        record.settledRecoveryTaskIds?.length ?? 0,
+      ),
+    });
   } catch {
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "delegated repair threw and returned to retry" };
   }
   if (started.status === "blocked") {
+    if (started.reason !== undefined && isImmediateRecoveryDeferral(started.reason)) {
+      input.coordinator.releaseToQueue(
+        record.id,
+        input.now,
+        started.retryAt ?? input.now + 15 * 60_000,
+      );
+      return { status: "blocked", detail: started.reason };
+    }
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "delegated repair was blocked and returned to retry" };
   }
@@ -458,7 +531,11 @@ export function createProductionResourceRepairDispatcher(
           trustedRunId: context.runId,
         });
         return result.status === "blocked"
-          ? { status: "blocked" }
+          ? {
+              status: "blocked",
+              reason: result.reason,
+              ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
+            }
           : { status: "queued", runId: result.runId };
       },
       prompt: buildResourceGuardianRepairPrompt({
@@ -476,8 +553,16 @@ export function createProductionResourceRepairDispatcher(
   };
 }
 
-function resourceRepairRunId(queueId: string): string {
-  return `resource-repair-${queueId}`;
+function resourceRepairRunId(
+  queueId: string,
+  incidentId: string | undefined,
+  settledAttempts: number,
+): string {
+  const suffix =
+    incidentId === undefined
+      ? ""
+      : `-${createHash("sha256").update(incidentId).digest("hex").slice(0, 16)}`;
+  return `resource-repair-${queueId}${suffix}${settledAttempts > 0 ? `-retry-${settledAttempts}` : ""}`;
 }
 
 async function defaultGitTopLevel(repoPath: string): Promise<string | null> {

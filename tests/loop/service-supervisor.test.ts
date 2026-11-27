@@ -2365,6 +2365,26 @@ prReview:
     expect(supervisorRevisionFailures([failure])).toEqual([failure]);
   });
 
+  it.each([
+    'source branch is "dev", expected "main"',
+    "source git branch check failed: unavailable",
+    "source git status failed: unavailable",
+    "source worktree is dirty after supervisor completion: M user.ts",
+  ])("does not ask an isolated worker to repair system-owned source state: %s", (failure) => {
+    expect(supervisorRevisionFailures([failure])).toEqual([]);
+    expect(
+      supervisorRevisionFailures([
+        failure,
+        "supervisor summary commits did not include valid commit ids",
+      ]),
+    ).toEqual([]);
+  });
+
+  it("retains worker revision for the worker's own branch mismatch", () => {
+    const failure = 'target branch is "feature", expected "main"';
+    expect(supervisorRevisionFailures([failure])).toEqual([failure]);
+  });
+
   it("restores a clean isolated worker to the WorkOrder branch before accepting completion", async () => {
     const invocations: string[] = [];
     let currentBranch = "dev";

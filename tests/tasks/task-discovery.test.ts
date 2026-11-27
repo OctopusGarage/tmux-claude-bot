@@ -41,6 +41,28 @@ ${err}
 }
 
 describe("discoverLaunchdScheduledTasks", () => {
+  it.each([
+    ["last exit code = 0", "success"],
+    ["last exit code = 2", "failed"],
+    [null, "expected"],
+  ])("uses exit evidence for a shared output log: %s", (state, status) => {
+    const root = mkdtempSync(join(tmpdir(), "tcb-shared-launchd-log-"));
+    const log = join(root, "combined.log");
+    writeFileSync(
+      join(root, "daily.plist"),
+      plist({ label: "com.example.daily", stdout: log, stderr: log }),
+    );
+    const records = discoverLaunchdScheduledTasks({
+      dirs: [root],
+      window: singaporeDayWindow("2026-07-27"),
+      now: Date.parse("2026-07-28T02:00:00Z"),
+      fileTime: () => Date.parse("2026-07-27T03:01:00Z"),
+      launchctlState: () => state,
+    });
+    expect(records[0]?.status).toBe(status);
+    expect(records[0]?.error ?? "").not.toContain("stderr log changed");
+  });
+
   it("discovers launchd scheduled tasks as expected even when they never report", () => {
     const root = mkdtempSync(join(tmpdir(), "tcb-launchd-discovery-"));
     const launchAgents = join(root, "LaunchAgents");
