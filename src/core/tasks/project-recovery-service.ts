@@ -61,6 +61,7 @@ export type ProjectRecoveryArtifactReconciliationResult = {
 export async function runProjectRecoveryPass(input: {
   now: number;
   records: readonly RecoveryRecord[];
+  allRecords?: readonly ScheduledTaskRecord[];
   config: ConfiguredRecoveryConfig;
   coordinator: RepairCoordinator;
   updateRepairStatus: (
@@ -93,6 +94,16 @@ export async function runProjectRecoveryPass(input: {
   ]);
   const terminalWorkOrders = workOrderRegistry.terminal;
   const terminalClosureRunIds = terminalProjectRecoveryRunIds(input.coordinator);
+  const exhaustedTasks = new Map<string, RecoveryRecord>();
+  const closedTasks = new Map(
+    (input.allRecords ?? input.records)
+      .filter((record) =>
+        ["fixed", "completed", "not-needed", "superseded", "not-reproducible"].includes(
+          record.repairStatus ?? "",
+        ),
+      )
+      .map((record) => [record.taskId, record]),
+  );
 
   for (const record of input.records) {
     if (record.source !== "loop-engineering" && record.source !== "autopilot-delegate") continue;
@@ -185,6 +196,7 @@ export async function runProjectRecoveryPass(input: {
       continue;
     }
     if (classification.classification === "dead-letter") {
+      exhaustedTasks.set(record.taskId, record);
       input.updateRepairStatus(
         record.taskId,
         "blocked",
@@ -207,6 +219,31 @@ export async function runProjectRecoveryPass(input: {
     targetRecords.push(record);
     recordsByTarget.set(groupId, targetRecords);
     targetById.set(groupId, target);
+  }
+
+  // An aggregate may retain a lower counter than its originals' other queues.
+  // It must not reserve recovery forever after every linked task is exhausted.
+  for (const queued of input.coordinator.list()) {
+    if (
+      queued.source !== "project-recovery" ||
+      (queued.status !== "pending" && queued.status !== "retry-wait") ||
+      queued.workOrderId !== undefined ||
+      queued.leaseId !== undefined ||
+      queued.leaseExpiresAt !== undefined ||
+      queued.linkedTaskIds.length === 0 ||
+      !queued.linkedTaskIds.some((id) => exhaustedTasks.has(id)) ||
+      !queued.linkedTaskIds.every((id) => exhaustedTasks.has(id) || closedTasks.has(id))
+    )
+      continue;
+    const hasLiveOriginal = reservedWorkOrders.some(({ workOrder }) =>
+      queued.linkedTaskIds.some(
+        (id) =>
+          id === `autopilot:${workOrder.id}` ||
+          (queued.projectId === workOrder.projectId &&
+            (exhaustedTasks.get(id) ?? closedTasks.get(id))?.scheduledAt === workOrder.scheduledAt),
+      ),
+    );
+    if (!hasLiveOriginal) input.coordinator.markTerminal(queued.id, "dead-letter", input.now);
   }
 
   for (const [targetId, records] of recordsByTarget) {

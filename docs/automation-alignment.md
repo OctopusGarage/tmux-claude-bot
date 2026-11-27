@@ -70,6 +70,17 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+A pending or retry-wait project-recovery aggregate cannot reserve the project
+when every linked original is either classified exhausted from preserved
+cross-queue budgets or has a closed non-blocking ledger outcome, with at least
+one exhausted original. The audit supplies its full ledger for those closures;
+missing ledger evidence never counts as resolution. Retire that unowned aggregate as dead-letter before selecting fresh
+occurrences, keeping its own counter unchanged. Leases, attached WorkOrders,
+live original reservations, missing originals and mixed unexhausted tasks retain
+the aggregate. Original budgets and normal dispatch admission remain unchanged.
+`tests/tasks/project-recovery-original-closure.test.ts` covers starvation,
+repeated passes and ownership refusal boundaries.
+
 Generic accepted-blocked aggregates reconsider every linked Autopilot original
 with explicit safe pre-submission retry evidence, regardless of its linked-list
 position. Accepted blocked recovery artifacts, uncertain ownership, live owners
