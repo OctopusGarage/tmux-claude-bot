@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { startActiveDelegatedTask } from "../autopilot/delegated-task.js";
 import type { HandlerDeps } from "../deps.js";
@@ -58,15 +59,22 @@ export function reconcileResourceGuardianRepairQueue(input: {
   if (records.length === 0) return;
   const registry = (input.readRegistry ?? readLoopSupervisorWorkOrderRegistry)();
   const terminalByRunId = new Map(
-    registry.terminal.map((record) => [record.workOrder.id, record.state.status]),
+    registry.terminal.map((record) => [record.workOrder.id, record.state]),
   );
   for (const record of records) {
     if (record.workOrderId === undefined) continue;
-    const terminalStatus = terminalByRunId.get(record.workOrderId);
-    if (terminalStatus === undefined) continue;
+    const terminal = terminalByRunId.get(record.workOrderId);
+    if (terminal === undefined) continue;
+    if (terminal.status === "failed" && terminal.resultStatus !== "blocked") {
+      input.coordinator.releaseForRetry(record.id, input.now, {
+        detachWorkOrder: true,
+        settledTaskId: `autopilot:${record.workOrderId}`,
+      });
+      continue;
+    }
     input.coordinator.markTerminal(
       record.id,
-      terminalStatus === "completed" ? "fixed" : "blocked",
+      terminal.status === "completed" ? "fixed" : "blocked",
       input.now,
     );
   }
@@ -86,13 +94,15 @@ export function resourceRepairQueueState(
     record.status === "leased" || record.status === "running";
   const retry = matching.filter((record) => record.status === "retry-wait");
   const deadLettered = matching.some((record) => record.status === "dead-letter");
-  const latest = matching.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
+  const latest = matching
+    .filter(activeGlobal)
+    .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
   return {
     hasActiveFingerprintRepair: matching.some(activeFingerprint),
     hasActiveResourceRepair: allRecords.some(activeGlobal),
     cooldownActive: retry.some((record) => record.nextAttemptAt > now),
     retryExhausted:
-      deadLettered || retry.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
+      deadLettered || matching.some((record) => record.attempt >= RESOURCE_REPAIR_MAX_ATTEMPTS),
     ...(latest?.workOrderId === undefined ? {} : { workOrderId: latest.workOrderId }),
   };
 }
@@ -207,7 +217,46 @@ export async function dispatchStableResourceRepair(input: {
   // Do not repeatedly scan long-lived incident archives while recovery is impossible.
   // Queue settlement above still runs so terminal repair ownership can be released.
   if (unstableRecoveryReason(input) !== null) return;
-  const incident = selectResourceRepairCandidate(input.store.listIncidents());
+  const repairs = input.coordinator?.list() ?? [];
+  const incidents = input.store.listIncidents().map((incident) => {
+    const endedAt = incident.endedAt;
+    const settledRetry = repairs.some(
+      (record) =>
+        record.source === "resource-guardian" &&
+        record.status === "retry-wait" &&
+        record.fingerprint === repairFingerprint(incident) &&
+        record.linkedTaskIds.includes(incident.id) &&
+        record.settledRecoveryTaskIds?.includes(`autopilot:${incident.repairWorkOrderId}`),
+    );
+    // Older versions copied a terminal diagnostic's link onto later incidents.
+    // Reconsider only that exact false link, never the originally dispatched work.
+    if (
+      incident.repairWorkOrderId !== undefined &&
+      endedAt !== undefined &&
+      (settledRetry ||
+        (hasCollectorDiagnosticEvidence(incident) &&
+          incident.actions.some(
+            (action) =>
+              action.phase === "repair-dispatch" &&
+              action.outcome === "recorded" &&
+              action.reason === "repair work order recovered from durable queue",
+          ) &&
+          repairs.some(
+            (record) =>
+              record.source === "resource-guardian" &&
+              record.status === "blocked" &&
+              record.fingerprint === COLLECTOR_REPAIR_FINGERPRINT &&
+              record.workOrderId === incident.repairWorkOrderId &&
+              !record.linkedTaskIds.includes(incident.id) &&
+              endedAt > record.updatedAt,
+          )))
+    ) {
+      const { repairWorkOrderId: _oldLink, ...candidate } = incident;
+      return candidate;
+    }
+    return incident;
+  });
+  const incident = selectResourceRepairCandidate(incidents);
   const queue =
     input.coordinator === undefined
       ? {
@@ -369,7 +418,13 @@ export async function dispatchResourceGuardianRepair(input: {
   }
   let started: { status: "queued" | "blocked"; runId?: string };
   try {
-    started = await input.start(input.prompt, { runId: resourceRepairRunId(record.id) });
+    started = await input.start(input.prompt, {
+      runId: resourceRepairRunId(
+        record.id,
+        record.linkedTaskIds[0] === input.incident.id ? undefined : input.incident.id,
+        record.settledRecoveryTaskIds?.length ?? 0,
+      ),
+    });
   } catch {
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "delegated repair threw and returned to retry" };
@@ -476,8 +531,16 @@ export function createProductionResourceRepairDispatcher(
   };
 }
 
-function resourceRepairRunId(queueId: string): string {
-  return `resource-repair-${queueId}`;
+function resourceRepairRunId(
+  queueId: string,
+  incidentId: string | undefined,
+  settledAttempts: number,
+): string {
+  const suffix =
+    incidentId === undefined
+      ? ""
+      : `-${createHash("sha256").update(incidentId).digest("hex").slice(0, 16)}`;
+  return `resource-repair-${queueId}${suffix}${settledAttempts > 0 ? `-retry-${settledAttempts}` : ""}`;
 }
 
 async function defaultGitTopLevel(repoPath: string): Promise<string | null> {

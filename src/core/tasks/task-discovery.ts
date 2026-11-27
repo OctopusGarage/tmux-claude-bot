@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   AutomationOccurrenceStore,
@@ -769,9 +769,14 @@ function recordForLaunchdPlist(
   launchctlState: (label: string) => string | null,
 ): ScheduledTaskRecord {
   const taskId = `launchd:${plist.label}:${window.label}`;
+  const sharedOutput =
+    plist.stdoutPath !== undefined &&
+    plist.stderrPath !== undefined &&
+    resolve(plist.stdoutPath) === resolve(plist.stderrPath);
   const stderrTime = plist.stderrPath ? fileTime(plist.stderrPath) : null;
   if (
     plist.stderrPath &&
+    !sharedOutput &&
     stderrTime !== null &&
     stderrTime >= window.start &&
     stderrTime < window.end
@@ -791,6 +796,7 @@ function recordForLaunchdPlist(
   const stdoutTime = plist.stdoutPath ? fileTime(plist.stdoutPath) : null;
   if (
     plist.stdoutPath &&
+    !sharedOutput &&
     stdoutTime !== null &&
     stdoutTime >= window.start &&
     stdoutTime < window.end

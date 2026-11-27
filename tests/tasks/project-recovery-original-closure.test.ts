@@ -140,6 +140,34 @@ describe("original task evidence survives generic accepted-blocked closure", () 
     });
   });
 
+  it("reopens every pre-submission Autopilot original in a blocked aggregate", async () => {
+    const f = fixture("Agent context reset readiness deadline exhausted", 1, "autopilot-delegate");
+    const sibling = "autopilot:suite-second-original";
+    f.ledger.expect({
+      taskId: sibling,
+      source: "autopilot-delegate",
+      name: "suite delegated task",
+      scheduledAt: 1002,
+    });
+    f.ledger.fail(sibling, {
+      endedAt: 1003,
+      error: "Cannot verify live agent identity for managed context reset",
+    });
+    f.ledger.markRepairStatus(sibling, {
+      repairStatus: "blocked",
+      updatedAt: 1100,
+      summary: closure,
+    });
+    f.coordinator.linkTaskIds(f.queue.id, [sibling], 1100);
+
+    await f.reconcile();
+    expect(f.ledger.listAll().map((record) => record.repairStatus)).toEqual(["pending", "pending"]);
+    await f.pass();
+    await f.reconcile();
+    expect(f.ledger.listAll().every((record) => record.repairStatus === "pending")).toBe(true);
+    expect(f.coordinator.findOpenProjectRecovery("suite")).toMatchObject({ attempt: 1 });
+  });
+
   it.each([
     "Codex live transcript unavailable for managed completion evidence",
     "Reserved worker ownership changed during context reset",

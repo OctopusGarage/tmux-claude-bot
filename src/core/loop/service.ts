@@ -3967,6 +3967,13 @@ export function supervisorRevisionFailures(failures: string[]): string[] {
 
 function isRecoverableSupervisorGateFailure(failure: string): boolean {
   if (failure.startsWith("checkpoint repository ")) return false;
+  if (
+    failure.startsWith("source branch is ") ||
+    failure.startsWith("source git branch check failed:") ||
+    failure.startsWith("source git status failed:") ||
+    failure.startsWith("source worktree is dirty after supervisor completion:")
+  )
+    return false;
   if (isSystemOwnedSystemGateFailure(failure)) return false;
   if (failure.startsWith("GitHub account ")) return false;
   if (failure.startsWith("PR state is ")) return false;
