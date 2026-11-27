@@ -103,6 +103,12 @@ the same attempt id. Cancelled work and accepted blocked outcomes stay blocked.
 No new retry can reuse a terminal WorkOrder or reset the shared attempt budget.
 Recovering an active WorkOrder link also requires the exact incident task link;
 a shared fingerprint alone only defers newer incidents and grants no ownership.
+Resource diagnostic admission carries the original refusal reason and retry time
+through the existing shared deferral classifier. Immediate admission waits remain
+pending without spending an execution attempt; pending work is not a live owner
+and resumes only when due. Reopening a blocked Resource Guardian fingerprint
+preserves its prior attempt count. Real start/intent/attachment failures retain
+the existing bounded backoff, and production-composition regressions cover resume.
 
 Codex readiness accepts the exact `← for agents · ? for shortcuts` navigation
 footer below a current composer. The footer alone, menu selectors, boot text,

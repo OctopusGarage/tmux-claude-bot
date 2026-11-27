@@ -6,6 +6,7 @@ import type { HandlerDeps } from "../deps.js";
 import { readLoopSupervisorWorkOrderRegistry } from "../loop/supervisor-state.js";
 import { sessionNameFromPath, setPathForSession } from "../projects/sessionPathMap.js";
 import { buildResourceGuardianRepairPrompt } from "../prompts/repair-prompts.js";
+import { isImmediateRecoveryDeferral } from "../tasks/recovery-admission.js";
 import { RepairCoordinator } from "../tasks/repair-coordinator.js";
 import type { ResourceGuardianStore } from "./store.js";
 import type { PressureState, ResourceCircuitAdmission, ResourceIncident } from "./types.js";
@@ -88,17 +89,17 @@ export function resourceRepairQueueState(
   const allRecords = coordinator.list();
   const records = allRecords.filter((record) => record.source === "resource-guardian");
   const matching = records.filter((record) => record.fingerprint === fingerprint);
-  const activeFingerprint = (record: (typeof records)[number]) =>
-    record.status === "pending" || record.status === "leased" || record.status === "running";
   const activeGlobal = (record: (typeof allRecords)[number]) =>
     record.status === "leased" || record.status === "running";
-  const retry = matching.filter((record) => record.status === "retry-wait");
+  const retry = matching.filter(
+    (record) => record.status === "retry-wait" || record.status === "pending",
+  );
   const deadLettered = matching.some((record) => record.status === "dead-letter");
   const latest = matching
     .filter(activeGlobal)
     .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
   return {
-    hasActiveFingerprintRepair: matching.some(activeFingerprint),
+    hasActiveFingerprintRepair: matching.some(activeGlobal),
     hasActiveResourceRepair: allRecords.some(activeGlobal),
     cooldownActive: retry.some((record) => record.nextAttemptAt > now),
     retryExhausted:
@@ -369,7 +370,7 @@ export async function dispatchResourceGuardianRepair(input: {
   start(
     requirement: string,
     context: { runId: string },
-  ): Promise<{ status: "queued" | "blocked"; runId?: string }>;
+  ): Promise<{ status: "queued" | "blocked"; runId?: string; reason?: string; retryAt?: number }>;
   prompt: string;
   persistIntent?: (queueId: string) => Promise<void>;
 }): Promise<ResourceGuardianRepairDispatch> {
@@ -388,7 +389,9 @@ export async function dispatchResourceGuardianRepair(input: {
       (record) =>
         record.source === "resource-guardian" &&
         record.fingerprint === input.incident.fingerprint &&
-        (record.status === "retry-wait" || record.status === "dead-letter"),
+        (record.status === "pending" ||
+          record.status === "retry-wait" ||
+          record.status === "dead-letter"),
     );
   if (
     retry !== undefined &&
@@ -416,13 +419,14 @@ export async function dispatchResourceGuardianRepair(input: {
   const running = input.coordinator.markRunning(record.id, leaseId, input.now);
   if (running === undefined)
     return { status: "blocked", detail: "repair could not be marked running" };
+  input.coordinator.linkTaskIds(record.id, [input.incident.id], input.now);
   try {
     await input.persistIntent?.(record.id);
   } catch {
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "resource repair intent was not durably persisted" };
   }
-  let started: { status: "queued" | "blocked"; runId?: string };
+  let started: { status: "queued" | "blocked"; runId?: string; reason?: string; retryAt?: number };
   try {
     started = await input.start(input.prompt, {
       runId: resourceRepairRunId(
@@ -436,6 +440,14 @@ export async function dispatchResourceGuardianRepair(input: {
     return { status: "blocked", detail: "delegated repair threw and returned to retry" };
   }
   if (started.status === "blocked") {
+    if (started.reason !== undefined && isImmediateRecoveryDeferral(started.reason)) {
+      input.coordinator.releaseToQueue(
+        record.id,
+        input.now,
+        started.retryAt ?? input.now + 15 * 60_000,
+      );
+      return { status: "blocked", detail: started.reason };
+    }
     input.coordinator.releaseForRetry(record.id, input.now);
     return { status: "blocked", detail: "delegated repair was blocked and returned to retry" };
   }
@@ -519,7 +531,11 @@ export function createProductionResourceRepairDispatcher(
           trustedRunId: context.runId,
         });
         return result.status === "blocked"
-          ? { status: "blocked" }
+          ? {
+              status: "blocked",
+              reason: result.reason,
+              ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
+            }
           : { status: "queued", runId: result.runId };
       },
       prompt: buildResourceGuardianRepairPrompt({

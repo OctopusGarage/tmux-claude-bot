@@ -208,7 +208,7 @@ export class RepairCoordinator {
         )
         .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0];
       if (stale !== undefined) {
-        existing = reopenTerminalRepairRecord(stale, input.now);
+        existing = { ...reopenTerminalRepairRecord(stale, input.now), attempt: stale.attempt };
         this.store.set(existing.id, existing);
       }
     }

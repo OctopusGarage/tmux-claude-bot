@@ -103,6 +103,71 @@ describe("selectResourceRepairCandidate", () => {
     };
   }
 
+  it("resumes a production diagnostic after admission reopens without spending a retry", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    let incident = collectorIncident();
+    let admitted = false;
+    const start = vi.fn(async () =>
+      admitted
+        ? { status: "queued", runId: "admitted-diagnostic" }
+        : {
+            status: "blocked",
+            reason: "automation admission deferred: quiet-hours",
+            retryAt: 700_100,
+          },
+    );
+    const dispatch = createProductionResourceRepairDispatcher(
+      {
+        config: {
+          projectSessionPrefix: "tmux_proj_",
+          loopEngineering: { supervisor: { enabled: true } },
+          runtimeGuardian: {
+            repoPath: "/repo",
+            repairBranch: "repair/resource",
+            worktreeIsolation: "isolated",
+          },
+        },
+      } as unknown as HandlerDeps,
+      {
+        coordinator,
+        gitTopLevel: async () => "/repo",
+        setSessionPath: (() => {}) as never,
+        start: start as never,
+      },
+    );
+    const tick = (now: number) =>
+      dispatchStableResourceRepair({
+        now,
+        pressure: "healthy",
+        circuit: "open",
+        stableSince: 100_000,
+        coordinator,
+        dispatch,
+        store: {
+          listIncidents: () => [incident],
+          writeIncident: (value) => {
+            incident = value;
+          },
+        },
+      });
+    await tick(700_000);
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "pending",
+      attempt: 0,
+      nextAttemptAt: 700_100,
+    });
+    await tick(700_099);
+    expect(start).toHaveBeenCalledOnce();
+    admitted = true;
+    await tick(700_100);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "running",
+      attempt: 0,
+      workOrderId: "admitted-diagnostic",
+    });
+  });
+
   it("dispatches ended collector validation failures for diagnosis without claiming process ownership", async () => {
     const incident = collectorIncident();
     const dispatch = vi.fn<Parameters<typeof dispatchStableResourceRepair>[0]["dispatch"]>(
@@ -723,6 +788,47 @@ function repairInput(
 }
 
 describe("dispatchResourceGuardianRepair", () => {
+  it("preserves prior attempts across reopening and immediate admission waits", async () => {
+    const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
+    const record = coordinator.enqueue({
+      projectId: "tmux-claude-bot",
+      projectPath: "/repo",
+      source: "resource-guardian",
+      taskFamily: "resource-guardian-stable-recovery",
+      fingerprint: "fingerprint-1",
+      taskId: "older-incident",
+      now: 1,
+    });
+    coordinator.releaseForRetry(record.id, 2);
+    coordinator.releaseForRetry(record.id, 3);
+    coordinator.markTerminal(record.id, "blocked", 4);
+    let admitted = false;
+    const start = vi.fn(async (_prompt: string, context: { runId: string }) =>
+      admitted
+        ? { status: "queued" as const, runId: context.runId }
+        : {
+            status: "blocked" as const,
+            reason: "automation admission deferred: quiet-hours",
+            retryAt: 200,
+          },
+    );
+    const request = (now: number) => repairInput({ coordinator, now, start });
+    const deferred = await dispatchResourceGuardianRepair(request(100));
+    expect(deferred.detail).toContain("automation admission deferred:");
+    expect(coordinator.list()[0]).toMatchObject({
+      status: "pending",
+      attempt: 2,
+      nextAttemptAt: 200,
+    });
+    await dispatchResourceGuardianRepair(request(199));
+    expect(start).toHaveBeenCalledOnce();
+    admitted = true;
+    const queued = await dispatchResourceGuardianRepair(request(200));
+    expect(queued.status).toBe("queued");
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(coordinator.list()[0]).toMatchObject({ status: "running", attempt: 2 });
+  });
+
   it("gives a new incident its own stable WorkOrder without reusing a terminal diagnostic", async () => {
     const coordinator = new RepairCoordinator(new InMemoryRepairQueueStore());
     const start = vi.fn(async (_prompt: string, context: { runId: string }) => ({
