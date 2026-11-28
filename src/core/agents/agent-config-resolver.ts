@@ -122,8 +122,18 @@ export type LiveAgentIdentity = {
   transcript: LiveTranscript | null;
 };
 
+export type LiveIdentityFailureReason =
+  | "pane-unavailable"
+  | "ambiguous-transcripts"
+  | "probe-failed";
+
+type IdentityProbeOptions = { onFailure?: (reason: LiveIdentityFailureReason) => void };
+
 export interface ConfigResolver {
-  resolveLiveAgentIdentity?(session: string): Promise<LiveAgentIdentity | null>;
+  resolveLiveAgentIdentity?(
+    session: string,
+    options?: IdentityProbeOptions,
+  ): Promise<LiveAgentIdentity | null>;
   /** Resolve the Claude config root (history lives under <root>/projects/…). */
   resolveConfigRoot(session: string): Promise<string>;
   /** Whether a claude process is running in the session's pane (process-based). */
@@ -266,25 +276,46 @@ export function createConfigResolver(
     return { entry, paneQueryable: true };
   };
 
-  const freshIdentity = async (session: string): Promise<LiveAgentIdentity | null> => {
-    cache.delete(session);
-    panePidCache.delete(session);
-    snap = null;
-    const { entry, paneQueryable } = await resolveAgent(session);
-    if (!entry) return paneQueryable ? { kind: null, agentPid: null, transcript: null } : null;
-    const files = await probe.listOpenFiles(entry.agentPid);
-    const candidates = new Set(
-      files.filter((path) => /(?:\/projects\/.*\.jsonl$|\/rollout-.*\.jsonl$)/.test(path)),
-    );
-    if (candidates.size > 1) return null;
-    const transcript =
-      matchOpenClaudeTranscript(files) ?? (await matchNewestOpenCodexRollout(files));
-    entry.transcript = transcript;
-    return {
-      kind: entry.kind,
-      agentPid: entry.agentPid,
-      transcript: transcript ? { ...transcript, agentPid: entry.agentPid } : null,
+  const freshIdentity = async (
+    session: string,
+    options?: IdentityProbeOptions,
+  ): Promise<LiveAgentIdentity | null> => {
+    const reportFailure = (reason: LiveIdentityFailureReason): void => {
+      try {
+        options?.onFailure?.(reason);
+      } catch {
+        // Diagnostic observers cannot change identity or ownership decisions.
+      }
     };
+    try {
+      cache.delete(session);
+      panePidCache.delete(session);
+      snap = null;
+      const { entry, paneQueryable } = await resolveAgent(session);
+      if (!entry) {
+        if (!paneQueryable) reportFailure("pane-unavailable");
+        return paneQueryable ? { kind: null, agentPid: null, transcript: null } : null;
+      }
+      const files = await probe.listOpenFiles(entry.agentPid);
+      const candidates = new Set(
+        files.filter((path) => /(?:\/projects\/.*\.jsonl$|\/rollout-.*\.jsonl$)/.test(path)),
+      );
+      if (candidates.size > 1) {
+        reportFailure("ambiguous-transcripts");
+        return null;
+      }
+      const transcript =
+        matchOpenClaudeTranscript(files) ?? (await matchNewestOpenCodexRollout(files));
+      entry.transcript = transcript;
+      return {
+        kind: entry.kind,
+        agentPid: entry.agentPid,
+        transcript: transcript ? { ...transcript, agentPid: entry.agentPid } : null,
+      };
+    } catch (error) {
+      reportFailure("probe-failed");
+      throw error;
+    }
   };
 
   return {

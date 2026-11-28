@@ -415,6 +415,41 @@ describe("managed fresh transcript identity", () => {
     },
   );
 
+  it.each(["pane-unavailable", "ambiguous-transcripts", "probe-failed"] as const)(
+    "reports sanitized %s evidence without changing identity refusal",
+    async (reason) => {
+      const onFailure = vi.fn();
+      const failure = new Error("private process data /private/secret token=hidden");
+      const r = createConfigResolver(
+        fakeProbe({
+          panePid: async () => (reason === "pane-unavailable" ? null : 100),
+          snapshot: async () => [{ pid: 200, ppid: 100, command: "/bin/codex" }],
+          listOpenFiles: async () => {
+            if (reason === "probe-failed") throw failure;
+            return ["/private/rollout-a.jsonl", "/private/rollout-b.jsonl"];
+          },
+        }),
+        OPTS,
+      );
+      const result = r.resolveLiveAgentIdentity?.("s", { onFailure });
+      if (reason === "probe-failed") await expect(result).rejects.toBe(failure);
+      else expect(await result).toBeNull();
+      expect(onFailure).toHaveBeenCalledExactlyOnceWith(reason);
+      expect(JSON.stringify(onFailure.mock.calls)).not.toContain("private");
+    },
+  );
+
+  it("does not let a diagnostic observer override identity refusal", async () => {
+    const r = createConfigResolver(fakeProbe({ panePid: async () => null }), OPTS);
+    expect(
+      await r.resolveLiveAgentIdentity?.("s", {
+        onFailure: () => {
+          throw new Error("observer failed");
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("bypasses cached null, process TTL and pane/snapshot coalescing only when requested", async () => {
     let pid = 200;
     let files: string[] = [];
