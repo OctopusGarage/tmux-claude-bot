@@ -70,6 +70,17 @@ Use the smallest durable surface that matches the scope:
 
 ## Alignment Matrix
 
+A pending or retry-wait project-recovery aggregate cannot reserve the project
+when every linked original is either classified exhausted from preserved
+cross-queue budgets or has a closed non-blocking ledger outcome, with at least
+one exhausted original. The audit supplies its full ledger for those closures;
+missing ledger evidence never counts as resolution. Retire that unowned aggregate as dead-letter before selecting fresh
+occurrences, keeping its own counter unchanged. Leases, attached WorkOrders,
+live original reservations, missing originals and mixed unexhausted tasks retain
+the aggregate. Original budgets and normal dispatch admission remain unchanged.
+`tests/tasks/project-recovery-original-closure.test.ts` covers starvation,
+repeated passes and ownership refusal boundaries.
+
 Generic accepted-blocked aggregates reconsider every linked Autopilot original
 with explicit safe pre-submission retry evidence, regardless of its linked-list
 position. Accepted blocked recovery artifacts, uncertain ownership, live owners
@@ -1112,13 +1123,15 @@ Runtime Guardian repair admission deferrals caused by quiet hours, resource
 pressure, queue capacity, or active automation are diagnostic DEBUG evidence,
 not repeated WARN-level operator attention.
 System Self-Heal agent-sweep admission deferrals before WorkOrder creation use
-diagnostic logging while retaining a durable `failed/pending` ledger occurrence.
-Shared repair reconciliation owns subsequent queue admission. Do not hide a
-missed investigation as `not-needed`, or reserve a worker merely to record it.
-Daily Task Audit dashboard attention follows the same operator-attention
-boundary: current-window pending repairs caused only by transient admission
-deferrals remain visible in failed/repair-pending counts, but they do not create
-the Daily Task Audit attention card or make the domain unhealthy.
+diagnostic logging and retain a durable ledger occurrence. Exact pressure,
+quiet-hours and active-project ownership waits are `skipped/not-needed`; actual
+preparation failures remain `failed/pending` for shared repair reconciliation.
+Neither outcome certifies that the investigation executed. Do not reserve a
+worker merely to record an admission wait.
+Daily Task Audit keeps current-window pending repairs visible in failed and
+repair-pending counts. An owned queue or transient admission wait may suppress
+a duplicate operator attention card, but the domain still requires attention
+while unresolved repairs remain. Closed historical failures alone are healthy.
 Current-window pending repairs already owned by a non-terminal Repair Coordinator
 record follow the same boundary: dashboards must keep the repair-pending count
 visible for auditability, but must not label it as manual operator attention
@@ -1535,14 +1548,15 @@ and concurrent acceptance ownership remain open.
 
 ### Workspace recovery
 
-Workspace recovery remains a known integration gap: generic Project Recovery
-requires one Git toplevel and creates an active delegation, while a configured
-workspace may contain multiple repositories under a non-Git root. The workspace
-scheduler owns the safe multi-repository WorkOrder path. Recovery must use that
-same path before it can repair a missed workspace occurrence; do not bypass root
-verification or silently choose a member repository. The bot-owned recovery
-adapter needs a dedicated regression covering per-repository isolation and PR
-policies. Existing workspace schedules remain due through admission deferrals.
+Configured workspace recovery uses the existing multi-repository WorkOrder
+path described in Workspace Recovery Acceptance below. Project Recovery verifies
+every member Git root and carries the configured workspace identity through
+Autopilot; it never requires the non-Git coordination root to be a repository or
+silently chooses one member. Member verification and dispatch regressions live in
+`tests/tasks/project-recovery-service.test.ts` and
+`tests/tasks/project-recovery-dispatch.test.ts`. Existing workspace schedules
+remain due through admission deferrals; historical retry exhaustion does not
+prove that the workspace adapter is missing.
 
 When a new gap is found, add it here with the affected surfaces, why it cannot
 be completed in the current slice, and the test or runtime evidence needed to

@@ -91,6 +91,7 @@ function fixture(
         repositories: [],
         workspaces: [],
       },
+      allRecords: ledger.listAll(),
       coordinator,
       updateRepairStatus,
       dispatch,
@@ -332,6 +333,117 @@ describe("original task evidence survives generic accepted-blocked closure", () 
     expect(freshQueue).toMatchObject({ attempt: 0 });
     expect(freshQueue?.linkedTaskIds).toContain(fresh);
     expect(f.ledger.listAll().find((r) => r.taskId === fresh)?.repairStatus).toBe("pending");
+  });
+
+  it.each([false, true])(
+    "retires an unowned exhausted aggregate before fresh occurrence admission: retry-wait=%s",
+    async (retryWait) => {
+      const f = fixture("Cannot verify live agent identity for managed context reset", 2);
+      f.store.set(f.queue.id, {
+        ...f.queue,
+        status: retryWait ? "retry-wait" : "pending",
+        attempt: 2,
+        summaries: [],
+      });
+      f.store.set("exhausted-original", {
+        ...f.queue,
+        id: "exhausted-original",
+        dedupeKey: "separate-runtime-budget",
+        source: "runtime-guardian",
+        status: "dead-letter",
+        attempt: 3,
+      });
+      f.ledger.markRepairStatus(f.taskId, { repairStatus: "pending", updatedAt: 1500 });
+      const resolved = "autopilot:resolved-original";
+      f.ledger.expect({
+        taskId: resolved,
+        source: "autopilot-delegate",
+        name: "suite resolved",
+        scheduledAt: 1100,
+      });
+      f.ledger.fail(resolved, { endedAt: 1101, error: "resolved historical failure" });
+      f.ledger.markRepairStatus(resolved, { repairStatus: "superseded", updatedAt: 1500 });
+      f.coordinator.linkTaskIds(f.queue.id, [resolved], 1500);
+      const fresh = "loop:suite:test-coverage:1200";
+      f.ledger.expect({
+        taskId: fresh,
+        source: "loop-engineering",
+        name: "suite coverage",
+        scheduledAt: 1200,
+      });
+      f.ledger.reconcileExpectedMissing(1300);
+
+      await f.pass();
+      expect(f.store.get(f.queue.id)).toMatchObject({ status: "dead-letter", attempt: 2 });
+      expect(f.dispatch).toHaveBeenCalledWith(expect.objectContaining({ taskIds: [fresh] }));
+      expect(f.coordinator.findOpenProjectRecovery("suite")).toMatchObject({ attempt: 0 });
+      await f.pass();
+      expect(f.store.get(f.queue.id)).toMatchObject({ status: "dead-letter", attempt: 2 });
+    },
+  );
+
+  it.each([
+    "leased",
+    "running",
+    "lease",
+    "lease-expiry",
+    "work-order",
+    "unknown",
+    "unexhausted",
+    "live-original",
+  ])("preserves exhausted aggregate with %s ownership or incomplete evidence", async (boundary) => {
+    const f = fixture("Cannot verify live agent identity for managed context reset", 2);
+    f.store.set(f.queue.id, {
+      ...f.queue,
+      status: boundary === "leased" || boundary === "running" ? boundary : "pending",
+      attempt: 2,
+      summaries: [],
+      ...(boundary === "lease" ? { leaseId: "owner", leaseExpiresAt: 9000 } : {}),
+      ...(boundary === "lease-expiry" ? { leaseExpiresAt: 9000 } : {}),
+      ...(boundary === "work-order" ? { workOrderId: "owner" } : {}),
+      linkedTaskIds:
+        boundary === "unknown" || boundary === "unexhausted"
+          ? [f.taskId, "unavailable-original"]
+          : [f.taskId],
+    });
+    f.store.set("exhausted-original", {
+      ...f.queue,
+      id: "exhausted-original",
+      dedupeKey: "separate-budget",
+      source: "runtime-guardian",
+      status: "dead-letter",
+      attempt: 3,
+    });
+    if (boundary === "unexhausted") {
+      f.ledger.expect({
+        taskId: "unavailable-original",
+        source: "loop-engineering",
+        name: "suite coverage",
+        scheduledAt: 1200,
+      });
+      f.ledger.reconcileExpectedMissing(1300);
+    }
+    if (boundary === "live-original") {
+      const live = {
+        runDir: join(process.env.TCB_STATE_DIR ?? "", "live-original"),
+        workOrder: {
+          id: "original-live",
+          projectId: "suite",
+          scheduledAt: 1000,
+          projectPath: "/repo/suite",
+        },
+      };
+      registryMock.value = {
+        records: [live],
+        unfinished: [live],
+        recoverableFinalSummary: [],
+        recoverableFailed: [],
+        terminal: [],
+      };
+    }
+    await f.pass();
+    expect(f.store.get(f.queue.id)?.status).not.toBe("dead-letter");
+    expect(f.store.get(f.queue.id)?.attempt).toBe(2);
   });
 
   it.each([2, 3])("does not lower an existing attempt when no floor is supplied: %s", (attempt) => {

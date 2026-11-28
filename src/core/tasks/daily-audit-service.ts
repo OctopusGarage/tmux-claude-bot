@@ -505,17 +505,17 @@ async function runConfiguredProjectRecovery(input: {
       input.ledger.markRepairStatus(taskId, { repairStatus, updatedAt: input.now, summary });
     },
   });
-  const records = input.ledger
-    .listAll()
-    .filter(
-      (record): record is ScheduledTaskRecord & { repairStatus: "pending" | "blocked" } =>
-        (record.repairStatus === "pending" || shouldReconsiderBlockedRecovery(record)) &&
-        (record.source === "loop-engineering" || record.source === "autopilot-delegate") &&
-        ["failed", "missing", "running-timeout"].includes(record.status),
-    );
+  const allRecords = input.ledger.listAll();
+  const records = allRecords.filter(
+    (record): record is ScheduledTaskRecord & { repairStatus: "pending" | "blocked" } =>
+      (record.repairStatus === "pending" || shouldReconsiderBlockedRecovery(record)) &&
+      (record.source === "loop-engineering" || record.source === "autopilot-delegate") &&
+      ["failed", "missing", "running-timeout"].includes(record.status),
+  );
   return runProjectRecoveryPass({
     now: input.now,
     records,
+    allRecords,
     config: {
       projects: config.projects,
       repositories: config.prReview.repositories,
