@@ -202,7 +202,7 @@ local ref from a name-only sweep.
 
 A crash between `git worktree add` and durable WorkOrder persistence can leave
 an isolated worktree with no registry record. Periodic reconciliation removes
-such an orphan only after the default 72-hour failure-evidence window, after
+such an orphan only after the default seven-day orphan-retention window, after
 proving that no WorkOrder resource path or worker lease references it, and after
 the normal state-owned-path and exact Git-toplevel checks pass. A young,
 referenced, leased, non-directory, or unverifiable path must remain untouched.
@@ -571,3 +571,22 @@ diagnostic contains only a one-based row number and a fixed validation category
 names or raw pane output. A valid prefix does not authorize partial attribution.
 Historical generic snapshot failures need a fresh observation; they do not justify
 relaxing attribution or terminating an unverified process.
+
+### Managed context-reset refusal diagnostics
+
+Failed automation context resets emit one structured `command.context-reset`
+warning per invocation. The record contains the operation, fixed reset stage,
+fixed identity-failure reason, elapsed milliseconds and configured readiness
+budget. Fresh identity probes distinguish an unavailable pane, ambiguous
+transcript paths and a failed probe without retaining paths, process arguments,
+composer text or raw exceptions. Ordinary user resets and successful resets do
+not emit this warning. The original refusal/error, ownership checks, deadline,
+submission rules and bounded retry budget remain authoritative. Diagnostic
+observers cannot change identity results, and late probes cannot update a settled
+reset's diagnostic. Existing logs supply process and trace correlation; these
+records do not establish which historical source revision was loaded or prove
+that an earlier runtime failure was repaired.
+
+Regression coverage is in `tests/agent-config-resolver.test.ts`,
+`tests/command/context-reset.test.ts` and
+`tests/command/managed-context-reset.test.ts`.

@@ -1,11 +1,40 @@
 import { stripVTControlCharacters } from "node:util";
+import { createLogger } from "../../shared/utils/logger.js";
 import { sleep } from "../../shared/utils/sleep.js";
-import type { LiveAgentIdentity } from "../agents/agent-config-resolver.js";
+import type {
+  LiveAgentIdentity,
+  LiveIdentityFailureReason,
+} from "../agents/agent-config-resolver.js";
 import type { HandlerDeps } from "../deps.js";
 import { unmutedComposerText } from "../session/output.js";
 
 const CONTEXT_RESET_SETTLE_MS = 250;
 const CONTEXT_RESET_SUBMIT_ATTEMPTS = 3;
+
+const log = createLogger("command.context-reset");
+type ResetDiagnostics = {
+  stage:
+    | "input-validation"
+    | "ownership"
+    | "initial-identity"
+    | "owned-exit"
+    | "wait-for-exit"
+    | "start-agent"
+    | "post-start-ownership"
+    | "slash-submit"
+    | "slash-readiness"
+    | "slash-confirmation";
+  reason:
+    | LiveIdentityFailureReason
+    | "operation-failed"
+    | "identity-unavailable"
+    | "deadline-exhausted";
+};
+type ResetOptions = {
+  settleMs?: number;
+  ensureSubmitted?: boolean;
+  verifyOwnership?: () => boolean;
+};
 
 /** Reset an agent's context with a slash command, or a verified fresh process
  * for owned Codex clears, and invalidate the cached transcript resolver.
@@ -14,23 +43,54 @@ export async function sendContextReset(
   deps: HandlerDeps,
   session: string,
   op: "compact" | "clear",
-  options: { settleMs?: number; ensureSubmitted?: boolean; verifyOwnership?: () => boolean } = {},
+  options: ResetOptions = {},
+): Promise<void> {
+  const startedAt = Date.now();
+  const diagnostic: ResetDiagnostics = { stage: "input-validation", reason: "operation-failed" };
+  try {
+    await performContextReset(deps, session, op, options, diagnostic);
+  } catch (error) {
+    if (options.ensureSubmitted === true || options.verifyOwnership) {
+      log.warn("automation context reset failed", {
+        session,
+        data: {
+          operation: op,
+          ...diagnostic,
+          elapsedMs: Math.max(0, Date.now() - startedAt),
+          budgetMs: deps.config?.maxWaitReadyMs ?? null,
+        },
+      });
+    }
+    throw error;
+  }
+}
+
+async function performContextReset(
+  deps: HandlerDeps,
+  session: string,
+  op: "compact" | "clear",
+  options: ResetOptions,
+  diagnostic: ResetDiagnostics,
 ): Promise<void> {
   if (options.ensureSubmitted === true) await verifyAutomationInputPane(deps, session);
+  diagnostic.stage = "ownership";
   if (options.verifyOwnership && !options.verifyOwnership())
     throw new Error("Reserved worker ownership changed before context reset");
   if (
     op === "clear" &&
     options.verifyOwnership &&
-    (await restartOwnedCodexContext(deps, session, options.verifyOwnership))
+    (await restartOwnedCodexContext(deps, session, options.verifyOwnership, diagnostic))
   )
     return;
+  diagnostic.stage = "slash-submit";
   await deps.bridge.sendKeys(`/${op}`, session);
   deps.configResolver.invalidate(session);
   const settleMs = options.settleMs ?? CONTEXT_RESET_SETTLE_MS;
   await sleep(settleMs);
+  diagnostic.stage = "slash-readiness";
   await deps.agent.waitUntilInputReady(session);
   if (options.ensureSubmitted === true) {
+    diagnostic.stage = "slash-confirmation";
     let stillInComposer = await resetCommandStillInComposer(deps, session, op);
     for (
       let attempt = 0;
@@ -58,38 +118,52 @@ async function restartOwnedCodexContext(
   deps: HandlerDeps,
   session: string,
   verifyOwnership: () => boolean,
+  diagnostic: ResetDiagnostics,
 ): Promise<boolean> {
   const deadline = Date.now() + deps.config.maxWaitReadyMs;
   const assertReady = (): void => {
     if (!verifyOwnership())
       throw new Error("Reserved worker ownership changed during context reset");
-    if (Date.now() >= deadline) throw new Error("Agent context reset readiness deadline exhausted");
+    if (Date.now() >= deadline) {
+      diagnostic.reason = "deadline-exhausted";
+      throw new Error("Agent context reset readiness deadline exhausted");
+    }
   };
   const readIdentity = async (): Promise<LiveAgentIdentity> => {
     assertReady();
     const resolve = deps.configResolver.resolveLiveAgentIdentity;
     if (!resolve) throw new Error("Cannot verify live agent identity for managed context reset");
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let observing = true;
+    diagnostic.reason = "identity-unavailable";
     try {
       const identity = await Promise.race([
-        resolve.call(deps.configResolver, session),
+        resolve.call(deps.configResolver, session, {
+          onFailure: (reason) => {
+            if (observing) diagnostic.reason = reason;
+          },
+        }),
         new Promise<null>((done) => {
           timer = setTimeout(() => done(null), Math.max(0, deadline - Date.now()));
         }),
       ]);
       assertReady();
       if (!identity) throw new Error("Cannot verify live agent identity for managed context reset");
+      diagnostic.reason = "operation-failed";
       return identity;
     } finally {
+      observing = false;
       if (timer !== undefined) clearTimeout(timer);
     }
   };
+  diagnostic.stage = "initial-identity";
   const before = await readIdentity();
   if (before.kind === "claude") return false;
   if (before.kind !== "codex" || before.agentPid === null)
     throw new Error("Cannot verify running Codex identity for managed context reset");
   assertReady();
   deps.agent.consumeFreshLaunch?.(session, -1);
+  diagnostic.stage = "owned-exit";
   await deps.bridge.sendOwnedExit(session, {
     deadlineAt: deadline,
     verify: async () => {
@@ -102,6 +176,7 @@ async function restartOwnedCodexContext(
     },
   });
   deps.configResolver.invalidate(session);
+  diagnostic.stage = "wait-for-exit";
   while (true) {
     const current = await readIdentity();
     if (current.kind === null && current.agentPid === null && current.transcript === null) break;
@@ -110,7 +185,9 @@ async function restartOwnedCodexContext(
     await sleep(Math.min(500, Math.max(0, deadline - Date.now())));
   }
   assertReady();
+  diagnostic.stage = "start-agent";
   await deps.agent.start(session, undefined, deadline);
+  diagnostic.stage = "post-start-ownership";
   if (!verifyOwnership()) {
     deps.agent.consumeFreshLaunch?.(session, -1);
     throw new Error("Reserved worker ownership changed during context reset");

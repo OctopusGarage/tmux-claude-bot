@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sendContextReset } from "../../src/core/command/context-reset.js";
+
+const resetLog = vi.hoisted(() => ({ warn: vi.fn() }));
+vi.mock("../../src/shared/utils/logger.js", () => ({ createLogger: () => resetLog }));
+beforeEach(() => resetLog.warn.mockClear());
 
 function fakeDeps() {
   return {
@@ -15,6 +19,34 @@ function fakeDeps() {
 }
 
 describe("sendContextReset", () => {
+  it("records a sanitized automation failure stage and preserves the original refusal", async () => {
+    const d = fakeDeps();
+    d.bridge.capturePane.mockResolvedValue("› private pending text token=hidden");
+    await expect(sendContextReset(d, "s", "clear", { ensureSubmitted: true })).rejects.toThrow(
+      /input surface/,
+    );
+    expect(resetLog.warn).toHaveBeenCalledExactlyOnceWith("automation context reset failed", {
+      session: "s",
+      data: {
+        operation: "clear",
+        stage: "input-validation",
+        reason: "operation-failed",
+        elapsedMs: expect.any(Number),
+        budgetMs: null,
+      },
+    });
+    expect(JSON.stringify(resetLog.warn.mock.calls)).not.toMatch(/private|hidden|pending text/);
+    expect(d.bridge.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("keeps ordinary user failures out of automation diagnostics", async () => {
+    const d = fakeDeps();
+    const failure = new Error("private failure");
+    d.bridge.sendKeys.mockRejectedValue(failure);
+    await expect(sendContextReset(d, "s", "clear")).rejects.toBe(failure);
+    expect(resetLog.warn).not.toHaveBeenCalled();
+  });
+
   it("sends /compact and invalidates the resolver", async () => {
     const d = fakeDeps();
     await sendContextReset(d, "tmux_proj_x", "compact", { settleMs: 0 });

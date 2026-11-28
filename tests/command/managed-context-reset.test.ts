@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createConfigResolver,
   type LiveAgentIdentity,
@@ -20,6 +20,22 @@ import type { LoopWorkOrder } from "../../src/core/loop/work-order.js";
 import { setPathForSession } from "../../src/core/projects/sessionPathMap.js";
 import { type ExecFileOptions, TmuxBridge } from "../../src/core/session/tmux.js";
 import { fakeDeps } from "../adapters/lark/_fakes.js";
+
+const diagnosticLog = vi.hoisted(() => ({
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  error: vi.fn(),
+}));
+vi.mock("../../src/shared/utils/logger.js", () => ({
+  createLogger: () => diagnosticLog,
+  logger: diagnosticLog,
+}));
+beforeEach(() => diagnosticLog.warn.mockClear());
+const resetWarnings = () =>
+  diagnosticLog.warn.mock.calls.filter(
+    ([message]) => message === "automation context reset failed",
+  );
 
 afterEach(() => vi.useRealTimers());
 
@@ -257,8 +273,8 @@ describe("owned Codex context reset", () => {
         },
         { defaultRoot: "/synthetic", claudeBin: "/bin/claude", ttlMs: 1000 },
       );
-      f.d.configResolver.resolveLiveAgentIdentity = (session) =>
-        resolver.resolveLiveAgentIdentity?.(session) ?? Promise.resolve(null);
+      f.d.configResolver.resolveLiveAgentIdentity = (session, options) =>
+        resolver.resolveLiveAgentIdentity?.(session, options) ?? Promise.resolve(null);
       if (descriptors === "distinct") {
         await expect(executeMessage(f.message("clear"), f.d)).rejects.toThrow(
           "Cannot verify live agent identity for managed context reset",
@@ -266,11 +282,28 @@ describe("owned Codex context reset", () => {
         expect(f.nativeWrites).toEqual([]);
         expect(f.codex.start).not.toHaveBeenCalled();
         expect(f.d.bridge.sendKeys).not.toHaveBeenCalled();
+        expect(resetWarnings()).toEqual([
+          [
+            "automation context reset failed",
+            {
+              session: f.session,
+              data: {
+                operation: "clear",
+                stage: "initial-identity",
+                reason: "ambiguous-transcripts",
+                elapsedMs: expect.any(Number),
+                budgetMs: 1000,
+              },
+            },
+          ],
+        ]);
+        expect(JSON.stringify(resetWarnings())).not.toContain("/synthetic");
       } else {
         await executeMessage(f.message("clear"), f.d);
         expect(f.nativeWrites).toEqual(["C-c", "/exit"]);
         expect(f.codex.start).toHaveBeenCalledOnce();
         expect(f.d.agent.consumeFreshLaunch?.(f.session, 456)).toMatchObject({ agentPid: 456 });
+        expect(resetWarnings()).toEqual([]);
       }
     },
   );
@@ -450,6 +483,68 @@ describe("owned Codex context reset", () => {
     );
     expect(f.codex.exit).not.toHaveBeenCalled();
     expect(f.codex.start).not.toHaveBeenCalled();
+    expect(resetWarnings()).toEqual([
+      [
+        "automation context reset failed",
+        {
+          session: f.session,
+          data: {
+            operation: "clear",
+            stage: "initial-identity",
+            reason: "deadline-exhausted",
+            elapsedMs: 1000,
+            budgetMs: 1000,
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("does not publish another warning when a failed identity probe settles after timeout", async () => {
+    const f = fixture();
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    f.d.configResolver.resolveLiveAgentIdentity = (_session, options) =>
+      new Promise((resolve) => {
+        release = () => {
+          options?.onFailure?.("pane-unavailable");
+          resolve(null);
+        };
+      });
+    const result = settle(executeMessage(f.message("clear"), f.d));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await result).toHaveProperty("error");
+    const warnings = JSON.stringify(resetWarnings());
+    expect(resetWarnings()).toHaveLength(1);
+    release?.();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(JSON.stringify(resetWarnings())).toBe(warnings);
+    expect(f.nativeWrites).toEqual([]);
+    expect(f.codex.start).not.toHaveBeenCalled();
+  });
+
+  it("retains startup failure identity and logs only its stage", async () => {
+    const f = fixture();
+    const failure = new Error("private startup command token=hidden /private/config");
+    vi.mocked(f.codex.start).mockRejectedValue(failure);
+    await expect(executeMessage(f.message("clear"), f.d)).rejects.toBe(failure);
+    expect(resetWarnings()).toEqual([
+      [
+        "automation context reset failed",
+        {
+          session: f.session,
+          data: {
+            operation: "clear",
+            stage: "start-agent",
+            reason: "operation-failed",
+            elapsedMs: expect.any(Number),
+            budgetMs: 1000,
+          },
+        },
+      ],
+    ]);
+    expect(JSON.stringify(resetWarnings())).not.toMatch(/private|hidden/);
+    expect(f.d.bridge.sendKeys).not.toHaveBeenCalled();
   });
 
   it("passes the original readiness deadline to startup after a delayed exit", async () => {

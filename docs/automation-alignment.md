@@ -1987,3 +1987,22 @@ repair pending instead of marking it fixed; legacy gates that omit the field
 remain compatible. Regression cases in
 `tests/tasks/project-recovery-service.test.ts` cover contradictory accepted gates
 and preserve existing identity, review-snapshot and retry ownership checks.
+
+### Managed context-reset refusal diagnostics
+
+Failed automation context resets emit one structured `command.context-reset`
+warning per invocation. The record contains the operation, fixed reset stage,
+fixed identity-failure reason, elapsed milliseconds and configured readiness
+budget. Fresh identity probes distinguish an unavailable pane, ambiguous
+transcript paths and a failed probe without retaining paths, process arguments,
+composer text or raw exceptions. Ordinary user resets and successful resets do
+not emit this warning. The original refusal/error, ownership checks, deadline,
+submission rules and bounded retry budget remain authoritative. Diagnostic
+observers cannot change identity results, and late probes cannot update a settled
+reset's diagnostic. Existing logs supply process and trace correlation; these
+records do not establish which historical source revision was loaded or prove
+that an earlier runtime failure was repaired.
+
+Regression coverage is in `tests/agent-config-resolver.test.ts`,
+`tests/command/context-reset.test.ts` and
+`tests/command/managed-context-reset.test.ts`.
